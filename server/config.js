@@ -56,7 +56,19 @@ function getAllowedOrigins() {
 function isOriginAllowed(origin, allowedOrigins) {
   if (!origin) return true;
   if (allowedOrigins.includes('*')) return true;
-  return allowedOrigins.includes(origin);
+  if (allowedOrigins.includes(origin)) return true;
+  
+  // Always allow the desktop app (which uses random ports on localhost)
+  if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+    return true;
+  }
+  
+  // Hardcode the known production Vercel domain so it always works even if user forgets to set env var
+  if (origin === 'https://letscollab-pearl.vercel.app' || origin.endsWith('.vercel.app')) {
+    return true;
+  }
+  
+  return false;
 }
 
 function corsOrigin(origin, callback) {
