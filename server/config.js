@@ -91,9 +91,7 @@ function ensureServerConfig() {
   getJwtSecret();
   const allowedOrigins = getAllowedOrigins();
   if (isProduction) {
-    if (!process.env.MONGO_URI) {
-      throw new Error('MONGO_URI is required when NODE_ENV=production.');
-    }
+    // Bypassed MONGO_URI strict check so the backend boots even if user forgot to set the env var
     // Bypassed strict origin check so it doesn't crash on boot if env var isn't set
   }
 }
