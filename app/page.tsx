@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useEffect, useRef, useState } from 'react'
-import { motion, useScroll, useTransform, AnimatePresence, useSpring, useVelocity, useAnimationFrame } from 'framer-motion'
+import { motion, useScroll, useTransform, AnimatePresence, useSpring, useVelocity, useAnimationFrame, useMotionValueEvent } from 'framer-motion'
 import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, Command, Lock, Cpu, Network, Sparkles, ServerOff, Infinity as InfinityIcon, ArrowRight, Play, Maximize2, MousePointer2, User } from 'lucide-react'
 import { AppLogo } from '@/components/ircp/shared'
 import Link from 'next/link'
@@ -155,6 +155,16 @@ export default function LandingPage() {
   const yHero = useTransform(smoothProgress, [0, 0.2], ["0%", "40%"])
   const opacityHero = useTransform(smoothProgress, [0, 0.15], [1, 0])
   
+  const { scrollYProgress: pageScrollProgress } = useScroll()
+  const [scrollPercent, setScrollPercent] = useState(0)
+  
+  // MUST be at top-level to avoid React Hooks error
+  const circleOffset = useTransform(pageScrollProgress, [0, 1], [2 * Math.PI * 46, 0])
+  
+  useMotionValueEvent(pageScrollProgress, "change", (latest) => {
+    setScrollPercent(Math.round(latest * 100))
+  })
+  
   // Horizontal scroll for showcase
   const showcaseRef = useRef<HTMLDivElement>(null)
   const { scrollYProgress: showcaseProgress } = useScroll({ target: showcaseRef, offset: ["start end", "end start"] })
@@ -208,8 +218,52 @@ export default function LandingPage() {
         </motion.div>
       </div>
 
+      {/* Creative Scroll To Top Button */}
+      <AnimatePresence>
+        {scrollPercent > 5 && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.5, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.5, y: 20 }}
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="fixed bottom-6 right-6 md:bottom-10 md:right-10 z-[100] w-16 h-16 rounded-full bg-zinc-950/80 border border-white/10 backdrop-blur-xl flex items-center justify-center text-white overflow-hidden group shadow-[0_0_30px_rgba(0,0,0,0.8)] hover:border-[var(--accent)] transition-all hover:scale-110 active:scale-95"
+          >
+            {/* SVG Progress Circle */}
+            <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
+              <circle
+                cx="50"
+                cy="50"
+                r="46"
+                fill="none"
+                stroke="rgba(255,255,255,0.05)"
+                strokeWidth="4"
+              />
+              <motion.circle
+                cx="50"
+                cy="50"
+                r="46"
+                fill="none"
+                stroke="var(--accent)"
+                strokeWidth="4"
+                strokeDasharray={`${2 * Math.PI * 46}`}
+                strokeDashoffset={circleOffset}
+                strokeLinecap="round"
+                className="opacity-50 group-hover:opacity-100 transition-opacity drop-shadow-[0_0_5px_var(--accent)]"
+              />
+            </svg>
+            
+            <div className="relative z-10 flex flex-col items-center">
+              <span className="text-xs font-black text-zinc-300 group-hover:text-white transition-colors">
+                {scrollPercent}<span className="text-[10px] text-[var(--accent)]">%</span>
+              </span>
+              <span className="text-[8px] uppercase tracking-widest text-zinc-500 group-hover:text-[var(--accent)] transition-colors mt-0.5">Top</span>
+            </div>
+          </motion.button>
+        )}
+      </AnimatePresence>
+
       {/* Top Banner Tagline */}
-      <div className="fixed top-0 left-0 right-0 z-[60] bg-[var(--accent)] text-black text-xs font-bold text-center py-2 px-4 shadow-[0_0_20px_var(--accent)] hover:h-8 overflow-hidden">
+      <div className="w-full relative z-[60] bg-[var(--accent)] text-black text-xs sm:text-sm font-bold text-center py-3 px-4 shadow-[0_0_20px_var(--accent)] leading-snug">
         Built by Kishan — a final-year CSE (Data Science) student and team lead, driven by making digital trust something you can verify, not just something you're asked to believe.
       </div>
 
@@ -218,7 +272,7 @@ export default function LandingPage() {
         initial={{ y: -100 }}
         animate={{ y: 0 }}
         transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-        className="fixed top-8 left-0 right-0 z-50 flex items-center justify-between px-8 py-5 backdrop-blur-xl border-b border-white/5 bg-[#030305]/40"
+        className="sticky top-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4 backdrop-blur-xl border-b border-white/5 bg-[#030305]/80"
       >
         <MagneticButton>
           <AppLogo size="small" />
@@ -267,7 +321,7 @@ export default function LandingPage() {
         </div>
 
         {/* Hero Section */}
-        <section id="vision" className="relative min-h-[120vh] flex flex-col items-center justify-center pt-32 pb-20 px-4">
+        <section id="vision" className="relative min-h-[120vh] flex flex-col items-center justify-center pt-32 pb-20 md:pb-64 px-4">
           <motion.div 
             style={{ opacity: opacityHero, y: yHero }}
             className="flex flex-col items-center text-center max-w-7xl mx-auto relative z-10"
@@ -286,7 +340,7 @@ export default function LandingPage() {
               <span className="text-xs font-bold tracking-[0.3em] text-white uppercase drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">Version 0.1.0 Protocol Active</span>
             </motion.div>
 
-            <h1 className="text-[12vw] sm:text-8xl md:text-[10rem] lg:text-[12rem] font-black tracking-tighter leading-[0.8] mb-10 overflow-hidden">
+            <h1 className="text-6xl sm:text-[12vw] md:text-[10rem] lg:text-[12rem] font-black tracking-tighter leading-tight sm:leading-[0.8] mb-10 pb-4">
               <span className="inline-block bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
                 <TextReveal text="Space to" />
               </span><br/>
@@ -335,7 +389,7 @@ export default function LandingPage() {
         </section>
 
         {/* Video/Interface Showcase */}
-        <section className="py-20 relative z-20 -mt-40 perspective-[2000px]">
+        <section className="py-10 md:py-20 relative z-20 mt-10 md:-mt-40 perspective-[2000px]">
           <div className="max-w-7xl mx-auto px-4">
             <motion.div 
               initial={{ opacity: 0, rotateX: 45, y: 200, scale: 0.8 }}
@@ -426,14 +480,14 @@ export default function LandingPage() {
         <section id="engine" className="py-40 px-4 relative bg-[#030305]">
           <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center opacity-5" />
           <div className="max-w-7xl mx-auto relative z-10">
-            <div className="text-center mb-32">
+            <div className="text-center mb-16 md:mb-32">
               <motion.h2 
                 initial={{ opacity: 0, y: 40 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-6xl md:text-8xl font-black mb-8 tracking-tight"
+                className="text-4xl sm:text-6xl md:text-8xl font-black mb-8 tracking-tight"
               >
-                Engineered for <br/><span className="italic font-display font-light text-[var(--accent)]">Perfection</span>
+                Engineered for <br className="hidden sm:block"/><span className="italic font-display font-light text-[var(--accent)]">Perfection</span>
               </motion.h2>
             </div>
             
@@ -489,12 +543,12 @@ export default function LandingPage() {
               <p className="text-xl text-zinc-400 font-light max-w-2xl mx-auto">See how Let's Collab compares to legacy remote desktop solutions in the market.</p>
             </div>
             
-            <div className="w-full overflow-x-auto pb-8">
-              <div className="min-w-[800px] w-full rounded-3xl bg-zinc-950/80 border border-white/10 overflow-hidden backdrop-blur-xl shadow-2xl">
-                <div className="grid grid-cols-[2fr_1fr_1fr] bg-white/5 border-b border-white/10 p-6 text-sm font-bold uppercase tracking-widest text-zinc-400">
+            <div className="w-full pb-8">
+              <div className="w-full rounded-2xl md:rounded-3xl bg-zinc-950/80 border border-white/10 overflow-hidden backdrop-blur-xl shadow-2xl">
+                <div className="grid grid-cols-[1fr_auto_auto] sm:grid-cols-[2fr_1fr_1fr] bg-white/5 border-b border-white/10 p-3 sm:p-6 text-[10px] sm:text-sm font-bold uppercase tracking-widest text-zinc-400 gap-3 sm:gap-0">
                   <div>Feature</div>
-                  <div className="text-center text-[var(--accent)] flex items-center justify-center gap-2">Let's Collab <Sparkles className="w-4 h-4" /></div>
-                  <div className="text-center">Competitors</div>
+                  <div className="text-center text-[var(--accent)] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2">Let's Collab <Sparkles className="w-3 h-3 sm:w-4 sm:h-4" /></div>
+                  <div className="text-center px-2">Competitors</div>
                 </div>
                 
                 <div className="divide-y divide-white/5">
@@ -519,13 +573,13 @@ export default function LandingPage() {
                       whileInView={{ opacity: 1, x: 0 }}
                       viewport={{ once: true, margin: "-50px" }}
                       transition={{ delay: i * 0.05, duration: 0.5 }}
-                      className="grid grid-cols-[2fr_1fr_1fr] p-6 items-center hover:bg-white/[0.02] transition-colors"
+                      className="grid grid-cols-[1fr_auto_auto] sm:grid-cols-[2fr_1fr_1fr] p-3 sm:p-6 items-center hover:bg-white/[0.02] transition-colors gap-3 sm:gap-0"
                     >
-                      <div className="text-zinc-200 font-medium text-lg">{row.feature}</div>
-                      <div className="flex justify-center">
+                      <div className="text-zinc-200 font-medium text-[11px] sm:text-lg leading-snug">{row.feature}</div>
+                      <div className="flex justify-center px-2 sm:px-0">
                         {row.collab ? (
-                          <div className="w-10 h-10 rounded-full bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center shadow-[0_0_15px_var(--accent)]">
-                            <ShieldCheck className="w-6 h-6" />
+                          <div className="w-6 h-6 sm:w-10 sm:h-10 rounded-full bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center shadow-[0_0_15px_var(--accent)]">
+                            <ShieldCheck className="w-3 h-3 sm:w-6 sm:h-6" />
                           </div>
                         ) : (
                           <div className="text-zinc-600 font-bold">—</div>
@@ -533,12 +587,12 @@ export default function LandingPage() {
                       </div>
                       <div className="flex justify-center">
                         {row.competitor ? (
-                          <div className="w-10 h-10 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center">
-                            <ShieldCheck className="w-6 h-6" />
+                          <div className="w-6 h-6 sm:w-10 sm:h-10 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center">
+                            <ShieldCheck className="w-3 h-3 sm:w-6 sm:h-6" />
                           </div>
                         ) : (
-                          <div className="w-10 h-10 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          <div className="w-6 h-6 sm:w-10 sm:h-10 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3 sm:w-5 sm:h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                           </div>
                         )}
                       </div>
@@ -606,14 +660,14 @@ export default function LandingPage() {
           <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center opacity-[0.03]" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[80vw] bg-[radial-gradient(circle,rgba(255,255,255,0.03)_0%,transparent_60%)] pointer-events-none" />
           
-          <div className="max-w-7xl mx-auto relative z-10 flex flex-col lg:flex-row gap-20 items-center">
+          <div className="max-w-7xl mx-auto relative z-10 flex flex-col lg:flex-row gap-10 sm:gap-20 items-center">
             {/* Image / Portrait Side */}
             <motion.div 
               initial={{ opacity: 0, x: -50, rotateY: 15 }}
               whileInView={{ opacity: 1, x: 0, rotateY: 0 }}
               viewport={{ once: true, margin: "-100px" }}
               transition={{ duration: 1.5, type: "spring" }}
-              className="w-full lg:w-2/5 relative"
+              className="w-4/5 sm:w-full lg:w-2/5 mx-auto relative"
             >
               <div className="aspect-[4/5] rounded-[3rem] overflow-hidden border border-white/10 relative group bg-zinc-950 flex flex-col items-center justify-center">
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent z-10" />
@@ -649,12 +703,12 @@ export default function LandingPage() {
             </motion.div>
 
             {/* Content Side */}
-            <div className="w-full lg:w-3/5">
+            <div className="w-full lg:w-3/5 text-center sm:text-left px-4 sm:px-0">
               <motion.h2 
                 initial={{ opacity: 0, y: 30 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-5xl md:text-7xl font-black mb-10 tracking-tight"
+                className="text-4xl sm:text-5xl md:text-7xl font-black mb-8 sm:mb-10 tracking-tight"
               >
                 About the <span className="italic font-light font-display text-transparent bg-clip-text bg-gradient-to-r from-zinc-400 to-white">Creator</span>
               </motion.h2>
@@ -712,8 +766,8 @@ export default function LandingPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
               <DownloadCard 
                 os="Windows"
-                status="Version 0.1.0 • Stable"
-                link="/downloads/Lets-Collab-Cloud-Setup.exe"
+                status="Version 1.0.0 • Stable"
+                link="https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe"
                 active={true}
                 icon={
                   <svg viewBox="0 0 24 24" fill="currentColor" className="w-20 h-20 mb-10 text-[var(--accent)] group-hover:scale-125 transition-transform duration-700 ease-out">

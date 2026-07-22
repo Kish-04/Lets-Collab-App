@@ -2,12 +2,21 @@ const { app, BrowserWindow, ipcMain, clipboard, desktopCapturer } = require('ele
 const path = require('path');
 const fs = require('fs');
 
+const getLogPath = (filename) => {
+  try {
+    return path.join(app.getPath('userData'), filename);
+  } catch (e) {
+    const os = require('os');
+    return path.join(os.tmpdir(), filename);
+  }
+};
+
 process.on('uncaughtException', (err) => {
-  fs.writeFileSync('C:/Users/LENOVO/AppData/Local/Temp/electron-error.log', err.stack);
+  try { fs.writeFileSync(getLogPath('electron-error.log'), err.stack); } catch(e){}
   process.exit(1);
 });
 process.on('unhandledRejection', (reason, promise) => {
-  fs.writeFileSync('C:/Users/LENOVO/AppData/Local/Temp/electron-rejection.log', String(reason));
+  try { fs.writeFileSync(getLogPath('electron-rejection.log'), String(reason)); } catch(e){}
   process.exit(1);
 });
 
@@ -18,24 +27,20 @@ let globalStream = null;
 
 const express = require('express');
 const uiServer = express();
-const uiPort = process.env.UI_PORT || 3000;
+let actualUiPort = process.env.UI_PORT || 0; // 0 will auto-assign a free port
 
 // Log all requests to trace Next.js hydration issues
 uiServer.use((req, res, next) => {
   const logMsg = `[EXPRESS] Received request: ${req.method} ${req.originalUrl}\n`;
   console.log(logMsg.trim());
-  try {
-    fs.appendFileSync(path.join(__dirname, 'renderer-error.log'), logMsg);
-  } catch(e) {}
+  try { fs.appendFileSync(getLogPath('renderer-error.log'), logMsg); } catch(e) {}
   
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
     const logMsg2 = `[EXPRESS] Finished: ${req.method} ${req.originalUrl} - ${res.statusCode} (${duration}ms)\n`;
     console.log(logMsg2.trim());
-    try {
-      fs.appendFileSync(path.join(__dirname, 'renderer-error.log'), logMsg2);
-    } catch(e) {}
+    try { fs.appendFileSync(getLogPath('renderer-error.log'), logMsg2); } catch(e) {}
   });
   next();
 });
@@ -54,9 +59,7 @@ uiServer.get('/history', (req, res) => res.sendFile(path.join(__dirname, 'out', 
 uiServer.get('/recent', (req, res) => res.sendFile(path.join(__dirname, 'out', 'recent.html')));
 uiServer.use('/admin', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin.html')));
 
-uiServer.listen(uiPort, () => {
-  console.log(`Let's Collab! UI server running on port ${uiPort}`);
-});
+// We won't listen here anymore, we'll listen inside app.whenReady()
 
 try {
   robot = require('robotjs');
@@ -93,12 +96,12 @@ function createWindow() {
     });
   };
 
-  loadWithRetry(process.env.APP_URL || `http://127.0.0.1:${uiPort}/app`);
+  loadWithRetry(process.env.APP_URL || `http://127.0.0.1:${actualUiPort}/app`);
 
   // Forward renderer console logs to main process terminal and a file
   win.webContents.on('console-message', (event, level, message, line, sourceId) => {
     console.log(`[RENDERER CONSOLE] level ${level}: ${message} (${sourceId}:${line})`);
-    fs.appendFileSync(path.join(__dirname, 'renderer-error.log'), `[RENDERER] ${message}\n`);
+    try { fs.appendFileSync(getLogPath('renderer-error.log'), `[RENDERER] ${message}\n`); } catch(e) {}
   });
 
   // --- PERMISSION HANDLERS (Required for WebRTC Camera/Mic/Screen in Electron) ---
@@ -171,8 +174,18 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  fs.writeFileSync('C:/Users/LENOVO/AppData/Local/Temp/electron-debug.log', 'App is ready! Creating window...\n');
-  createWindow();
+  try { fs.writeFileSync(getLogPath('electron-debug.log'), 'App is ready! Starting Express server...\n'); } catch(e) {}
+  
+  const server = uiServer.listen(actualUiPort, () => {
+    actualUiPort = server.address().port;
+    console.log(`Let's Collab! UI server running on port ${actualUiPort}`);
+    createWindow();
+  });
+
+  server.on('error', (e) => {
+    try { fs.writeFileSync(getLogPath('electron-error.log'), 'Express Error: ' + e.message); } catch(err){}
+    process.exit(1);
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
