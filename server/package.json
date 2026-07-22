@@ -1,0 +1,41 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "check": "node --check index.js && node --check authRoutes.js && node --check adminRoutes.js && node --check blockchainLogger.js && node --check config.js && node --check mockStore.js",
+    "compile:contract": "node compile.js",
+    "test:api": "jest test/api.test.js --detectOpenHandles --forceExit",
+    "test:contracts": "hardhat test test/SessionAudit.js",
+    "test": "npm run test:api && npm run test:contracts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1083.0",
+    "@computer-use/nut-js": "^4.2.0",
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "ethers": "^6.16.0",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.3.0",
+    "multer": "^2.2.0",
+    "nodemailer": "^8.0.2",
+    "resend": "^6.9.4",
+    "socket.io": "^4.8.3",
+    "solc": "^0.8.34"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.28.6",
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2"
+  }
+}

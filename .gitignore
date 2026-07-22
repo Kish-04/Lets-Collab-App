@@ -1,0 +1,29 @@
+# v0 runtime files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+
+# Common ignores
+node_modules/
+.next/
+.env*.local
+.env
+.env.*
+!.env.example
+!server/.env.example
+server/data/
+server/uploads/
+server/cache/
+server/artifacts/
+chrome/
+mkcert.exe
+local-key.pem
+local-cert.pem
+test-results/
+coverage/
+*.log
+electron*.txt
+tsconfig.tsbuildinfo
+.DS_Store
+out/
+dist/

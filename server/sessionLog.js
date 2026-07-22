@@ -1,0 +1,45 @@
+const mongoose = require('mongoose');
+
+const sessionLogSchema = new mongoose.Schema({
+  roomCode: { type: String, required: true, index: true },
+  mode: { type: String, enum: ['collaboration', 'supervised'], required: true },
+  hostName: { type: String },
+  hostEmail: { type: String },
+  startedAt: { type: Date, required: true },
+  endedAt: { type: Date, required: true },
+  durationSeconds: { type: Number, default: 0 },
+  participants: [{
+    socketId: String,
+    name: String,
+    email: String,
+    role: String,
+    permission: String,
+    joinedAt: Date,
+    leftAt: Date,
+  }],
+  events: [{
+    time: String,
+    type: { type: String },
+    message: String,
+  }],
+  messages: [{
+    id: String,
+    time: String,
+    senderId: String,
+    senderName: String,
+    role: String,
+    text: String,
+  }],
+  evidence: [{
+    id: String,
+    time: String,
+    type: { type: String },
+    by: String,
+    label: String,
+  }],
+  riskScore: { type: Number, default: 0 },
+  alertCount: { type: Number, default: 0 },
+  latestTxHash: String,
+}, { timestamps: true });
+
+module.exports = mongoose.models.SessionLog || mongoose.model('SessionLog', sessionLogSchema);

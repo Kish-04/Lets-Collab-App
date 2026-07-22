@@ -1,0 +1,41 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "D:\\Major Project\\DRCSFA\\Decentralized Remote Collaborative System with Federated AI\\b_qkshruWtwB6-1773162616837\\server\\contracts\\IRCPTracker.sol": {
+      "lastModificationDate": 1784370435740,
+      "contentHash": "dd6495ce34dcabadf31ebf6791253efb",
+      "sourceName": "contracts/IRCPTracker.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.24"
+      ],
+      "artifacts": [
+        "IRCPTracker"
+      ]
+    }
+  }
+}

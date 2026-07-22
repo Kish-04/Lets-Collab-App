@@ -1,0 +1,14 @@
+const mongoose = require('mongoose');
+
+const alertSchema = new mongoose.Schema({
+    room: { type: String, required: true, index: true },
+    hostEmail: { type: String },
+    type: { type: String, default: 'anticheat' },
+    event: { type: String },
+    message: { type: String, required: true },
+    penalty: { type: Number, default: 0 },
+}, { timestamps: true });
+
+alertSchema.index({ createdAt: -1 });
+
+module.exports = mongoose.model('Alert', alertSchema);

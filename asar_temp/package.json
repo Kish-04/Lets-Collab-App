@@ -1,0 +1,12 @@
+{
+  "name": "my-project",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "dependencies": {},
+  "homepage": "https://letscollab.com",
+  "author": {
+    "name": "Admin",
+    "email": "admin@letscollab.com"
+  }
+}

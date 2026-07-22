@@ -1,0 +1,29 @@
+FROM node:22
+
+WORKDIR /app
+
+# Install native dependencies for robotjs (X11, libXtst, libpng)
+RUN apt-get update && apt-get install -y \
+    libxtst-dev \
+    libpng++-dev \
+    make \
+    python3 \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy package configuration
+COPY package.json package-lock.json* ./
+
+# Install dependencies at build time to avoid runtime delay
+RUN npm install --legacy-peer-deps
+
+# Copy application source
+COPY . .
+
+# Next.js telemetry disable (optional but good practice)
+ENV NEXT_TELEMETRY_DISABLED=1
+
+EXPOSE 3000
+
+# Next.js dev server bound to all interfaces
+CMD ["npx", "next", "dev", "-H", "0.0.0.0"]
