@@ -1,0 +1,1367 @@
+﻿diff --git a/.env.example b/.env.example
+index b2257d2..731cdee 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,12 +1,15 @@
+ # Frontend configuration
+ NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
+ NEXT_PUBLIC_BACKEND_PORT=3001
++NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL=https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe
+ 
+ # Used by Next.js rewrites during local development/builds.
+ BACKEND_URL=http://localhost:3001
+ 
+ # Used by Electron to load the web UI.
+ APP_URL=http://127.0.0.1:3000
++# Used by installed Electron builds to reach the hosted backend.
++LETSCOLLAB_BACKEND_URL=http://localhost:3001
+ 
+ # Server
+ NODE_ENV=development
+@@ -26,7 +29,14 @@ CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+ ADMIN_EMAIL=admin@example.com
+ ADMIN_PASSWORD=replace-with-a-strong-password
+ 
+-# Email delivery. If RESEND_API_KEY is empty, OTP can still be logged in development.
++# EmailJS OTP delivery. For production, set these on the backend host.
++# EMAILJS_PRIVATE_KEY is optional but recommended when EmailJS API access restrictions require it.
++EMAILJS_SERVICE_ID=
++EMAILJS_TEMPLATE_ID=
++EMAILJS_PUBLIC_KEY=
++EMAILJS_PRIVATE_KEY=
++
++# Optional Resend fallback. If no email provider is configured, OTP can still be logged in development.
+ RESEND_API_KEY=
+ FROM_EMAIL=onboarding@resend.dev
+ LOG_OTP=true
+@@ -50,7 +60,7 @@ METERED_SECRET_KEY=
+ # Development fallback store. Do not commit the generated JSON file.
+ MOCK_STORE_FILE=mock_data.json
+ 
+-# EmailJS (Frontend)
++# Legacy frontend EmailJS names. The backend also reads these for compatibility.
+ NEXT_PUBLIC_EMAILJS_SERVICE_ID=
+ NEXT_PUBLIC_EMAILJS_TEMPLATE_ID=
+ NEXT_PUBLIC_EMAILJS_PUBLIC_KEY=
+diff --git a/app/admin/alerts/page.tsx b/app/admin/alerts/page.tsx
+index 2442116..ffaf9d1 100644
+--- a/app/admin/alerts/page.tsx
++++ b/app/admin/alerts/page.tsx
+@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
+ import { useRouter } from "next/navigation"
+ import { io, Socket } from "socket.io-client"
+ import { Search } from "lucide-react"
+-import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
++import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
+ 
+ type FilterType = "all" | "high" | "medium" | "low"
+@@ -66,7 +66,7 @@ export default function AlertsPage() {
+       try {
+         const res = await fetch(`${getBackendUrl()}/api/admin/reports`, {
+           credentials: 'include',
+-          
++          headers: getAuthHeaders(),
+         })
+         const data = await res.json()
+         if (data.success && data.alerts?.length) {
+diff --git a/app/admin/layout.tsx b/app/admin/layout.tsx
+index 212ecbb..6e49ef6 100644
+--- a/app/admin/layout.tsx
++++ b/app/admin/layout.tsx
+@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation"
+ import { useState, useEffect } from "react"
+ import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut } from "lucide-react"
+ import { BrandMark, StatusBadge } from "@/components/ircp/shared"
+-import { cn } from "@/lib/utils"
++import { cn, getBackendUrl } from "@/lib/utils"
+ 
+ const navItems = [
+   { href: "/admin", label: "Overview", icon: LayoutDashboard },
+@@ -36,7 +36,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
+     setUserInitials(name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase())
+   }, [router, pathname, isLoginPage])
+ 
+-  const handleLogout = () => {
++  const handleLogout = async () => {
++    try {
++      await fetch(`${getBackendUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' })
++    } catch {
++      // Local cleanup still happens even if the backend is unreachable.
++    }
+     localStorage.removeItem('ircp_user')
+     localStorage.removeItem('ircp_name')
+     localStorage.removeItem('ircp_email')
+diff --git a/app/admin/login/page.tsx b/app/admin/login/page.tsx
+index b81976b..08f84de 100644
+--- a/app/admin/login/page.tsx
++++ b/app/admin/login/page.tsx
+@@ -3,7 +3,6 @@
+ import { useState } from "react"
+ import { useRouter } from "next/navigation"
+ import { ArrowLeft, Key, ShieldCheck, User } from "lucide-react"
+-import emailjs from "@emailjs/browser"
+ import { AppLogo, GlowButton } from "@/components/ircp/shared"
+ import { getBackendUrl } from "@/lib/utils"
+ 
+@@ -16,18 +15,6 @@ export default function AdminLoginPage() {
+   const [otpRequired, setOtpRequired] = useState(false)
+   const [otp, setOtp] = useState("")
+ 
+-  const sendOTPEmailJS = async (toEmail: string, otpCode: string, toName: string = 'Administrator') => {
+-    try {
+-      const templateParams = { to_name: toName, to_email: toEmail, passcode: otpCode }
+-      const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || 'service_vlnxzdl'
+-      const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || 'template_ogznez9'
+-      const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || 'tQS6xbi2oi4XC64JV'
+-      await emailjs.send(serviceId, templateId, templateParams, publicKey)
+-    } catch (err: any) {
+-      console.error('[EmailJS ERROR] Failed to send OTP:', err)
+-    }
+-  }
+-
+   const handleSubmit = async (event: React.FormEvent) => {
+     event.preventDefault()
+     setLoading(true)
+@@ -40,13 +27,10 @@ export default function AdminLoginPage() {
+         credentials: "include",
+         body: JSON.stringify({ email: username, password, otp: otpRequired ? otp : undefined }),
+       })
+-      const data = await response.json()
++      const data = await response.json().catch(() => ({}))
+       if (response.ok) {
+         if (data.otpRequired) {
+           setOtpRequired(true)
+-          if (data.otp) {
+-            await sendOTPEmailJS(data.email, data.otp, data.user?.name || data.name || "Admin")
+-          }
+           setErrorMsg("OTP sent to your email. Please enter it below.")
+           setLoading(false)
+           return
+@@ -67,7 +51,7 @@ export default function AdminLoginPage() {
+         setErrorMsg(data.message || "Administrator privileges are required.")
+       }
+     } catch {
+-      setErrorMsg("Unable to connect to the authentication service.")
++      setErrorMsg(`Unable to connect to the authentication service at ${getBackendUrl()}.`)
+     } finally {
+       setLoading(false)
+     }
+diff --git a/app/admin/page.tsx b/app/admin/page.tsx
+index 1773091..81185ff 100644
+--- a/app/admin/page.tsx
++++ b/app/admin/page.tsx
+@@ -3,7 +3,7 @@
+ import { useState, useEffect } from "react"
+ import { Activity, ShieldAlert, Users, LayoutDashboard } from "lucide-react"
+ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts"
+-import { getBackendUrl } from "@/lib/utils"
++import { getAuthHeaders, getBackendUrl } from "@/lib/utils"
+ 
+ export default function AdminOverviewPage() {
+   const [data, setData] = useState<any>(null)
+@@ -12,7 +12,7 @@ export default function AdminOverviewPage() {
+   useEffect(() => {
+     fetch(`${getBackendUrl()}/api/admin/reports`, {
+       credentials: 'include',
+-      
++      headers: getAuthHeaders(),
+     })
+       .then(res => {
+         if (res.status === 401 || res.status === 403) {
+diff --git a/app/admin/reports/page.tsx b/app/admin/reports/page.tsx
+index ef6f2c4..068b27d 100644
+--- a/app/admin/reports/page.tsx
++++ b/app/admin/reports/page.tsx
+@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
+ import { useRouter } from "next/navigation"
+ import { FileText, Download, RefreshCw, Users, Shield, Clock, Link2 } from "lucide-react"
+ import { DataCard } from "@/components/ircp/shared"
+-import { cn, getBackendUrl } from "@/lib/utils"
++import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+ 
+ type UserActivity = {
+   name: string; email: string; role: string; sessionCount: number
+@@ -136,7 +136,7 @@ export default function ReportsPage() {
+   const [loading, setLoading] = useState(true)
+ 
+   useEffect(() => {
+-    if (!localStorage.getItem('ircp_email')) router.push('/')
++    if (!getStoredAuthToken()) router.push('/admin/login')
+   }, [router])
+ 
+   const fetchReports = async () => {
+@@ -144,7 +144,7 @@ export default function ReportsPage() {
+     try {
+       const res = await fetch(`${getBackendUrl()}/api/admin/reports`, {
+         credentials: 'include',
+-        
++        headers: getAuthHeaders(),
+       })
+       const json = await res.json()
+       if (json.success) setData(json)
+diff --git a/app/admin/users/page.tsx b/app/admin/users/page.tsx
+index 6cfb6eb..2c8e9f2 100644
+--- a/app/admin/users/page.tsx
++++ b/app/admin/users/page.tsx
+@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
+ import { io, Socket } from "socket.io-client"
+ import { Search, X, Shield, ShieldOff, UserCheck, UserX, Clock } from "lucide-react"
+ import { DataCard, GlowButton, DangerButton } from "@/components/ircp/shared"
+-import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
++import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+ 
+ type AppUser = {
+   _id: string
+@@ -171,7 +171,7 @@ export default function UsersPage() {
+     try {
+       const res = await fetch(`${getBackendUrl()}/api/admin/users`, {
+         credentials: 'include',
+-        
++        headers: getAuthHeaders(),
+       })
+       const data = await res.json()
+       if (data.success) {
+@@ -195,7 +195,7 @@ export default function UsersPage() {
+     await fetch(`${getBackendUrl()}/api/admin/users/${id}/ban`, {
+       method: 'POST',
+       credentials: 'include',
+-      
++      headers: getAuthHeaders(),
+     })
+     fetchUsers()
+   }
+@@ -206,7 +206,7 @@ export default function UsersPage() {
+       credentials: 'include',
+       headers: {
+         'Content-Type': 'application/json',
+-        
++        ...getAuthHeaders(),
+       },
+       body: JSON.stringify({ role }),
+     })
+diff --git a/app/app/error.tsx b/app/app/error.tsx
+index e712491..e22718d 100644
+--- a/app/app/error.tsx
++++ b/app/app/error.tsx
+@@ -2,12 +2,15 @@
+ import React from 'react'
+ 
+ export default function AppRouteError({ error, reset }: { error: Error, reset: () => void }) {
++  const showDetails = process.env.NODE_ENV !== 'production'
+   return (
+-    <div style={{ padding: '20px', backgroundColor: '#220000', color: '#ffaaaa', fontFamily: 'monospace', height: '100vh', width: '100vw' }}>
+-      <h2>App Route Crash</h2>
+-      <p>{error?.message || 'Unknown error'}</p>
+-      <pre>{error?.stack}</pre>
+-      <button onClick={() => reset()} style={{ padding: '10px', marginTop: '20px' }}>Retry</button>
++    <div style={{ minHeight: '100vh', width: '100vw', display: 'grid', placeItems: 'center', padding: '24px', background: '#080810', color: '#e8eaf2', fontFamily: 'system-ui, sans-serif' }}>
++      <div style={{ maxWidth: '420px', textAlign: 'center' }}>
++        <h2 style={{ fontSize: '28px', marginBottom: '12px' }}>Dashboard error</h2>
++        <p style={{ color: '#9aa6bd', marginBottom: '20px' }}>The dashboard could not finish loading. Try again once, and if it repeats, check the backend logs.</p>
++        {showDetails && <p style={{ color: '#ff6b8a', fontFamily: 'monospace', fontSize: '12px' }}>{error?.message || 'Unknown error'}</p>}
++        <button onClick={() => reset()} style={{ marginTop: '18px', padding: '10px 18px', borderRadius: '8px', border: '1px solid #2f7df6', background: '#2f7df6', color: 'white', fontWeight: 700 }}>Retry</button>
++      </div>
+     </div>
+   )
+ }
+diff --git a/app/app/page.tsx b/app/app/page.tsx
+index 3072b7d..e97235b 100644
+--- a/app/app/page.tsx
++++ b/app/app/page.tsx
+@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation"
+ import { motion, AnimatePresence, useSpring } from "framer-motion"
+ import { Monitor, Gamepad2, LayoutDashboard, ArrowRight, User, Lock, Mail, ShieldAlert, Activity, Sparkles, Network, Download } from "lucide-react"
+ import { io, Socket } from "socket.io-client"
+-import emailjs from "@emailjs/browser"
+ import { AppLogo, StatusBadge, GlowButton, PermissionTag, LiveDot } from "@/components/ircp/shared"
+ import { cn, getBackendUrl } from "@/lib/utils"
+ 
+@@ -137,6 +136,9 @@ const itemVariants = {
+   show: { opacity: 1, y: 0, transition: { type: "spring" as const, damping: 20 } }
+ }
+ 
++const desktopDownloadUrl = process.env.NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL ||
++  "https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe"
++
+ export default function HomePage() {
+   const router = useRouter()
+   const [roomId, setRoomId] = useState("")
+@@ -205,15 +207,11 @@ export default function HomePage() {
+     if (roomId.trim()) router.push(`/session?room=${roomId.toUpperCase()}`)
+   }
+ 
+-  const sendOTPEmailJS = async (toEmail: string, otp: string, toName: string = 'User') => {
++  const readApiResponse = async (res: Response) => {
+     try {
+-      const templateParams = { to_name: toName, to_email: toEmail, passcode: otp }
+-      const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || 'service_vlnxzdl'
+-      const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || 'template_ogznez9'
+-      const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || 'tQS6xbi2oi4XC64JV'
+-      await emailjs.send(serviceId, templateId, templateParams, publicKey)
+-    } catch (err: any) {
+-      console.error('[EmailJS ERROR] Failed to send OTP:', err)
++      return await res.json()
++    } catch {
++      return {}
+     }
+   }
+ 
+@@ -223,74 +221,74 @@ export default function HomePage() {
+     setErrorMsg("")
+ 
+     try {
++      const backendUrl = getBackendUrl()
+       if (authMode === "register") {
+-        const res = await fetch(`${getBackendUrl()}/api/auth/register`, {
++        const res = await fetch(`${backendUrl}/api/auth/register`, {
+           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+           body: JSON.stringify({ name: formData.name, email: formData.email, password: formData.password })
+         })
+-        const data = await res.json()
++        const data = await readApiResponse(res)
+         if (res.ok) {
+-          if (data.otp) await sendOTPEmailJS(formData.email, data.otp, formData.name)
+           setAuthMode("verify")
+         } else setErrorMsg(data.message || "Registration failed")
+       }
+       else if (authMode === "verify") {
+-        const res = await fetch(`${getBackendUrl()}/api/auth/verify-otp`, {
++        const res = await fetch(`${backendUrl}/api/auth/verify-otp`, {
+           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+           body: JSON.stringify({ email: formData.email, otp: formData.otp })
+         })
+-        const data = await res.json()
++        const data = await readApiResponse(res)
+         if (res.ok) {
+           localStorage.setItem('ircp_user', JSON.stringify(data))
+           localStorage.setItem('ircp_name', data.name || formData.email)
+           localStorage.setItem('ircp_email', formData.email)
++          localStorage.setItem('ircp_role', data.role || 'user')
+           setIsAuth(true)
+           setAuthMode(null)
+         } else setErrorMsg(data.message || "Verification failed")
+       }
+       else if (authMode === "login") {
+-        const res = await fetch(`${getBackendUrl()}/api/auth/login`, {
++        const res = await fetch(`${backendUrl}/api/auth/login`, {
+           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+           body: JSON.stringify({ email: formData.email, password: formData.password })
+         })
+-        const data = await res.json()
++        const data = await readApiResponse(res)
+         if (res.ok) {
+-          if (!data.otp) {
++          if (!data.otpRequired) {
+             localStorage.setItem('ircp_user', JSON.stringify(data))
+             localStorage.setItem('ircp_name', data.name || formData.email)
+             localStorage.setItem('ircp_email', formData.email)
++            localStorage.setItem('ircp_role', data.role || 'user')
+             setIsAuth(true)
+             setAuthMode(null)
+           } else {
+-            await sendOTPEmailJS(formData.email, data.otp, data.name || 'User')
+             setAuthMode("verify")
+           }
+         } else setErrorMsg(data.message || "Login failed")
+       }
+       else if (authMode === "forgot") {
+-        const res = await fetch(`${getBackendUrl()}/api/auth/forgot-password`, {
++        const res = await fetch(`${backendUrl}/api/auth/forgot-password`, {
+           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+           body: JSON.stringify({ email: formData.email })
+         })
+-        const data = await res.json()
++        const data = await readApiResponse(res)
+         if (res.ok) {
+-          if (data.otp) await sendOTPEmailJS(formData.email, data.otp, 'User')
+           setAuthMode("reset")
+         } else setErrorMsg(data.message || "Failed to send reset link")
+       }
+       else if (authMode === "reset") {
+-        const res = await fetch(`${getBackendUrl()}/api/auth/reset-password`, {
++        const res = await fetch(`${backendUrl}/api/auth/reset-password`, {
+           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+           body: JSON.stringify({ email: formData.email, otp: formData.otp, newPassword: formData.password })
+         })
+-        const data = await res.json()
++        const data = await readApiResponse(res)
+         if (res.ok) {
+           setAuthMode("login")
+           setFormData({ ...formData, password: "", otp: "" })
+         } else setErrorMsg(data.message || "Reset failed")
+       }
+     } catch (err: any) {
+-      setErrorMsg("Network error. Ensure the server is running.")
++      setErrorMsg(`Cannot reach the authentication service at ${getBackendUrl()}. Check backend deployment/configuration.`)
+     } finally {
+       setLoading(false)
+     }
+@@ -299,6 +297,9 @@ export default function HomePage() {
+   const handleLogout = async () => {
+     try { await fetch(`${getBackendUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' }) } catch (e) {}
+     localStorage.removeItem('ircp_user')
++    localStorage.removeItem('ircp_name')
++    localStorage.removeItem('ircp_email')
++    localStorage.removeItem('ircp_role')
+     setIsAuth(false)
+   }
+ 
+@@ -328,8 +329,7 @@ export default function HomePage() {
+             <motion.a 
+               whileHover={{ scale: 1.05 }}
+               whileTap={{ scale: 0.95 }}
+-              href="/downloads/Lets-Collab-Cloud-Setup.exe" 
+-              download 
++              href={desktopDownloadUrl}
+               className="hidden sm:flex items-center gap-2 px-5 py-2.5 bg-[var(--text-primary)] text-[var(--bg)] font-bold rounded-full shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)] transition-all text-sm"
+             >
+               <Download className="w-4 h-4" />
+diff --git a/app/error.tsx b/app/error.tsx
+index 1e4dc64..58a7907 100644
+--- a/app/error.tsx
++++ b/app/error.tsx
+@@ -2,12 +2,15 @@
+ import React from 'react'
+ 
+ export default function ErrorBoundary({ error, reset }: { error: Error, reset: () => void }) {
++  const showDetails = process.env.NODE_ENV !== 'production'
+   return (
+-    <div style={{ padding: '20px', color: 'red', fontFamily: 'monospace' }}>
+-      <h2>Route Error Boundary</h2>
+-      <p>{error.message}</p>
+-      <pre>{error.stack}</pre>
+-      <button onClick={() => reset()}>Retry</button>
++    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: '24px', background: '#080810', color: '#e8eaf2', fontFamily: 'system-ui, sans-serif' }}>
++      <div style={{ maxWidth: '420px', textAlign: 'center' }}>
++        <h2 style={{ fontSize: '28px', marginBottom: '12px' }}>Something went wrong</h2>
++        <p style={{ color: '#9aa6bd', marginBottom: '20px' }}>The page hit an unexpected error. Try again once, and if it repeats, check the backend logs.</p>
++        {showDetails && <p style={{ color: '#ff6b8a', fontFamily: 'monospace', fontSize: '12px' }}>{error.message}</p>}
++        <button onClick={() => reset()} style={{ marginTop: '18px', padding: '10px 18px', borderRadius: '8px', border: '1px solid #2f7df6', background: '#2f7df6', color: 'white', fontWeight: 700 }}>Retry</button>
++      </div>
+     </div>
+   )
+ }
+diff --git a/app/global-error.tsx b/app/global-error.tsx
+index 85781ff..9ea75d1 100644
+--- a/app/global-error.tsx
++++ b/app/global-error.tsx
+@@ -2,14 +2,17 @@
+ import React from 'react'
+ 
+ export default function GlobalError({ error, reset }: { error: Error, reset: () => void }) {
++  const showDetails = process.env.NODE_ENV !== 'production'
+   return (
+     <html>
+       <body>
+-        <div style={{ padding: '20px', color: 'red', fontFamily: 'monospace' }}>
+-          <h2>Global Error Boundary</h2>
+-          <p>{error.message}</p>
+-          <pre>{error.stack}</pre>
+-          <button onClick={() => reset()}>Retry</button>
++        <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: '24px', background: '#080810', color: '#e8eaf2', fontFamily: 'system-ui, sans-serif' }}>
++          <div style={{ maxWidth: '420px', textAlign: 'center' }}>
++            <h2 style={{ fontSize: '28px', marginBottom: '12px' }}>Application error</h2>
++            <p style={{ color: '#9aa6bd', marginBottom: '20px' }}>The app hit an unexpected error. Try again once, and if it repeats, check the backend logs.</p>
++            {showDetails && <p style={{ color: '#ff6b8a', fontFamily: 'monospace', fontSize: '12px' }}>{error.message}</p>}
++            <button onClick={() => reset()} style={{ marginTop: '18px', padding: '10px 18px', borderRadius: '8px', border: '1px solid #2f7df6', background: '#2f7df6', color: 'white', fontWeight: 700 }}>Retry</button>
++          </div>
+         </div>
+       </body>
+     </html>
+diff --git a/app/history/page.tsx b/app/history/page.tsx
+index 123c1d7..e502ff4 100644
+--- a/app/history/page.tsx
++++ b/app/history/page.tsx
+@@ -1,6 +1,7 @@
+ 'use client';
+ import { useEffect, useState, Suspense } from 'react';
+ import { useSearchParams } from 'next/navigation';
++import { getBackendUrl } from '@/lib/utils';
+ 
+ export default function SessionHistoryWrapper() {
+   return (
+@@ -18,11 +19,19 @@ function SessionHistoryViewer() {
+   const [error, setError] = useState('');
+ 
+   useEffect(() => {
+-    if (!sessionId) return;
++    if (!sessionId) {
++      setError('Missing session ID.');
++      setLoading(false);
++      return;
++    }
+     const fetchHistory = async () => {
+       try {
+-        const res = await fetch(`http://localhost:3001/api/sessions/${sessionId}/history`);
+-        const data = await res.json();
++        const res = await fetch(`${getBackendUrl()}/api/sessions/${encodeURIComponent(sessionId)}/history`);
++        const data = await res.json().catch(() => ({}));
++        if (!res.ok) {
++          setError(data.message || 'Failed to fetch history');
++          return;
++        }
+         if (data.success) {
+           setLogs(data.logs);
+         } else {
+@@ -88,15 +97,21 @@ function SessionHistoryViewer() {
+                     {log.controllerEmail && log.controllerEmail !== 'Unknown Hash' && (
+                         <p className="flex justify-between border-b border-white/5 pb-1"><span className="text-gray-400">Controller:</span> <span className="font-medium text-emerald-400">{log.controllerEmail}</span></p>
+                     )}
+-                    <a
+-                      href={`https://sepolia.etherscan.io/tx/${log.txHash}`}
+-                      target="_blank"
+-                      rel="noreferrer"
+-                      className="inline-flex items-center gap-1.5 mt-3 text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-md font-mono"
+-                    >
+-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+-                      {log.txHash.substring(0, 10)}...{log.txHash.substring(log.txHash.length - 8)}
+-                    </a>
++                    {typeof log.txHash === 'string' && log.txHash.startsWith('0x') ? (
++                      <a
++                        href={`https://sepolia.etherscan.io/tx/${log.txHash}`}
++                        target="_blank"
++                        rel="noreferrer"
++                        className="inline-flex items-center gap-1.5 mt-3 text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-md font-mono"
++                      >
++                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
++                        {log.txHash.substring(0, 10)}...{log.txHash.substring(log.txHash.length - 8)}
++                      </a>
++                    ) : (
++                      <span className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-400 bg-white/5 px-3 py-1.5 rounded-md font-mono">
++                        {log.txHash || 'Off-chain / unavailable'}
++                      </span>
++                    )}
+                   </div>
+                 </div>
+               </div>
+diff --git a/app/page.tsx b/app/page.tsx
+index 9d227ff..b4c4c67 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -6,6 +6,9 @@ import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, C
+ import { AppLogo } from '@/components/ircp/shared'
+ import Link from 'next/link'
+ 
++const desktopDownloadUrl = process.env.NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL ||
++  "https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe"
++
+ // --- Advanced Animation Utilities ---
+ 
+ // 1. Text Reveal Character by Character
+@@ -767,7 +770,7 @@ export default function LandingPage() {
+               <DownloadCard 
+                 os="Windows"
+                 status="Version 1.0.0 ΓÇó Stable"
+-                link="https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe"
++                link={desktopDownloadUrl}
+                 active={true}
+                 icon={
+                   <svg viewBox="0 0 24 24" fill="currentColor" className="w-20 h-20 mb-10 text-[var(--accent)] group-hover:scale-125 transition-transform duration-700 ease-out">
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 4b4f64d..9b32f7c 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -94,6 +94,10 @@ services:
+       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
++      - EMAILJS_SERVICE_ID=${EMAILJS_SERVICE_ID:-}
++      - EMAILJS_TEMPLATE_ID=${EMAILJS_TEMPLATE_ID:-}
++      - EMAILJS_PUBLIC_KEY=${EMAILJS_PUBLIC_KEY:-}
++      - EMAILJS_PRIVATE_KEY=${EMAILJS_PRIVATE_KEY:-}
+       - LOG_OTP=${LOG_OTP:-true}
+       - ALLOW_MOCK_BLOCKCHAIN=${ALLOW_MOCK_BLOCKCHAIN:-true}
+       - METERED_DOMAIN=${METERED_DOMAIN:-}
+@@ -132,6 +136,7 @@ services:
+     environment:
+       - BACKEND_URL=http://backend:3001
+       - NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
++      - NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL=${NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL:-https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe}
+       - NEXT_PUBLIC_FORCE_TURN=${NEXT_PUBLIC_FORCE_TURN:-false}
+       - NEXT_PUBLIC_TURN_URL=${NEXT_PUBLIC_TURN_URL:-}
+       - NEXT_PUBLIC_TURN_USERNAME=${NEXT_PUBLIC_TURN_USERNAME:-}
+diff --git a/lib/AntiCheatEngine.ts b/lib/AntiCheatEngine.ts
+index 5df4dfe..f3b74a8 100644
+--- a/lib/AntiCheatEngine.ts
++++ b/lib/AntiCheatEngine.ts
+@@ -13,7 +13,7 @@ if (typeof window !== "undefined") {
+   };
+ }
+ export type AntiCheatEvent = {
+-  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY";
++  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY" | "SYSTEM";
+   message: string;
+   scorePenalty: number;
+ };
+@@ -202,7 +202,7 @@ export class AntiCheatEngine {
+ 
+           let newHeadMargin = DEFAULT_CONFIG.headPoseMargin;
+           if (poseVariances.length > 50) { // need at least half the samples to be valid
+-            const sortedVariances = [...poseVariances].sort();
++            const sortedVariances = [...poseVariances].sort((a, b) => a - b);
+             const p95 = sortedVariances[Math.floor(sortedVariances.length * 0.95)];
+             newHeadMargin = Math.max(0.3, p95 + 0.15); // pad the natural variance by 0.15
+           }
+@@ -211,7 +211,7 @@ export class AntiCheatEngine {
+           if (lowConfidenceCount > TOTAL_SAMPLES * 0.4) {
+             // More than 40% of samples had low/no confidence tracking (bad lighting)
+             newEyeThreshold = 0.50; // heavily relax eye tracking to prevent false positives
+-            this.emitEvent("SYSTEM" as any, "[ALERT] AI Sensitivity auto-relaxed due to low lighting/poor confidence during calibration.", 0);
++            this.emitEvent("SYSTEM", "[ALERT] AI Sensitivity auto-relaxed due to low lighting/poor confidence during calibration.", 0);
+           }
+ 
+           this.setConfig({
+@@ -613,4 +613,4 @@ export class AntiCheatEngine {
+       this.eventCallback?.({ type, message, scorePenalty });
+     }
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/utils.ts b/lib/utils.ts
+index 2cad240..9750dd4 100644
+--- a/lib/utils.ts
++++ b/lib/utils.ts
+@@ -5,25 +5,64 @@ export function cn(...inputs: ClassValue[]) {
+   return twMerge(clsx(inputs))
+ }
+ 
++declare global {
++  interface Window {
++    electronConfig?: {
++      backendUrl?: string | null
++    }
++    __LETSCOLLAB_BACKEND_URL__?: string
++  }
++}
++
++function normalizeUrl(value?: string | null) {
++  const trimmed = String(value || '').trim()
++  return trimmed ? trimmed.replace(/\/$/, '') : ''
++}
++
++function getRuntimeBackendUrl() {
++  if (typeof window === 'undefined') return ''
++  let storedBackendUrl = ''
++  try {
++    storedBackendUrl = window.localStorage.getItem('ircp_backend_url') || ''
++  } catch {
++    storedBackendUrl = ''
++  }
++  return normalizeUrl(
++    window.electronConfig?.backendUrl ||
++    window.__LETSCOLLAB_BACKEND_URL__ ||
++    storedBackendUrl
++  )
++}
++
++function isLocalOrPrivateHost(hostname: string) {
++  return (
++    hostname === 'localhost' ||
++    hostname === '127.0.0.1' ||
++    hostname.startsWith('192.168.') ||
++    hostname.startsWith('10.') ||
++    hostname.startsWith('172.')
++  )
++}
++
+ export function getBackendUrl() {
+-  const configured = process.env.NEXT_PUBLIC_BACKEND_URL
+-  if (configured) return configured.replace(/\/$/, '')
++  const runtimeConfigured = getRuntimeBackendUrl()
++  if (runtimeConfigured) return runtimeConfigured
++
++  const configured = normalizeUrl(process.env.NEXT_PUBLIC_BACKEND_URL)
++  if (configured) return configured
+ 
+   const backendPort = process.env.NEXT_PUBLIC_BACKEND_PORT || '3001'
+   if (typeof window !== 'undefined') {
+     const hostname = window.location.hostname
+-    if (
+-      hostname === 'localhost' ||
+-      hostname === '127.0.0.1' ||
+-      hostname.startsWith('192.168.') ||
+-      hostname.startsWith('10.') ||
+-      hostname.startsWith('172.')
+-    ) {
++    if (isLocalOrPrivateHost(hostname)) {
+       return `http://${hostname}:${backendPort}`
+     }
++    if (window.location.protocol === 'file:') {
++      return `http://localhost:${backendPort}`
++    }
+     return window.location.origin
+   }
+-  return process.env.BACKEND_URL || `http://localhost:${backendPort}`;
++  return normalizeUrl(process.env.BACKEND_URL) || `http://localhost:${backendPort}`;
+ }
+ 
+ export function getStoredAuthToken(): string | null {
+@@ -38,6 +77,11 @@ export function getStoredAuthToken(): string | null {
+   }
+ }
+ 
++export function getAuthHeaders(): HeadersInit {
++  const token = getStoredAuthToken()
++  return token ? { Authorization: `Bearer ${token}` } : {}
++}
++
+ export async function fetchIceServers(): Promise<RTCIceServer[]> {
+   const staticTurnUrl = process.env.NEXT_PUBLIC_TURN_URL
+   if (staticTurnUrl) {
+diff --git a/main.js b/main.js
+index 2eda0f1..a1bee3f 100644
+--- a/main.js
++++ b/main.js
+@@ -29,6 +29,48 @@ const express = require('express');
+ const uiServer = express();
+ let actualUiPort = process.env.UI_PORT || 0; // 0 will auto-assign a free port
+ 
++function normalizeUrl(value) {
++  const trimmed = String(value || '').trim();
++  return trimmed ? trimmed.replace(/\/$/, '') : '';
++}
++
++function readJsonConfig(filePath) {
++  try {
++    if (!filePath || !fs.existsSync(filePath)) return null;
++    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
++  } catch (err) {
++    console.warn(`Could not read config file ${filePath}:`, err.message);
++    return null;
++  }
++}
++
++function getConfiguredBackendUrl() {
++  const envUrl = normalizeUrl(
++    process.env.LETSCOLLAB_BACKEND_URL ||
++    process.env.NEXT_PUBLIC_BACKEND_URL ||
++    process.env.BACKEND_URL
++  );
++  if (envUrl) return envUrl;
++
++  const configPaths = [
++    path.join(__dirname, 'app-config.json'),
++    process.resourcesPath ? path.join(process.resourcesPath, 'app-config.json') : null,
++  ];
++  try {
++    configPaths.push(path.join(app.getPath('userData'), 'app-config.json'));
++  } catch (err) {
++    // app.getPath may be unavailable very early in startup.
++  }
++
++  for (const configPath of configPaths) {
++    const config = readJsonConfig(configPath);
++    const backendUrl = normalizeUrl(config && (config.backendUrl || config.NEXT_PUBLIC_BACKEND_URL));
++    if (backendUrl) return backendUrl;
++  }
++
++  return '';
++}
++
+ // Log all requests to trace Next.js hydration issues
+ uiServer.use((req, res, next) => {
+   const logMsg = `[EXPRESS] Received request: ${req.method} ${req.originalUrl}\n`;
+@@ -51,13 +93,23 @@ uiServer.use(express.static(path.join(__dirname, 'out'), {
+   }
+ }));
+ 
++uiServer.get('/app-config.json', (req, res) => {
++  res.json({ backendUrl: getConfiguredBackendUrl() || null });
++});
++
+ uiServer.get('/', (req, res) => res.sendFile(path.join(__dirname, 'out', 'index.html')));
+ uiServer.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'out', 'app.html')));
+ uiServer.get('/session', (req, res) => res.sendFile(path.join(__dirname, 'out', 'session.html')));
+ uiServer.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'out', 'login.html')));
+ uiServer.get('/history', (req, res) => res.sendFile(path.join(__dirname, 'out', 'history.html')));
+ uiServer.get('/recent', (req, res) => res.sendFile(path.join(__dirname, 'out', 'recent.html')));
+-uiServer.use('/admin', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin.html')));
++uiServer.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin.html')));
++uiServer.get('/admin/login', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'login.html')));
++uiServer.get('/admin/alerts', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'alerts.html')));
++uiServer.get('/admin/blockchain', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'blockchain.html')));
++uiServer.get('/admin/users', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'users.html')));
++uiServer.get('/admin/reports', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'reports.html')));
++uiServer.get('/admin/sessions', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'sessions.html')));
+ 
+ // We won't listen here anymore, we'll listen inside app.whenReady()
+ 
+@@ -70,13 +122,15 @@ try {
+ }
+ 
+ function createWindow() {
++  const backendUrl = getConfiguredBackendUrl();
+   const win = new BrowserWindow({
+     width: 1280,
+     height: 800,
+     webPreferences: {
+       nodeIntegration: false,
+       contextIsolation: true,
+-      preload: path.join(__dirname, 'preload.js')
++      preload: path.join(__dirname, 'preload.js'),
++      additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
+     }
+   });
+ 
+@@ -277,6 +331,18 @@ function mapModifiers(mods) {
+ 
+ function mapBrowserKeyToRobotJS(key, code) {
+   const keyLower = key.toLowerCase();
++
++  const aliases = {
++    arrowup: 'up',
++    arrowdown: 'down',
++    arrowleft: 'left',
++    arrowright: 'right',
++    esc: 'escape',
++    pageup: 'pageup',
++    pagedown: 'pagedown',
++  };
++
++  if (aliases[keyLower]) return aliases[keyLower];
+   
+   const exactMatches = [
+     'backspace', 'delete', 'enter', 'tab', 'escape', 'up', 'down', 'right', 'left', 'home', 'end', 'pageup', 'pagedown', 'space'
+diff --git a/package.json b/package.json
+index deca0bd..60e0094 100644
+--- a/package.json
++++ b/package.json
+@@ -36,12 +36,21 @@
+       "**/*",
+       "!server/**/*",
+       "!test",
++      "!scratch/**/*",
++      "!asar_temp/**/*",
+       "!dist",
+       "!.next",
+       "!.git",
+       "!chrome",
+       "!out/downloads",
+-      "!public/downloads"
++      "!public/downloads",
++      "!e2e_audit.js",
++      "!test-*.js",
++      "!test_*.ts",
++      "!fix*.js",
++      "!patch*.js",
++      "!modify.js",
++      "!inject-sidebar.js"
+     ],
+     "mac": {
+       "target": [
+diff --git a/preload.js b/preload.js
+index 4837e57..de83d0e 100644
+--- a/preload.js
++++ b/preload.js
+@@ -1,5 +1,12 @@
+ const { contextBridge, ipcRenderer } = require('electron');
+ 
++const backendArg = process.argv.find(arg => arg.startsWith('--letscollab-backend-url='));
++const backendUrl = backendArg ? backendArg.slice('--letscollab-backend-url='.length) : null;
++
++contextBridge.exposeInMainWorld('electronConfig', {
++  backendUrl
++});
++
+ contextBridge.exposeInMainWorld('ipcRenderer', {
+   send: (channel, data) => {
+     // Whitelist channels
+diff --git a/server/.env.example b/server/.env.example
+index 91f564d..4a01d01 100644
+--- a/server/.env.example
++++ b/server/.env.example
+@@ -16,7 +16,14 @@ CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+ ADMIN_EMAIL=admin@example.com
+ ADMIN_PASSWORD=replace-with-a-strong-password
+ 
+-# Email delivery. If RESEND_API_KEY is empty, OTP can still be logged in development.
++# EmailJS OTP delivery. For production, set these on the backend host.
++# EMAILJS_PRIVATE_KEY is optional but recommended when EmailJS API access restrictions require it.
++EMAILJS_SERVICE_ID=
++EMAILJS_TEMPLATE_ID=
++EMAILJS_PUBLIC_KEY=
++EMAILJS_PRIVATE_KEY=
++
++# Optional Resend fallback. If no email provider is configured, OTP can still be logged in development.
+ RESEND_API_KEY=
+ FROM_EMAIL=onboarding@resend.dev
+ LOG_OTP=true
+diff --git a/server/adminRoutes.js b/server/adminRoutes.js
+index cb200b8..b9f1caa 100644
+--- a/server/adminRoutes.js
++++ b/server/adminRoutes.js
+@@ -94,9 +94,24 @@ const s3 = new S3Client({
+ });
+ 
+ const storage = multer.memoryStorage();
+-const upload = multer({ storage });
++const upload = multer({
++  storage,
++  limits: {
++    fileSize: Number(process.env.EVIDENCE_MAX_BYTES || 25 * 1024 * 1024),
++  },
++});
++
++function uploadEvidenceFile(req, res, next) {
++  upload.single('evidenceFile')(req, res, (err) => {
++    if (!err) return next();
++    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
++      return res.status(413).json({ success: false, message: 'Evidence file is too large.' });
++    }
++    return res.status(400).json({ success: false, message: err.message || 'Invalid evidence upload.' });
++  });
++}
+ 
+-router.post('/upload-evidence', protectAuthenticated, upload.single('evidenceFile'), async (req, res) => {
++router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async (req, res) => {
+   try {
+     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+ 
+diff --git a/server/authRoutes.js b/server/authRoutes.js
+index b3c72c9..925866c 100644
+--- a/server/authRoutes.js
++++ b/server/authRoutes.js
+@@ -6,6 +6,8 @@ const mockStore = require('./mockStore');
+ 
+ const router = express.Router();
+ const OTP_TTL_MS = 10 * 60 * 1000;
++const isProduction = process.env.NODE_ENV === 'production';
++const exposeOtpInResponse = process.env.RETURN_OTP_IN_RESPONSE === 'true' && !isProduction;
+ 
+ let resendClient = null;
+ try {
+@@ -21,6 +23,16 @@ try {
+ }
+ 
+ const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
++const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
++
++function getEmailJsConfig() {
++  return {
++    serviceId: process.env.EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || '',
++    templateId: process.env.EMAILJS_TEMPLATE_ID || process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || '',
++    publicKey: process.env.EMAILJS_PUBLIC_KEY || process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '',
++    privateKey: process.env.EMAILJS_PRIVATE_KEY || process.env.EMAILJS_ACCESS_TOKEN || '',
++  };
++}
+ 
+ function normalizeEmail(email) {
+   return String(email || '').trim().toLowerCase();
+@@ -34,6 +46,59 @@ function generateToken(id, email) {
+   return signJwt({ id, email }, { expiresIn: process.env.JWT_EXPIRES_IN || '30d' });
+ }
+ 
++function otpResponse(payload, otp) {
++  return exposeOtpInResponse ? { ...payload, otp } : payload;
++}
++
++function escapeHtml(value) {
++  return String(value || '')
++    .replace(/&/g, '&amp;')
++    .replace(/</g, '&lt;')
++    .replace(/>/g, '&gt;')
++    .replace(/"/g, '&quot;')
++    .replace(/'/g, '&#39;');
++}
++
++async function sendEmailJsOTP(toEmail, otp, name = 'User') {
++  const { serviceId, templateId, publicKey, privateKey } = getEmailJsConfig();
++  if (!serviceId || !templateId || !publicKey) return false;
++
++  const payload = {
++    service_id: serviceId,
++    template_id: templateId,
++    user_id: publicKey,
++    template_params: {
++      to_name: name,
++      to_email: toEmail,
++      passcode: otp,
++      otp,
++      code: otp,
++    },
++  };
++
++  if (privateKey) payload.accessToken = privateKey;
++
++  try {
++    const response = await fetch(EMAILJS_ENDPOINT, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(payload),
++    });
++
++    if (response.ok) {
++      console.log(`[EMAILJS] OTP sent to ${toEmail}`);
++      return true;
++    }
++
++    const body = await response.text().catch(() => '');
++    console.error(`[EMAILJS ERROR] ${response.status} ${response.statusText}${body ? ` - ${body}` : ''}`);
++    return false;
++  } catch (err) {
++    console.error(`[EMAILJS ERROR] ${err.message}`);
++    return false;
++  }
++}
++
+ function setAuthCookie(res, token) {
+   res.cookie('auth_token', token, {
+     httpOnly: true,
+@@ -48,7 +113,10 @@ async function hashPassword(password) {
+ }
+ 
+ async function sendOTPEmail(toEmail, otp, name = 'User') {
+-  if (resendClient) {
++  let delivered = false;
++  delivered = await sendEmailJsOTP(toEmail, otp, name);
++
++  if (!delivered && resendClient) {
+     try {
+       const response = await resendClient.emails.send({
+         from: `Let's Collab! <${FROM_EMAIL}>`,
+@@ -60,7 +128,7 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
+               <h1 style="color: #2f7df6; font-size: 24px; margin: 0; letter-spacing: 1px;">Let's Collab!</h1>
+               <p style="color: #8291a8; font-size: 11px; margin: 4px 0 0; letter-spacing: 2px;">WORK TOGETHER. STAY IN CONTROL.</p>
+             </div>
+-            <p style="color: #8890a8; font-size: 14px; margin-bottom: 8px;">Hello ${name},</p>
++            <p style="color: #8890a8; font-size: 14px; margin-bottom: 8px;">Hello ${escapeHtml(name)},</p>
+             <p style="color: #8890a8; font-size: 14px; margin-bottom: 32px;">Your verification code is:</p>
+             <div style="background: #0f0f1a; border: 1px solid #2f7df6; border-radius: 8px; padding: 24px; text-align: center; margin-bottom: 32px;">
+               <span style="color: #2f7df6; font-size: 40px; font-weight: bold; letter-spacing: 12px;">${otp}</span>
+@@ -78,20 +146,26 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
+         console.error(`[EMAIL ERROR] Resend failed: ${response.error.message}`);
+       } else {
+         console.log(`[EMAIL] OTP sent to ${toEmail}`);
++        delivered = true;
+       }
+     } catch (err) {
+       console.error(`[EMAIL ERROR] ${err.message}`);
+     }
+   }
+ 
+-  if (process.env.LOG_OTP !== 'false') {
++  const terminalOtpAllowed = !isProduction && process.env.LOG_OTP !== 'false';
++  if (terminalOtpAllowed) {
+     console.log('\n=============================================');
+     console.log('[OTP TERMINAL LOG]');
+     console.log(`Recipient: ${toEmail}`);
+     console.log(`OTP Code:  ${otp}`);
+     console.log('=============================================\n');
+   }
+-  return true;
++  return delivered || terminalOtpAllowed;
++}
++
++function otpDeliveryErrorMessage() {
++  return 'Email verification service is not configured. Set EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, and EMAILJS_PUBLIC_KEY on the backend.';
+ }
+ 
+ function validateRegisterInput(name, email, password) {
+@@ -130,8 +204,9 @@ router.post('/register', async (req, res) => {
+         mockStore.saveUser(userExists);
+       }
+ 
+-      sendOTPEmail(email, otp, userExists.name).catch(console.error);
+-      return res.status(200).json({ message: 'OTP resent to email', email, otpRequired: true, otp });
++      const otpDelivered = await sendOTPEmail(email, otp, userExists.name);
++      if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
++      return res.status(200).json(otpResponse({ message: 'OTP resent to email', email, otpRequired: true }, otp));
+     }
+ 
+     const otp = createOtp();
+@@ -147,8 +222,9 @@ router.post('/register', async (req, res) => {
+         isVerified: false,
+       });
+ 
+-    sendOTPEmail(email, otp, name).catch(console.error);
+-    res.status(201).json({ message: 'OTP sent to email', email: newUser.email, otpRequired: true, otp });
++    const otpDelivered = await sendOTPEmail(email, otp, name);
++    if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
++    res.status(201).json(otpResponse({ message: 'OTP sent to email', email: newUser.email, otpRequired: true }, otp));
+   } catch (error) {
+     res.status(500).json({ message: error.message });
+   }
+@@ -259,8 +335,9 @@ router.post('/login', async (req, res) => {
+     if (global.dbConnected) await user.save();
+     else mockStore.saveUser(user);
+ 
+-    sendOTPEmail(email, otp, user.name).catch(console.error);
+-    res.json({ message: 'OTP sent to email', email, otpRequired: true, name: user.name, otp });
++    const otpDelivered = await sendOTPEmail(email, otp, user.name);
++    if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
++    res.json(otpResponse({ message: 'OTP sent to email', email, otpRequired: true, name: user.name }, otp));
+   } catch (error) {
+     res.status(500).json({ message: error.message });
+   }
+@@ -288,8 +365,9 @@ router.post('/forgot-password', async (req, res) => {
+     if (global.dbConnected) await user.save();
+     else mockStore.saveUser(user);
+ 
+-    sendOTPEmail(email, otp, user.name).catch(console.error);
+-    res.json({ message: 'Password reset OTP sent to email', email, otpRequired: true, otp });
++    const otpDelivered = await sendOTPEmail(email, otp, user.name);
++    if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
++    res.json(otpResponse({ message: 'Password reset OTP sent to email', email, otpRequired: true }, otp));
+   } catch (error) {
+     res.status(500).json({ message: error.message });
+   }
+diff --git a/server/blockchainLogger.js b/server/blockchainLogger.js
+index 0b769f7..9e96f12 100644
+--- a/server/blockchainLogger.js
++++ b/server/blockchainLogger.js
+@@ -28,7 +28,7 @@ const initBlockchain = async () => {
+   try {
+     await provider.getNetwork();
+ 
+-    const privateKey = process.env.SEPOLIA_PRIVATE_KEY || process.env.PRIVATE_KEY || hardhatDevPrivateKey;
++    const privateKey = process.env.SEPOLIA_PRIVATE_KEY || process.env.PRIVATE_KEY || (!isProduction ? hardhatDevPrivateKey : null);
+     if (!privateKey) {
+       throw new Error('PRIVATE_KEY is required for blockchain logging in production.');
+     }
+@@ -52,6 +52,10 @@ const initBlockchain = async () => {
+       return;
+     }
+ 
++    if (isProduction) {
++      throw new Error('CONTRACT_ADDRESS is required in production. Deploy the contract separately and set CONTRACT_ADDRESS.');
++    }
++
+     console.log("Deploying IRCPTracker Contract...");
+     const factory = new ethers.ContractFactory(abi, bytecode, wallet);
+     trackerContract = await factory.deploy();
+@@ -219,8 +223,7 @@ const querySessionLogs = async (sessionId) => {
+   if (!global.blockchainActive || !trackerContract) return [];
+   try {
+     const currentBlock = Number(await provider.getBlockNumber());
+-    // Limit to last 99 blocks to avoid public RPC archive restrictions if deployedAt is old
+-    const fromBlock = Math.max(deployedAt || 0, currentBlock - 99);
++    const fromBlock = deployedAt || 0;
+     const eventFilter = trackerContract.filters.EventLogged(sessionId);
+     const rawEvents = await trackerContract.queryFilter(eventFilter, fromBlock, currentBlock);
+ 
+@@ -236,7 +239,29 @@ const querySessionLogs = async (sessionId) => {
+     }));
+   } catch (err) {
+     console.error('[SESSION QUERY ERROR]', err.message);
+-    return [];
++    try {
++      const totalCount = Number(await trackerContract.getGlobalLogCount());
++      const limit = Math.min(totalCount, 500);
++      const logs = [];
++      for (let i = Math.max(0, totalCount - limit); i < totalCount; i += 1) {
++        const struct = await trackerContract.logs(i);
++        if (String(struct.sessionId) !== String(sessionId)) continue;
++        logs.push({
++          txHash: 'Archived / Unavailable',
++          blockNumber: 0,
++          sessionId: String(struct.sessionId),
++          eventType: String(struct.eventType),
++          hostId: String(struct.hostId || ''),
++          controllerId: String(struct.controllerId || ''),
++          timestamp: Number(struct.timestamp),
++          dataHash: String(struct.dataHash),
++        });
++      }
++      return logs;
++    } catch (fallbackErr) {
++      console.error('[SESSION QUERY FALLBACK ERROR]', fallbackErr.message);
++      return [];
++    }
+   }
+ };
+ 
+diff --git a/server/config.js b/server/config.js
+index 2551452..70b7f86 100644
+--- a/server/config.js
++++ b/server/config.js
+@@ -19,12 +19,12 @@ function getJwtSecret() {
+     return configured;
+   }
+ 
+-  if (isProduction || process.env.NODE_ENV !== 'test') {
++  if (isProduction) {
+     console.error('[FATAL] JWT_SECRET is required but not set. Exiting immediately.');
+     process.exit(1);
+   }
+ 
+-  // Only allow fallback during tests
++  console.warn('[CONFIG] JWT_SECRET is not set. Using an in-memory development secret; sessions will reset on restart.');
+   if (!global.__LETSCOLLAB_DEV_JWT_SECRET) {
+     global.__LETSCOLLAB_DEV_JWT_SECRET = crypto.randomBytes(32).toString('hex');
+   }
+@@ -50,7 +50,12 @@ function verifyJwt(token) {
+ }
+ 
+ function getAllowedOrigins() {
+-  return parseCsv(process.env.CORS_ORIGINS, isProduction ? [] : ['*']);
++  const configured = [
++    ...parseCsv(process.env.CORS_ORIGINS),
++    ...parseCsv(process.env.FRONTEND_URL),
++    ...parseCsv(process.env.APP_URL),
++  ];
++  return configured.length ? Array.from(new Set(configured)) : (isProduction ? [] : ['*']);
+ }
+ 
+ function isOriginAllowed(origin, allowedOrigins) {
+@@ -63,11 +68,6 @@ function isOriginAllowed(origin, allowedOrigins) {
+     return true;
+   }
+   
+-  // Hardcode the known production Vercel domain so it always works even if user forgets to set env var
+-  if (origin === 'https://letscollab-pearl.vercel.app' || origin.endsWith('.vercel.app')) {
+-    return true;
+-  }
+-  
+   return false;
+ }
+ 
+@@ -91,8 +91,12 @@ function ensureServerConfig() {
+   getJwtSecret();
+   const allowedOrigins = getAllowedOrigins();
+   if (isProduction) {
+-    // Bypassed MONGO_URI strict check so the backend boots even if user forgot to set the env var
+-    // Bypassed strict origin check so it doesn't crash on boot if env var isn't set
++    if (!allowedOrigins.length) {
++      console.warn('[CONFIG] CORS_ORIGINS is empty in production. Browser clients on separate domains will be blocked.');
++    }
++    if (!process.env.MONGO_URI) {
++      console.warn('[CONFIG] MONGO_URI is not set in production. Persistent user/session storage will not be available.');
++    }
+   }
+ }
+ 
+diff --git a/server/index.js b/server/index.js
+index 567e882..6e83f0a 100644
+--- a/server/index.js
++++ b/server/index.js
+@@ -36,7 +36,7 @@ if (fs.existsSync(nextOutPath)) {
+   // Provide a fallback for Next.js routing
+   app.use((req, res, next) => {
+     if (req.method !== 'GET') return next();
+-    if (req.url.startsWith('/api') || req.url.startsWith('/socket.io')) {
++    if (req.url === '/health' || req.url.startsWith('/api') || req.url.startsWith('/socket.io')) {
+       return next();
+     }
+     res.sendFile(path.join(nextOutPath, 'index.html'));
+@@ -526,11 +526,9 @@ io.on('connection', (socket) => {
+     console.log(`[Socket] create-room requested by socket: ${socket.id}`, meta);
+     let actor = await authenticatedUser(socket);
+     
+-    // If backend restarted, mock store is empty, but user thinks they are logged in.
+-    // Allow them to create the room anyway with a default fallback identity.
+     if (!actor) {
+-      console.log(`[Socket] create-room fallback: unauthenticated socket ${socket.id} - granting guest access`);
+-      actor = { name: meta.name || 'Guest User', email: meta.email || 'guest@local.host' };
++      socket.emit('session-error', { message: 'Authentication required. Please sign in again before creating a room.' });
++      return;
+     }
+     
+     const code = generateRoomCode();
+@@ -629,7 +627,8 @@ io.on('connection', (socket) => {
+   socket.on('join-room', async (roomId, role, meta = {}) => {
+     let actor = await authenticatedUser(socket);
+     if (!actor) {
+-      actor = { name: 'Guest Mobile', email: 'guest@example.com' };
++      socket.emit('join-denied', { reason: 'Authentication required. Please sign in before joining a room.' });
++      return;
+     }
+     const room = rooms.get(String(roomId || '').toUpperCase());
+     if (!room || role !== 'controller') {
+@@ -746,7 +745,8 @@ io.on('connection', (socket) => {
+     const room = rooms.get(roomId);
+     if (!room || !validPermissions.has(permission) || !await canModerate(socket, room)) return;
+     const targets = options.targetId ? [options.targetId] : Array.from(room.controllers.keys());
+-    if (!targets.length) room.defaultPermission = permission;
++    const updatesDefault = !options.targetId;
++    if (!targets.length && updatesDefault) room.defaultPermission = permission;
+     targets.forEach((targetId) => {
+       const participant = room.controllers.get(targetId);
+       if (!participant) return;
+@@ -757,7 +757,7 @@ io.on('connection', (socket) => {
+         targetId,
+       });
+     });
+-    room.defaultPermission = permission;
++    if (updatesDefault) room.defaultPermission = permission;
+     pushEvent(roomId, 'permission', `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
+     emitRoomState(roomId);
+     const targetParticipant = options.targetId ? room.controllers.get(options.targetId) : null;
+@@ -1026,13 +1026,38 @@ io.on('connection', (socket) => {
+ 
+   socket.on('ping-ircp', () => socket.emit('pong-ircp'));
+ 
+-  socket.on('anti-cheat-alert', (data) => {
+-    const { roomCode, participant, message } = data;
++  const handleAntiCheatAlert = (data = {}) => {
++    const roomCode = data.roomCode || data.roomId || socket.roomCode;
+     const room = rooms.get(roomCode);
+-    if (!room) return;
++    if (!room || room.mode !== 'supervised') return;
++
++    const controller = room.controllers.get(data.controllerId || socket.id);
++    const participant = data.participant || controller || (socket.id === room.hostSocketId
++      ? { name: 'Host', email: room.hostEmail }
++      : null);
++    if (!participant) return;
++
++    const message = data.message || data.reason || 'AI proctoring alert detected';
++    const penalty = Number(data.penalty || 15);
++    room.riskScore = Math.min(100, room.riskScore + penalty);
++    room.alertCount += 1;
++
++    pushEvent(roomCode, 'anticheat', `[AI PROCTORING ALERT] ${participant.name}: ${message}`);
++
++    const alertDoc = {
++      room: roomCode,
++      hostEmail: room.hostEmail || undefined,
++      type: data.type || 'anticheat_violation',
++      event: data.event || data.reason || undefined,
++      message: `${participant.name}: ${message}`,
++      penalty,
++    };
++    if (global.dbConnected) {
++      Alert.create(alertDoc).catch((err) => console.error('Alert save error:', err));
++    } else {
++      mockStore.addAlert(alertDoc);
++    }
+ 
+-    pushEvent(roomCode, 'system', `[AI PROCTORING ALERT] ${participant.name}: ${message}`);
+-    
+     anchorEvent(
+       roomCode,
+       'AI_ANTI_CHEAT_ALERT',
+@@ -1040,8 +1065,20 @@ io.on('connection', (socket) => {
+       room.hostEmail || '',
+       participant.email || ''
+     );
++    io.to('admins').emit('system-alert', {
++      room: roomCode,
++      participant: participant.name,
++      type: alertDoc.type,
++      event: alertDoc.event,
++      message,
++      penalty,
++    });
+     emitRoomState(roomCode);
+-  });
++    broadcastSessions();
++  };
++
++  socket.on('anti-cheat-alert', handleAntiCheatAlert);
++  socket.on('anticheat-alert', handleAntiCheatAlert);
+ 
+   socket.on('permission-violation', (data) => {
+     const { roomCode, action, controllerName, controllerEmail } = data;
+@@ -1060,6 +1097,10 @@ io.on('connection', (socket) => {
+     emitRoomState(roomCode);
+   });
+ 
++  socket.on('leave-session', () => {
++    socket.disconnect(true);
++  });
++
+   socket.on('disconnect', async () => {
+     if (socket.userEmail) onlineEmails.delete(socket.userEmail);
+ 

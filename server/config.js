@@ -19,12 +19,12 @@ function getJwtSecret() {
     return configured;
   }
 
-  if (isProduction || process.env.NODE_ENV !== 'test') {
+  if (isProduction) {
     console.error('[FATAL] JWT_SECRET is required but not set. Exiting immediately.');
     process.exit(1);
   }
 
-  // Only allow fallback during tests
+  console.warn('[CONFIG] JWT_SECRET is not set. Using an in-memory development secret; sessions will reset on restart.');
   if (!global.__LETSCOLLAB_DEV_JWT_SECRET) {
     global.__LETSCOLLAB_DEV_JWT_SECRET = crypto.randomBytes(32).toString('hex');
   }
@@ -50,7 +50,12 @@ function verifyJwt(token) {
 }
 
 function getAllowedOrigins() {
-  return parseCsv(process.env.CORS_ORIGINS, isProduction ? [] : ['*']);
+  const configured = [
+    ...parseCsv(process.env.CORS_ORIGINS),
+    ...parseCsv(process.env.FRONTEND_URL),
+    ...parseCsv(process.env.APP_URL),
+  ];
+  return configured.length ? Array.from(new Set(configured)) : (isProduction ? [] : ['*']);
 }
 
 function isOriginAllowed(origin, allowedOrigins) {
@@ -60,11 +65,6 @@ function isOriginAllowed(origin, allowedOrigins) {
   
   // Always allow the desktop app (which uses random ports on localhost)
   if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
-    return true;
-  }
-  
-  // Hardcode the known production Vercel domain so it always works even if user forgets to set env var
-  if (origin === 'https://letscollab-pearl.vercel.app' || origin.endsWith('.vercel.app')) {
     return true;
   }
   
@@ -91,8 +91,12 @@ function ensureServerConfig() {
   getJwtSecret();
   const allowedOrigins = getAllowedOrigins();
   if (isProduction) {
-    // Bypassed MONGO_URI strict check so the backend boots even if user forgot to set the env var
-    // Bypassed strict origin check so it doesn't crash on boot if env var isn't set
+    if (!allowedOrigins.length) {
+      console.warn('[CONFIG] CORS_ORIGINS is empty in production. Browser clients on separate domains will be blocked.');
+    }
+    if (!process.env.MONGO_URI) {
+      console.warn('[CONFIG] MONGO_URI is not set in production. Persistent user/session storage will not be available.');
+    }
   }
 }
 

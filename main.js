@@ -25,9 +25,67 @@ let clipboardGuardEnabled = false;
 let screenCaptureActive = false;
 let globalStream = null;
 
+let vigemClient = null;
+let virtualGamepad = null;
+try {
+  const ViGEmClient = require('vigemclient');
+  vigemClient = new ViGEmClient();
+  if (vigemClient.connect() == null) {
+    virtualGamepad = vigemClient.createX360Controller();
+    virtualGamepad.connect();
+    console.log('[GAMEPAD] Virtual Xbox 360 Controller connected successfully.');
+  } else {
+    console.warn('[GAMEPAD] ViGEmBus driver not installed or running. Gamepad disabled.');
+  }
+} catch (e) {
+  console.warn('[GAMEPAD] Could not load vigemclient plugin. Gamepad disabled.', e.message);
+}
+
 const express = require('express');
 const uiServer = express();
 let actualUiPort = process.env.UI_PORT || 0; // 0 will auto-assign a free port
+
+function normalizeUrl(value) {
+  const trimmed = String(value || '').trim();
+  return trimmed ? trimmed.replace(/\/$/, '') : '';
+}
+
+function readJsonConfig(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    console.warn(`Could not read config file ${filePath}:`, err.message);
+    return null;
+  }
+}
+
+function getConfiguredBackendUrl() {
+  const envUrl = normalizeUrl(
+    process.env.LETSCOLLAB_BACKEND_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    process.env.BACKEND_URL
+  );
+  if (envUrl) return envUrl;
+
+  const configPaths = [
+    path.join(__dirname, 'app-config.json'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'app-config.json') : null,
+  ];
+  try {
+    configPaths.push(path.join(app.getPath('userData'), 'app-config.json'));
+  } catch (err) {
+    // app.getPath may be unavailable very early in startup.
+  }
+
+  for (const configPath of configPaths) {
+    const config = readJsonConfig(configPath);
+    const backendUrl = normalizeUrl(config && (config.backendUrl || config.NEXT_PUBLIC_BACKEND_URL));
+    if (backendUrl) return backendUrl;
+  }
+
+  return '';
+}
 
 // Log all requests to trace Next.js hydration issues
 uiServer.use((req, res, next) => {
@@ -51,13 +109,23 @@ uiServer.use(express.static(path.join(__dirname, 'out'), {
   }
 }));
 
+uiServer.get('/app-config.json', (req, res) => {
+  res.json({ backendUrl: getConfiguredBackendUrl() || null });
+});
+
 uiServer.get('/', (req, res) => res.sendFile(path.join(__dirname, 'out', 'index.html')));
 uiServer.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'out', 'app.html')));
 uiServer.get('/session', (req, res) => res.sendFile(path.join(__dirname, 'out', 'session.html')));
 uiServer.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'out', 'login.html')));
 uiServer.get('/history', (req, res) => res.sendFile(path.join(__dirname, 'out', 'history.html')));
 uiServer.get('/recent', (req, res) => res.sendFile(path.join(__dirname, 'out', 'recent.html')));
-uiServer.use('/admin', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin.html')));
+uiServer.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin.html')));
+uiServer.get('/admin/login', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'login.html')));
+uiServer.get('/admin/alerts', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'alerts.html')));
+uiServer.get('/admin/blockchain', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'blockchain.html')));
+uiServer.get('/admin/users', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'users.html')));
+uiServer.get('/admin/reports', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'reports.html')));
+uiServer.get('/admin/sessions', (req, res) => res.sendFile(path.join(__dirname, 'out', 'admin', 'sessions.html')));
 
 // We won't listen here anymore, we'll listen inside app.whenReady()
 
@@ -70,13 +138,15 @@ try {
 }
 
 function createWindow() {
+  const backendUrl = getConfiguredBackendUrl();
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
     }
   });
 
@@ -202,6 +272,53 @@ app.on('window-all-closed', () => {
 
 // --- IPC HANDLERS FOR REMOTE INPUT ---
 ipcMain.on('execute-input', (event, payload) => {
+  if (payload.type === 'gamepad-state') {
+    if (virtualGamepad) {
+      try {
+        // payload expects axes and buttons arrays
+        // Axes: LeftX, LeftY, RightX, RightY (range -1 to 1)
+        if (payload.axes && payload.axes.length >= 4) {
+          virtualGamepad.axis.leftX.setValue(payload.axes[0]);
+          virtualGamepad.axis.leftY.setValue(-payload.axes[1]); // Invert Y
+          virtualGamepad.axis.rightX.setValue(payload.axes[2]);
+          virtualGamepad.axis.rightY.setValue(-payload.axes[3]);
+        }
+        
+        // Buttons (0-16 for X360 standard)
+        if (payload.buttons && payload.buttons.length >= 17) {
+          virtualGamepad.button.A.setValue(payload.buttons[0].pressed);
+          virtualGamepad.button.B.setValue(payload.buttons[1].pressed);
+          virtualGamepad.button.X.setValue(payload.buttons[2].pressed);
+          virtualGamepad.button.Y.setValue(payload.buttons[3].pressed);
+          
+          virtualGamepad.button.LEFT_SHOULDER.setValue(payload.buttons[4].pressed);
+          virtualGamepad.button.RIGHT_SHOULDER.setValue(payload.buttons[5].pressed);
+          
+          virtualGamepad.axis.leftTrigger.setValue(payload.buttons[6].value); // LT analog
+          virtualGamepad.axis.rightTrigger.setValue(payload.buttons[7].value); // RT analog
+          
+          virtualGamepad.button.BACK.setValue(payload.buttons[8].pressed);
+          virtualGamepad.button.START.setValue(payload.buttons[9].pressed);
+          
+          virtualGamepad.button.LEFT_THUMB.setValue(payload.buttons[10].pressed);
+          virtualGamepad.button.RIGHT_THUMB.setValue(payload.buttons[11].pressed);
+          
+          virtualGamepad.button.D_UP.setValue(payload.buttons[12].pressed);
+          virtualGamepad.button.D_DOWN.setValue(payload.buttons[13].pressed);
+          virtualGamepad.button.D_LEFT.setValue(payload.buttons[14].pressed);
+          virtualGamepad.button.D_RIGHT.setValue(payload.buttons[15].pressed);
+          
+          virtualGamepad.button.GUIDE.setValue(payload.buttons[16].pressed);
+        }
+      } catch (err) {
+        console.error('Error updating virtual gamepad:', err.message);
+      }
+    } else {
+      console.log('[MOCK GAMEPAD EXECUTING]', payload);
+    }
+    return;
+  }
+
   // If robotjs isn't installed (e.g. build failure), just log it
   if (!robot) {
     console.log('[MOCK ROBOTJS EXECUTING]', payload);
@@ -277,6 +394,18 @@ function mapModifiers(mods) {
 
 function mapBrowserKeyToRobotJS(key, code) {
   const keyLower = key.toLowerCase();
+
+  const aliases = {
+    arrowup: 'up',
+    arrowdown: 'down',
+    arrowleft: 'left',
+    arrowright: 'right',
+    esc: 'escape',
+    pageup: 'pageup',
+    pagedown: 'pagedown',
+  };
+
+  if (aliases[keyLower]) return aliases[keyLower];
   
   const exactMatches = [
     'backspace', 'delete', 'enter', 'tab', 'escape', 'up', 'down', 'right', 'left', 'home', 'end', 'pageup', 'pagedown', 'space'

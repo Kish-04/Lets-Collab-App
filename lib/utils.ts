@@ -5,25 +5,64 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+declare global {
+  interface Window {
+    electronConfig?: {
+      backendUrl?: string | null
+    }
+    __LETSCOLLAB_BACKEND_URL__?: string
+  }
+}
+
+function normalizeUrl(value?: string | null) {
+  const trimmed = String(value || '').trim()
+  return trimmed ? trimmed.replace(/\/$/, '') : ''
+}
+
+function getRuntimeBackendUrl() {
+  if (typeof window === 'undefined') return ''
+  let storedBackendUrl = ''
+  try {
+    storedBackendUrl = window.localStorage.getItem('ircp_backend_url') || ''
+  } catch {
+    storedBackendUrl = ''
+  }
+  return normalizeUrl(
+    window.electronConfig?.backendUrl ||
+    window.__LETSCOLLAB_BACKEND_URL__ ||
+    storedBackendUrl
+  )
+}
+
+function isLocalOrPrivateHost(hostname: string) {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('192.168.') ||
+    hostname.startsWith('10.') ||
+    hostname.startsWith('172.')
+  )
+}
+
 export function getBackendUrl() {
-  const configured = process.env.NEXT_PUBLIC_BACKEND_URL
-  if (configured) return configured.replace(/\/$/, '')
+  const runtimeConfigured = getRuntimeBackendUrl()
+  if (runtimeConfigured) return runtimeConfigured
+
+  const configured = normalizeUrl(process.env.NEXT_PUBLIC_BACKEND_URL)
+  if (configured) return configured
 
   const backendPort = process.env.NEXT_PUBLIC_BACKEND_PORT || '3001'
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
-    if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname.startsWith('192.168.') ||
-      hostname.startsWith('10.') ||
-      hostname.startsWith('172.')
-    ) {
+    if (isLocalOrPrivateHost(hostname)) {
       return `http://${hostname}:${backendPort}`
+    }
+    if (window.location.protocol === 'file:') {
+      return `http://localhost:${backendPort}`
     }
     return window.location.origin
   }
-  return process.env.BACKEND_URL || `http://localhost:${backendPort}`;
+  return normalizeUrl(process.env.BACKEND_URL) || `http://localhost:${backendPort}`;
 }
 
 export function getStoredAuthToken(): string | null {
@@ -36,6 +75,11 @@ export function getStoredAuthToken(): string | null {
   } catch {
     return null
   }
+}
+
+export function getAuthHeaders(): HeadersInit {
+  const token = getStoredAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 export async function fetchIceServers(): Promise<RTCIceServer[]> {

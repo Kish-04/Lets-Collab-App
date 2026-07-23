@@ -6,6 +6,9 @@ import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, C
 import { AppLogo } from '@/components/ircp/shared'
 import Link from 'next/link'
 
+const desktopDownloadUrl = process.env.NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL ||
+  "https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe"
+
 // --- Advanced Animation Utilities ---
 
 // 1. Text Reveal Character by Character
@@ -767,7 +770,7 @@ export default function LandingPage() {
               <DownloadCard 
                 os="Windows"
                 status="Version 1.0.0 • Stable"
-                link="https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe"
+                link={desktopDownloadUrl}
                 active={true}
                 icon={
                   <svg viewBox="0 0 24 24" fill="currentColor" className="w-20 h-20 mb-10 text-[var(--accent)] group-hover:scale-125 transition-transform duration-700 ease-out">

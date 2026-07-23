@@ -921,6 +921,39 @@ function SessionContent() {
         }
     }, [role, connectionState, keyboardEnabled, clipboardAllowed, addLog])
 
+    // Gamepad API polling for ViGEmBus
+    useEffect(() => {
+        if (role !== 'controller' || connectionState !== 'connected' || !mouseEnabled) return;
+        
+        let animationFrameId: number;
+        let lastGamepadState = '';
+        
+        const pollGamepad = () => {
+            const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+            const gp = gamepads[0];
+            if (gp) {
+                const axes = gp.axes.map(a => Number(a.toFixed(3)));
+                const buttons = gp.buttons.map(b => ({ pressed: b.pressed, value: Number(b.value.toFixed(3)) }));
+                
+                // Only send if state changed significantly to prevent spam
+                const currentState = JSON.stringify({ axes, buttons });
+                if (currentState !== lastGamepadState) {
+                    lastGamepadState = currentState;
+                    sendControlPayload({
+                        room: roomCodeRef.current,
+                        type: 'gamepad-state',
+                        axes,
+                        buttons
+                    });
+                }
+            }
+            animationFrameId = requestAnimationFrame(pollGamepad);
+        };
+        
+        animationFrameId = requestAnimationFrame(pollGamepad);
+        return () => cancelAnimationFrame(animationFrameId);
+    }, [role, connectionState, mouseEnabled]);
+
     // Anti-cheat focus tracking for supervised controllers
     useEffect(() => {
         if (role !== 'controller' || sessionMode !== 'supervised' || connectionState !== 'connected') return;

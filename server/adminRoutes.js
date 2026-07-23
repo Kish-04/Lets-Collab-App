@@ -94,9 +94,24 @@ const s3 = new S3Client({
 });
 
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: Number(process.env.EVIDENCE_MAX_BYTES || 25 * 1024 * 1024),
+  },
+});
 
-router.post('/upload-evidence', protectAuthenticated, upload.single('evidenceFile'), async (req, res) => {
+function uploadEvidenceFile(req, res, next) {
+  upload.single('evidenceFile')(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ success: false, message: 'Evidence file is too large.' });
+    }
+    return res.status(400).json({ success: false, message: err.message || 'Invalid evidence upload.' });
+  });
+}
+
+router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 

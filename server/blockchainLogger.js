@@ -28,7 +28,7 @@ const initBlockchain = async () => {
   try {
     await provider.getNetwork();
 
-    const privateKey = process.env.SEPOLIA_PRIVATE_KEY || process.env.PRIVATE_KEY || hardhatDevPrivateKey;
+    const privateKey = process.env.SEPOLIA_PRIVATE_KEY || process.env.PRIVATE_KEY || (!isProduction ? hardhatDevPrivateKey : null);
     if (!privateKey) {
       throw new Error('PRIVATE_KEY is required for blockchain logging in production.');
     }
@@ -50,6 +50,10 @@ const initBlockchain = async () => {
       deployedAt = existingBlock;
       global.blockchainActive = true;
       return;
+    }
+
+    if (isProduction) {
+      throw new Error('CONTRACT_ADDRESS is required in production. Deploy the contract separately and set CONTRACT_ADDRESS.');
     }
 
     console.log("Deploying IRCPTracker Contract...");
@@ -219,8 +223,7 @@ const querySessionLogs = async (sessionId) => {
   if (!global.blockchainActive || !trackerContract) return [];
   try {
     const currentBlock = Number(await provider.getBlockNumber());
-    // Limit to last 99 blocks to avoid public RPC archive restrictions if deployedAt is old
-    const fromBlock = Math.max(deployedAt || 0, currentBlock - 99);
+    const fromBlock = deployedAt || 0;
     const eventFilter = trackerContract.filters.EventLogged(sessionId);
     const rawEvents = await trackerContract.queryFilter(eventFilter, fromBlock, currentBlock);
 
@@ -236,7 +239,29 @@ const querySessionLogs = async (sessionId) => {
     }));
   } catch (err) {
     console.error('[SESSION QUERY ERROR]', err.message);
-    return [];
+    try {
+      const totalCount = Number(await trackerContract.getGlobalLogCount());
+      const limit = Math.min(totalCount, 500);
+      const logs = [];
+      for (let i = Math.max(0, totalCount - limit); i < totalCount; i += 1) {
+        const struct = await trackerContract.logs(i);
+        if (String(struct.sessionId) !== String(sessionId)) continue;
+        logs.push({
+          txHash: 'Archived / Unavailable',
+          blockNumber: 0,
+          sessionId: String(struct.sessionId),
+          eventType: String(struct.eventType),
+          hostId: String(struct.hostId || ''),
+          controllerId: String(struct.controllerId || ''),
+          timestamp: Number(struct.timestamp),
+          dataHash: String(struct.dataHash),
+        });
+      }
+      return logs;
+    } catch (fallbackErr) {
+      console.error('[SESSION QUERY FALLBACK ERROR]', fallbackErr.message);
+      return [];
+    }
   }
 };
 

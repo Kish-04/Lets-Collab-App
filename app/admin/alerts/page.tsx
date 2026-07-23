@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { io, Socket } from "socket.io-client"
 import { Search } from "lucide-react"
-import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 
 type FilterType = "all" | "high" | "medium" | "low"
@@ -66,7 +66,7 @@ export default function AlertsPage() {
       try {
         const res = await fetch(`${getBackendUrl()}/api/admin/reports`, {
           credentials: 'include',
-          
+          headers: getAuthHeaders(),
         })
         const data = await res.json()
         if (data.success && data.alerts?.length) {

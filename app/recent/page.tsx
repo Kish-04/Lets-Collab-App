@@ -16,7 +16,7 @@ export default function RecentSessionsPage() {
   return (
     <div className="min-h-screen bg-[var(--background)] p-8 font-sans text-[var(--text-primary)]">
       <button 
-        onClick={() => router.push('/')}
+        onClick={() => router.push('/app')}
         className="flex items-center gap-2 text-sm text-[var(--text-dim)] hover:text-white transition-colors mb-8"
       >
         <ArrowLeft className="w-4 h-4" /> Back to Home

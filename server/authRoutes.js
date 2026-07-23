@@ -6,6 +6,8 @@ const mockStore = require('./mockStore');
 
 const router = express.Router();
 const OTP_TTL_MS = 10 * 60 * 1000;
+const isProduction = process.env.NODE_ENV === 'production';
+const exposeOtpInResponse = process.env.RETURN_OTP_IN_RESPONSE === 'true' && !isProduction;
 
 let resendClient = null;
 try {
@@ -21,6 +23,16 @@ try {
 }
 
 const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
+const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
+
+function getEmailJsConfig() {
+  return {
+    serviceId: process.env.EMAILJS_SERVICE_ID || process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || '',
+    templateId: process.env.EMAILJS_TEMPLATE_ID || process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || '',
+    publicKey: process.env.EMAILJS_PUBLIC_KEY || process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || '',
+    privateKey: process.env.EMAILJS_PRIVATE_KEY || process.env.EMAILJS_ACCESS_TOKEN || '',
+  };
+}
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -32,6 +44,59 @@ function createOtp() {
 
 function generateToken(id, email) {
   return signJwt({ id, email }, { expiresIn: process.env.JWT_EXPIRES_IN || '30d' });
+}
+
+function otpResponse(payload, otp) {
+  return exposeOtpInResponse ? { ...payload, otp } : payload;
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function sendEmailJsOTP(toEmail, otp, name = 'User') {
+  const { serviceId, templateId, publicKey, privateKey } = getEmailJsConfig();
+  if (!serviceId || !templateId || !publicKey) return false;
+
+  const payload = {
+    service_id: serviceId,
+    template_id: templateId,
+    user_id: publicKey,
+    template_params: {
+      to_name: name,
+      to_email: toEmail,
+      passcode: otp,
+      otp,
+      code: otp,
+    },
+  };
+
+  if (privateKey) payload.accessToken = privateKey;
+
+  try {
+    const response = await fetch(EMAILJS_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      console.log(`[EMAILJS] OTP sent to ${toEmail}`);
+      return true;
+    }
+
+    const body = await response.text().catch(() => '');
+    console.error(`[EMAILJS ERROR] ${response.status} ${response.statusText}${body ? ` - ${body}` : ''}`);
+    return false;
+  } catch (err) {
+    console.error(`[EMAILJS ERROR] ${err.message}`);
+    return false;
+  }
 }
 
 function setAuthCookie(res, token) {
@@ -48,7 +113,10 @@ async function hashPassword(password) {
 }
 
 async function sendOTPEmail(toEmail, otp, name = 'User') {
-  if (resendClient) {
+  let delivered = false;
+  delivered = await sendEmailJsOTP(toEmail, otp, name);
+
+  if (!delivered && resendClient) {
     try {
       const response = await resendClient.emails.send({
         from: `Let's Collab! <${FROM_EMAIL}>`,
@@ -60,7 +128,7 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
               <h1 style="color: #2f7df6; font-size: 24px; margin: 0; letter-spacing: 1px;">Let's Collab!</h1>
               <p style="color: #8291a8; font-size: 11px; margin: 4px 0 0; letter-spacing: 2px;">WORK TOGETHER. STAY IN CONTROL.</p>
             </div>
-            <p style="color: #8890a8; font-size: 14px; margin-bottom: 8px;">Hello ${name},</p>
+            <p style="color: #8890a8; font-size: 14px; margin-bottom: 8px;">Hello ${escapeHtml(name)},</p>
             <p style="color: #8890a8; font-size: 14px; margin-bottom: 32px;">Your verification code is:</p>
             <div style="background: #0f0f1a; border: 1px solid #2f7df6; border-radius: 8px; padding: 24px; text-align: center; margin-bottom: 32px;">
               <span style="color: #2f7df6; font-size: 40px; font-weight: bold; letter-spacing: 12px;">${otp}</span>
@@ -78,20 +146,26 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
         console.error(`[EMAIL ERROR] Resend failed: ${response.error.message}`);
       } else {
         console.log(`[EMAIL] OTP sent to ${toEmail}`);
+        delivered = true;
       }
     } catch (err) {
       console.error(`[EMAIL ERROR] ${err.message}`);
     }
   }
 
-  if (process.env.LOG_OTP !== 'false') {
+  const terminalOtpAllowed = !isProduction && process.env.LOG_OTP !== 'false';
+  if (terminalOtpAllowed) {
     console.log('\n=============================================');
     console.log('[OTP TERMINAL LOG]');
     console.log(`Recipient: ${toEmail}`);
     console.log(`OTP Code:  ${otp}`);
     console.log('=============================================\n');
   }
-  return true;
+  return delivered || terminalOtpAllowed;
+}
+
+function otpDeliveryErrorMessage() {
+  return 'Email verification service is not configured. Set EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, and EMAILJS_PUBLIC_KEY on the backend.';
 }
 
 function validateRegisterInput(name, email, password) {
@@ -130,8 +204,9 @@ router.post('/register', async (req, res) => {
         mockStore.saveUser(userExists);
       }
 
-      sendOTPEmail(email, otp, userExists.name).catch(console.error);
-      return res.status(200).json({ message: 'OTP resent to email', email, otpRequired: true, otp });
+      const otpDelivered = await sendOTPEmail(email, otp, userExists.name);
+      if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
+      return res.status(200).json(otpResponse({ message: 'OTP resent to email', email, otpRequired: true }, otp));
     }
 
     const otp = createOtp();
@@ -147,8 +222,9 @@ router.post('/register', async (req, res) => {
         isVerified: false,
       });
 
-    sendOTPEmail(email, otp, name).catch(console.error);
-    res.status(201).json({ message: 'OTP sent to email', email: newUser.email, otpRequired: true, otp });
+    const otpDelivered = await sendOTPEmail(email, otp, name);
+    if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
+    res.status(201).json(otpResponse({ message: 'OTP sent to email', email: newUser.email, otpRequired: true }, otp));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -259,8 +335,9 @@ router.post('/login', async (req, res) => {
     if (global.dbConnected) await user.save();
     else mockStore.saveUser(user);
 
-    sendOTPEmail(email, otp, user.name).catch(console.error);
-    res.json({ message: 'OTP sent to email', email, otpRequired: true, name: user.name, otp });
+    const otpDelivered = await sendOTPEmail(email, otp, user.name);
+    if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
+    res.json(otpResponse({ message: 'OTP sent to email', email, otpRequired: true, name: user.name }, otp));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -288,8 +365,9 @@ router.post('/forgot-password', async (req, res) => {
     if (global.dbConnected) await user.save();
     else mockStore.saveUser(user);
 
-    sendOTPEmail(email, otp, user.name).catch(console.error);
-    res.json({ message: 'Password reset OTP sent to email', email, otpRequired: true, otp });
+    const otpDelivered = await sendOTPEmail(email, otp, user.name);
+    if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
+    res.json(otpResponse({ message: 'Password reset OTP sent to email', email, otpRequired: true }, otp));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

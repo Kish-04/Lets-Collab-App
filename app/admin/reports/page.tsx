@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { FileText, Download, RefreshCw, Users, Shield, Clock, Link2 } from "lucide-react"
 import { DataCard } from "@/components/ircp/shared"
-import { cn, getBackendUrl } from "@/lib/utils"
+import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 
 type UserActivity = {
   name: string; email: string; role: string; sessionCount: number
@@ -136,7 +136,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!localStorage.getItem('ircp_email')) router.push('/')
+    if (!getStoredAuthToken()) router.push('/admin/login')
   }, [router])
 
   const fetchReports = async () => {
@@ -144,7 +144,7 @@ export default function ReportsPage() {
     try {
       const res = await fetch(`${getBackendUrl()}/api/admin/reports`, {
         credentials: 'include',
-        
+        headers: getAuthHeaders(),
       })
       const json = await res.json()
       if (json.success) setData(json)

@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const backendArg = process.argv.find(arg => arg.startsWith('--letscollab-backend-url='));
+const backendUrl = backendArg ? backendArg.slice('--letscollab-backend-url='.length) : null;
+
+contextBridge.exposeInMainWorld('electronConfig', {
+  backendUrl
+});
+
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels

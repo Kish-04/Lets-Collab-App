@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Activity, ShieldAlert, Users, LayoutDashboard } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts"
-import { getBackendUrl } from "@/lib/utils"
+import { getAuthHeaders, getBackendUrl } from "@/lib/utils"
 
 export default function AdminOverviewPage() {
   const [data, setData] = useState<any>(null)
@@ -12,7 +12,7 @@ export default function AdminOverviewPage() {
   useEffect(() => {
     fetch(`${getBackendUrl()}/api/admin/reports`, {
       credentials: 'include',
-      
+      headers: getAuthHeaders(),
     })
       .then(res => {
         if (res.status === 401 || res.status === 403) {

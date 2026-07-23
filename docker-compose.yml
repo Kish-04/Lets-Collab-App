@@ -94,6 +94,10 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
+      - EMAILJS_SERVICE_ID=${EMAILJS_SERVICE_ID:-}
+      - EMAILJS_TEMPLATE_ID=${EMAILJS_TEMPLATE_ID:-}
+      - EMAILJS_PUBLIC_KEY=${EMAILJS_PUBLIC_KEY:-}
+      - EMAILJS_PRIVATE_KEY=${EMAILJS_PRIVATE_KEY:-}
       - LOG_OTP=${LOG_OTP:-true}
       - ALLOW_MOCK_BLOCKCHAIN=${ALLOW_MOCK_BLOCKCHAIN:-true}
       - METERED_DOMAIN=${METERED_DOMAIN:-}
@@ -132,6 +136,7 @@ services:
     environment:
       - BACKEND_URL=http://backend:3001
       - NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
+      - NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL=${NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL:-https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe}
       - NEXT_PUBLIC_FORCE_TURN=${NEXT_PUBLIC_FORCE_TURN:-false}
       - NEXT_PUBLIC_TURN_URL=${NEXT_PUBLIC_TURN_URL:-}
       - NEXT_PUBLIC_TURN_USERNAME=${NEXT_PUBLIC_TURN_USERNAME:-}

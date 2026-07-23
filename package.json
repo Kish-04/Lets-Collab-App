@@ -1,5 +1,5 @@
 {
-  "name": "my-project",
+  "name": "lets-collab",
   "version": "0.1.0",
   "private": true,
   "main": "main.js",
@@ -21,6 +21,12 @@
   "build": {
     "appId": "com.letscollab.app",
     "productName": "Let's Collab",
+    "extraResources": [
+      {
+        "from": "build/ViGEmBusSetup_x64.msi",
+        "to": "ViGEmBusSetup_x64.msi"
+      }
+    ],
     "directories": {
       "output": "dist"
     },
@@ -36,12 +42,21 @@
       "**/*",
       "!server/**/*",
       "!test",
+      "!scratch/**/*",
+      "!asar_temp/**/*",
       "!dist",
       "!.next",
       "!.git",
       "!chrome",
       "!out/downloads",
-      "!public/downloads"
+      "!public/downloads",
+      "!e2e_audit.js",
+      "!test-*.js",
+      "!test_*.ts",
+      "!fix*.js",
+      "!patch*.js",
+      "!modify.js",
+      "!inject-sidebar.js"
     ],
     "mac": {
       "target": [
@@ -54,9 +69,10 @@
       "icon": "public/logo.png"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false,
+      "perMachine": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Let's Collab"
@@ -149,6 +165,7 @@
   "dependencies": {
     "express": "^5.2.1",
     "framer-motion": "^12.42.2",
-    "robotjs": "^0.7.1"
+    "robotjs": "^0.7.1",
+    "vigemclient": "^1.5.3"
   }
 }

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { io, Socket } from "socket.io-client"
 import { Search, X, Shield, ShieldOff, UserCheck, UserX, Clock } from "lucide-react"
 import { DataCard, GlowButton, DangerButton } from "@/components/ircp/shared"
-import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 
 type AppUser = {
   _id: string
@@ -171,7 +171,7 @@ export default function UsersPage() {
     try {
       const res = await fetch(`${getBackendUrl()}/api/admin/users`, {
         credentials: 'include',
-        
+        headers: getAuthHeaders(),
       })
       const data = await res.json()
       if (data.success) {
@@ -195,7 +195,7 @@ export default function UsersPage() {
     await fetch(`${getBackendUrl()}/api/admin/users/${id}/ban`, {
       method: 'POST',
       credentials: 'include',
-      
+      headers: getAuthHeaders(),
     })
     fetchUsers()
   }
@@ -206,7 +206,7 @@ export default function UsersPage() {
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        
+        ...getAuthHeaders(),
       },
       body: JSON.stringify({ role }),
     })

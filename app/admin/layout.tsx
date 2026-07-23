@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
 import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut } from "lucide-react"
 import { BrandMark, StatusBadge } from "@/components/ircp/shared"
-import { cn } from "@/lib/utils"
+import { cn, getBackendUrl } from "@/lib/utils"
 
 const navItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
@@ -36,7 +36,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setUserInitials(name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase())
   }, [router, pathname, isLoginPage])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch(`${getBackendUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' })
+    } catch {
+      // Local cleanup still happens even if the backend is unreachable.
+    }
     localStorage.removeItem('ircp_user')
     localStorage.removeItem('ircp_name')
     localStorage.removeItem('ircp_email')

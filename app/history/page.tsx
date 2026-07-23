@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { getBackendUrl } from '@/lib/utils';
 
 export default function SessionHistoryWrapper() {
   return (
@@ -18,11 +19,19 @@ function SessionHistoryViewer() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      setError('Missing session ID.');
+      setLoading(false);
+      return;
+    }
     const fetchHistory = async () => {
       try {
-        const res = await fetch(`http://localhost:3001/api/sessions/${sessionId}/history`);
-        const data = await res.json();
+        const res = await fetch(`${getBackendUrl()}/api/sessions/${encodeURIComponent(sessionId)}/history`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError(data.message || 'Failed to fetch history');
+          return;
+        }
         if (data.success) {
           setLogs(data.logs);
         } else {
@@ -88,15 +97,21 @@ function SessionHistoryViewer() {
                     {log.controllerEmail && log.controllerEmail !== 'Unknown Hash' && (
                         <p className="flex justify-between border-b border-white/5 pb-1"><span className="text-gray-400">Controller:</span> <span className="font-medium text-emerald-400">{log.controllerEmail}</span></p>
                     )}
-                    <a
-                      href={`https://sepolia.etherscan.io/tx/${log.txHash}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 mt-3 text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-md font-mono"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
-                      {log.txHash.substring(0, 10)}...{log.txHash.substring(log.txHash.length - 8)}
-                    </a>
+                    {typeof log.txHash === 'string' && log.txHash.startsWith('0x') ? (
+                      <a
+                        href={`https://sepolia.etherscan.io/tx/${log.txHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 mt-3 text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-md font-mono"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                        {log.txHash.substring(0, 10)}...{log.txHash.substring(log.txHash.length - 8)}
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-400 bg-white/5 px-3 py-1.5 rounded-md font-mono">
+                        {log.txHash || 'Off-chain / unavailable'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

@@ -13,7 +13,7 @@ if (typeof window !== "undefined") {
   };
 }
 export type AntiCheatEvent = {
-  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY";
+  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY" | "SYSTEM";
   message: string;
   scorePenalty: number;
 };
@@ -202,7 +202,7 @@ export class AntiCheatEngine {
 
           let newHeadMargin = DEFAULT_CONFIG.headPoseMargin;
           if (poseVariances.length > 50) { // need at least half the samples to be valid
-            const sortedVariances = [...poseVariances].sort();
+            const sortedVariances = [...poseVariances].sort((a, b) => a - b);
             const p95 = sortedVariances[Math.floor(sortedVariances.length * 0.95)];
             newHeadMargin = Math.max(0.3, p95 + 0.15); // pad the natural variance by 0.15
           }
@@ -211,7 +211,7 @@ export class AntiCheatEngine {
           if (lowConfidenceCount > TOTAL_SAMPLES * 0.4) {
             // More than 40% of samples had low/no confidence tracking (bad lighting)
             newEyeThreshold = 0.50; // heavily relax eye tracking to prevent false positives
-            this.emitEvent("SYSTEM" as any, "[ALERT] AI Sensitivity auto-relaxed due to low lighting/poor confidence during calibration.", 0);
+            this.emitEvent("SYSTEM", "[ALERT] AI Sensitivity auto-relaxed due to low lighting/poor confidence during calibration.", 0);
           }
 
           this.setConfig({

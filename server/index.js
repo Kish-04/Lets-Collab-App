@@ -36,7 +36,7 @@ if (fs.existsSync(nextOutPath)) {
   // Provide a fallback for Next.js routing
   app.use((req, res, next) => {
     if (req.method !== 'GET') return next();
-    if (req.url.startsWith('/api') || req.url.startsWith('/socket.io')) {
+    if (req.url === '/health' || req.url.startsWith('/api') || req.url.startsWith('/socket.io')) {
       return next();
     }
     res.sendFile(path.join(nextOutPath, 'index.html'));
@@ -526,11 +526,9 @@ io.on('connection', (socket) => {
     console.log(`[Socket] create-room requested by socket: ${socket.id}`, meta);
     let actor = await authenticatedUser(socket);
     
-    // If backend restarted, mock store is empty, but user thinks they are logged in.
-    // Allow them to create the room anyway with a default fallback identity.
     if (!actor) {
-      console.log(`[Socket] create-room fallback: unauthenticated socket ${socket.id} - granting guest access`);
-      actor = { name: meta.name || 'Guest User', email: meta.email || 'guest@local.host' };
+      socket.emit('session-error', { message: 'Authentication required. Please sign in again before creating a room.' });
+      return;
     }
     
     const code = generateRoomCode();
@@ -629,7 +627,8 @@ io.on('connection', (socket) => {
   socket.on('join-room', async (roomId, role, meta = {}) => {
     let actor = await authenticatedUser(socket);
     if (!actor) {
-      actor = { name: 'Guest Mobile', email: 'guest@example.com' };
+      socket.emit('join-denied', { reason: 'Authentication required. Please sign in before joining a room.' });
+      return;
     }
     const room = rooms.get(String(roomId || '').toUpperCase());
     if (!room || role !== 'controller') {
@@ -746,7 +745,8 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room || !validPermissions.has(permission) || !await canModerate(socket, room)) return;
     const targets = options.targetId ? [options.targetId] : Array.from(room.controllers.keys());
-    if (!targets.length) room.defaultPermission = permission;
+    const updatesDefault = !options.targetId;
+    if (!targets.length && updatesDefault) room.defaultPermission = permission;
     targets.forEach((targetId) => {
       const participant = room.controllers.get(targetId);
       if (!participant) return;
@@ -757,7 +757,7 @@ io.on('connection', (socket) => {
         targetId,
       });
     });
-    room.defaultPermission = permission;
+    if (updatesDefault) room.defaultPermission = permission;
     pushEvent(roomId, 'permission', `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
     emitRoomState(roomId);
     const targetParticipant = options.targetId ? room.controllers.get(options.targetId) : null;
@@ -1026,13 +1026,38 @@ io.on('connection', (socket) => {
 
   socket.on('ping-ircp', () => socket.emit('pong-ircp'));
 
-  socket.on('anti-cheat-alert', (data) => {
-    const { roomCode, participant, message } = data;
+  const handleAntiCheatAlert = (data = {}) => {
+    const roomCode = data.roomCode || data.roomId || socket.roomCode;
     const room = rooms.get(roomCode);
-    if (!room) return;
+    if (!room || room.mode !== 'supervised') return;
 
-    pushEvent(roomCode, 'system', `[AI PROCTORING ALERT] ${participant.name}: ${message}`);
-    
+    const controller = room.controllers.get(data.controllerId || socket.id);
+    const participant = data.participant || controller || (socket.id === room.hostSocketId
+      ? { name: 'Host', email: room.hostEmail }
+      : null);
+    if (!participant) return;
+
+    const message = data.message || data.reason || 'AI proctoring alert detected';
+    const penalty = Number(data.penalty || 15);
+    room.riskScore = Math.min(100, room.riskScore + penalty);
+    room.alertCount += 1;
+
+    pushEvent(roomCode, 'anticheat', `[AI PROCTORING ALERT] ${participant.name}: ${message}`);
+
+    const alertDoc = {
+      room: roomCode,
+      hostEmail: room.hostEmail || undefined,
+      type: data.type || 'anticheat_violation',
+      event: data.event || data.reason || undefined,
+      message: `${participant.name}: ${message}`,
+      penalty,
+    };
+    if (global.dbConnected) {
+      Alert.create(alertDoc).catch((err) => console.error('Alert save error:', err));
+    } else {
+      mockStore.addAlert(alertDoc);
+    }
+
     anchorEvent(
       roomCode,
       'AI_ANTI_CHEAT_ALERT',
@@ -1040,8 +1065,20 @@ io.on('connection', (socket) => {
       room.hostEmail || '',
       participant.email || ''
     );
+    io.to('admins').emit('system-alert', {
+      room: roomCode,
+      participant: participant.name,
+      type: alertDoc.type,
+      event: alertDoc.event,
+      message,
+      penalty,
+    });
     emitRoomState(roomCode);
-  });
+    broadcastSessions();
+  };
+
+  socket.on('anti-cheat-alert', handleAntiCheatAlert);
+  socket.on('anticheat-alert', handleAntiCheatAlert);
 
   socket.on('permission-violation', (data) => {
     const { roomCode, action, controllerName, controllerEmail } = data;
@@ -1058,6 +1095,10 @@ io.on('connection', (socket) => {
       controllerEmail || ''
     );
     emitRoomState(roomCode);
+  });
+
+  socket.on('leave-session', () => {
+    socket.disconnect(true);
   });
 
   socket.on('disconnect', async () => {
