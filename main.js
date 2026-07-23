@@ -198,7 +198,7 @@ function createWindow() {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       // Automatically share the primary screen (first source)
       if (sources && sources.length > 0) {
-        callback({ video: sources[0] });
+        callback({ video: sources[0], audio: 'loopback' });
       } else {
         callback();
       }

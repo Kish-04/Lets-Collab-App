@@ -2,149 +2,12 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { motion, useScroll, useTransform, AnimatePresence, useSpring, useVelocity, useAnimationFrame, useMotionValueEvent } from 'framer-motion'
-import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, Command, Lock, Cpu, Network, Sparkles, ServerOff, Infinity as InfinityIcon, ArrowRight, Play, Maximize2, MousePointer2, User } from 'lucide-react'
+import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, Command, Lock, Cpu, Network, Sparkles, ServerOff, Infinity as InfinityIcon, ArrowRight, Play, Maximize2, MousePointer2, User, Gamepad2 } from 'lucide-react'
 import { AppLogo } from '@/components/ircp/shared'
+import { MagneticButton, TiltCard, VelocityMarquee, TextReveal } from '@/components/landing/Animations'
 import Link from 'next/link'
 
 const desktopDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.0.exe"
-
-// --- Advanced Animation Utilities ---
-
-// 1. Text Reveal Character by Character
-const TextReveal = ({ text, delay = 0 }: { text: string, delay?: number }) => {
-  return (
-    <span className="inline-block overflow-hidden">
-      {text.split('').map((char, index) => (
-        <motion.span
-          key={index}
-          initial={{ y: "100%", opacity: 0, rotate: 10 }}
-          animate={{ y: 0, opacity: 1, rotate: 0 }}
-          transition={{
-            duration: 0.8,
-            delay: delay + index * 0.03,
-            ease: [0.2, 1, 0.3, 1]
-          }}
-          className="inline-block"
-        >
-          {char === " " ? "\u00A0" : char}
-        </motion.span>
-      ))}
-    </span>
-  )
-}
-
-// 2. Magnetic Button Effect
-const MagneticButton = ({ children, className, ...props }: any) => {
-  const ref = useRef<HTMLDivElement>(null)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
-
-  const handleMouse = (e: React.MouseEvent<HTMLDivElement>) => {
-    const { clientX, clientY } = e
-    const { height, width, left, top } = ref.current!.getBoundingClientRect()
-    const middleX = clientX - (left + width / 2)
-    const middleY = clientY - (top + height / 2)
-    setPosition({ x: middleX * 0.3, y: middleY * 0.3 })
-  }
-
-  const reset = () => {
-    setPosition({ x: 0, y: 0 })
-  }
-
-  return (
-    <motion.div
-      ref={ref}
-      onMouseMove={handleMouse}
-      onMouseLeave={reset}
-      animate={{ x: position.x, y: position.y }}
-      transition={{ type: "spring", stiffness: 150, damping: 15, mass: 0.1 }}
-      className={className}
-      {...props}
-    >
-      {children}
-    </motion.div>
-  )
-}
-
-// 3. 3D Tilt Card
-const TiltCard = ({ children, className }: { children: React.ReactNode, className?: string }) => {
-  const ref = useRef<HTMLDivElement>(null)
-  const [rotateX, setRotateX] = useState(0)
-  const [rotateY, setRotateY] = useState(0)
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!ref.current) return
-    const rect = ref.current.getBoundingClientRect()
-    const width = rect.width
-    const height = rect.height
-    const mouseX = e.clientX - rect.left
-    const mouseY = e.clientY - rect.top
-    const xPct = mouseX / width - 0.5
-    const yPct = mouseY / height - 0.5
-    setRotateX(yPct * -15) // Max rotation 15deg
-    setRotateY(xPct * 15)
-  }
-
-  const handleMouseLeave = () => {
-    setRotateX(0)
-    setRotateY(0)
-  }
-
-  return (
-    <motion.div
-      ref={ref}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      animate={{ rotateX, rotateY }}
-      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      style={{ perspective: 1000, transformStyle: "preserve-3d" }}
-      className={className}
-    >
-      <div style={{ transform: "translateZ(30px)" }} className="w-full h-full">
-        {children}
-      </div>
-    </motion.div>
-  )
-}
-
-// 4. Scroll Velocity Marquee
-const VelocityMarquee = ({ baseVelocity = 100, children }: { baseVelocity: number, children: React.ReactNode }) => {
-  const baseX = useRef(0)
-  const { scrollY } = useScroll()
-  const scrollVelocity = useVelocity(scrollY)
-  const smoothVelocity = useSpring(scrollVelocity, { damping: 50, stiffness: 400 })
-  const velocityFactor = useTransform(smoothVelocity, [0, 1000], [0, 5], { clamp: false })
-
-  const [x, setX] = useState(0)
-
-  useAnimationFrame((t, delta) => {
-    let moveBy = directionFactor.current * baseVelocity * (delta / 1000)
-    if (velocityFactor.get() < 0) {
-      directionFactor.current = -1
-    } else if (velocityFactor.get() > 0) {
-      directionFactor.current = 1
-    }
-    moveBy += directionFactor.current * moveBy * velocityFactor.get()
-    baseX.current += moveBy
-    // Magic number for loop wrapping - depends on content width
-    if (baseX.current <= -100) baseX.current = 0
-    if (baseX.current > 0) baseX.current = -100
-    setX(baseX.current)
-  })
-
-  const directionFactor = useRef<number>(1)
-
-  return (
-    <div className="overflow-hidden whitespace-nowrap flex flex-nowrap m-0 opacity-10">
-      <motion.div className="flex whitespace-nowrap gap-16 text-[10vw] font-black uppercase tracking-tighter" style={{ x: `${x}%` }}>
-        <span>{children} </span>
-        <span>{children} </span>
-        <span>{children} </span>
-        <span>{children} </span>
-      </motion.div>
-    </div>
-  )
-}
-
 
 export default function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -475,6 +338,80 @@ export default function LandingPage() {
                 ))}
               </div>
             </motion.div>
+          </div>
+        </section>
+
+        {/* Infinite Possibilities Section */}
+        <section id="possibilities" className="py-20 px-4 relative bg-[#030305]">
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[var(--accent)]/5 to-transparent pointer-events-none" />
+          <div className="max-w-7xl mx-auto relative z-10">
+            <div className="text-center mb-16 md:mb-24">
+              <motion.h2 
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                className="text-4xl sm:text-6xl md:text-7xl font-black mb-6 tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white to-white/50"
+              >
+                Infinite <span className="font-display italic text-[var(--accent)]">Possibilities</span>
+              </motion.h2>
+              <p className="text-zinc-400 text-lg md:text-xl max-w-2xl mx-auto">
+                Not just for code. Let's Collab was built to break the boundaries of what you can do remotely.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Gaming */}
+              <TiltCard>
+                <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
+                  <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  <div className="absolute top-6 left-6 right-6">
+                    <Gamepad2 className="w-10 h-10 text-indigo-400 mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Massive Multiplayer Gaming</h3>
+                    <p className="text-zinc-400 text-sm">Pass the controller to your friend across the world. Play local co-op games or heavy AAA titles with zero input latency.</p>
+                  </div>
+                  <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-indigo-500/30 rounded-full blur-[50px] group-hover:bg-indigo-500/50 transition-colors" />
+                </div>
+              </TiltCard>
+
+              {/* Movies */}
+              <TiltCard>
+                <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
+                  <div className="absolute inset-0 bg-gradient-to-br from-rose-500/20 to-orange-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  <div className="absolute top-6 left-6 right-6">
+                    <Play className="w-10 h-10 text-rose-400 mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Synchronized Movie Nights</h3>
+                    <p className="text-zinc-400 text-sm">Watch 4K movies together. Our native audio mixer captures system audio directly so you hear the explosions, not the echo.</p>
+                  </div>
+                  <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-rose-500/30 rounded-full blur-[50px] group-hover:bg-rose-500/50 transition-colors" />
+                </div>
+              </TiltCard>
+
+              {/* Editing */}
+              <TiltCard>
+                <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
+                  <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/20 to-teal-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  <div className="absolute top-6 left-6 right-6">
+                    <Command className="w-10 h-10 text-emerald-400 mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Remote Video Editing</h3>
+                    <p className="text-zinc-400 text-sm">Review cuts in Premiere Pro or After Effects in real-time. Sub-10ms latency means you see every frame as it drops.</p>
+                  </div>
+                  <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-emerald-500/30 rounded-full blur-[50px] group-hover:bg-emerald-500/50 transition-colors" />
+                </div>
+              </TiltCard>
+
+              {/* Tutorials */}
+              <TiltCard>
+                <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
+                  <div className="absolute inset-0 bg-gradient-to-br from-[var(--accent)]/20 to-cyan-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  <div className="absolute top-6 left-6 right-6">
+                    <Layers className="w-10 h-10 text-[var(--accent)] mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Interactive Tutorials</h3>
+                    <p className="text-zinc-400 text-sm">Don't just share your screen. Let your student take control of your IDE or software to learn hands-on while you supervise.</p>
+                  </div>
+                  <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-[var(--accent)]/30 rounded-full blur-[50px] group-hover:bg-[var(--accent)]/50 transition-colors" />
+                </div>
+              </TiltCard>
+            </div>
           </div>
         </section>
 

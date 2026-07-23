@@ -14,18 +14,18 @@ import type { MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } fro
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense } from 'react'
 import { io, Socket } from "socket.io-client"
-import {
-    Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer,
-    Keyboard, Zap, Radio, Check, AlertTriangle, Link, Volume2,
-    VolumeX, Maximize2, Minimize2, ChevronDown, ChevronUp, ArrowLeft,
-    XCircle, Mic, MicOff, Video, VideoOff, LogOut, MessageSquare,
-    Send, Camera, Disc, Clipboard, ClipboardX, Copy, Maximize, Minimize
-} from "lucide-react"
+import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer,
+    MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut
+} from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
-    SectionHeader, DangerButton, GlowButton, LiveDot
+    SectionHeader, DangerButton, GlowButton, LiveDot, AppLogo
 } from "@/components/ircp/shared"
 import { PermissionRequestModal } from "@/components/ircp/permission-modal"
+
+import dynamic from 'next/dynamic'
+const AiSupervisor = dynamic(() => import('@/components/ircp/supervisor/AiSupervisor').then(mod => mod.AiSupervisor), { ssr: false })
 import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
 import {
@@ -78,11 +78,13 @@ type ChatMessage = {
     text: string
 }
 type EvidenceItem = {
-    id: string
-    time: string
-    type: "snapshot" | "recording"
-    by: string
-    label: string
+    id?: string
+    time?: string
+    timestamp?: string
+    type: string
+    by?: string
+    label?: string
+    message?: string
 }
 
 const permissionLevels = [
@@ -140,8 +142,41 @@ function SessionContent() {
     )
     const [joinInput, setJoinInput] = useState(initialRoom || "")
     const [setupError, setSetupError] = useState("")
+    const startedAtRef = useRef(0)
 
-    // ── Session state ─────────────────────────────────────────────────────────
+    // ── Malpractice Detection (OS-Level Focus Loss) ───────────────────────────
+    useEffect(() => {
+        if (sessionModeRef.current !== 'supervised') return;
+        
+        const handleFocusLoss = () => {
+            const warningMsg = `Malpractice Detected: Window lost focus or tab switched.`;
+            addLog('permission', warningMsg);
+            if (Notification.permission === 'granted') {
+                new Notification('Supervisor Warning', { body: warningMsg });
+            }
+            // Send malpractice warning to the server so the host/admin is notified
+            if (socketRef.current) {
+                socketRef.current.emit('evidence-event', {
+                    roomId: roomCodeRef.current,
+                    type: 'system',
+                    message: `MALPRACTICE WARNING: ${currentRoleRef.current} switched apps/tabs!`,
+                    timestamp: new Date().toISOString()
+                });
+            }
+        };
+
+        window.addEventListener('blur', handleFocusLoss);
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) handleFocusLoss();
+        });
+
+        return () => {
+            window.removeEventListener('blur', handleFocusLoss);
+            document.removeEventListener('visibilitychange', handleFocusLoss);
+        }
+    }, []);
+
+    // ── Session state ───────────────────────────────────────────────────────────
     const [role, setRole] = useState<Role>(initialRoom || joinDirect ? "controller" : "host")
     const [sessionMode, setSessionMode] = useState<SessionMode>(requestedMode)
     const [roomCode, setRoomCode] = useState<string | null>(null)
@@ -296,7 +331,9 @@ function SessionContent() {
                 return;
             }
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+                })
                 localStreamRef.current = stream
                 setLocalMicMuted(false)
                 setHasLocalMedia(true)
@@ -321,7 +358,10 @@ function SessionContent() {
                 return;
             }
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: true, 
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+                })
                 localStreamRef.current = stream
                 if (localCamRef.current) localCamRef.current.srcObject = stream
                 setLocalCamMuted(false)
@@ -369,7 +409,10 @@ function SessionContent() {
             // Try to acquire actual mic/cam just for the calibration/proctoring phase
             let tempStream: MediaStream | undefined;
             try {
-                tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                tempStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: true, 
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+                });
                 localStreamRef.current = tempStream;
                 if (localCamRef.current) {
                     localCamRef.current.srcObject = tempStream;
@@ -599,7 +642,7 @@ function SessionContent() {
         else pcRef.current = pc
 
         if (currentRoleRef.current === 'host' && targetId) {
-            const channel = pc.createDataChannel('ircp-input')
+            const channel = pc.createDataChannel('ircp-input', { ordered: false, maxRetransmits: 0 })
             attachInputChannel(channel, targetId)
             addScreenTracksToPeer(pc)
         } else {
@@ -760,7 +803,16 @@ function SessionContent() {
             await pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
         })
         socket.on('chat-message', (message: ChatMessage) => setChatMessages(prev => [...prev, message].slice(-100)))
-        socket.on('evidence-event', (item: EvidenceItem) => setEvidence(prev => [item, ...prev].slice(0, 80)))
+        socket.on('evidence-event', (item: EvidenceItem) => {
+            setEvidence(prev => [item, ...prev].slice(0, 80))
+            if (item.type === 'join' && item.message?.includes('disconnected') && Notification.permission === 'granted') {
+                new Notification('User Disconnected', { body: item.message || "" })
+            } else if (item.type === 'join' && item.message?.includes('disconnected') && Notification.permission !== 'denied') {
+                Notification.requestPermission().then(permission => {
+                    if (permission === 'granted') new Notification('User Disconnected', { body: item.message || "" })
+                })
+            }
+        })
         socket.on('join-denied', ({ reason }: { reason?: string }) => {
             alert(reason || 'Host denied the connection request.')
             router.push('/app')
@@ -1094,7 +1146,17 @@ function SessionContent() {
                     <div onClick={async () => { 
                         if(roomCode) {
                             try {
-                                await navigator.clipboard.writeText(roomCode);
+                                if (navigator.clipboard && window.isSecureContext) {
+                                    await navigator.clipboard.writeText(roomCode);
+                                } else {
+                                    const textArea = document.createElement("textarea");
+                                    textArea.value = roomCode;
+                                    textArea.style.position = "fixed";
+                                    document.body.appendChild(textArea);
+                                    textArea.select();
+                                    document.execCommand('copy');
+                                    textArea.remove();
+                                }
                                 setCopied(true);
                                 setTimeout(() => setCopied(false), 2000);
                                 addLog('system', 'Room code copied to clipboard');
@@ -1294,6 +1356,26 @@ function SessionContent() {
                             <canvas ref={antiCheatCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none object-cover" />
                             {riskScore > 0 && <div className="absolute top-0 left-0 right-0 bg-red-600/80 text-white text-xs font-bold text-center py-0.5">VIOLATION: {riskScore} PTS</div>}
                             {localCamMuted && <div className="absolute inset-0 flex items-center justify-center text-[var(--text-dim)]"><VideoOff className="w-6 h-6" /></div>}
+                            <AiSupervisor 
+                                videoRef={localCamRef} 
+                                isActive={sessionMode === 'supervised'} 
+                                onMalpractice={(reason) => {
+                                    const warningMsg = `AI Warning: ${reason}`;
+                                    addLog('permission', warningMsg);
+                                    if (Notification.permission === 'granted') {
+                                        new Notification('Supervisor Warning', { body: warningMsg });
+                                    }
+                                    setMalpracticeWarnings(prev => [...prev, reason].slice(-3));
+                                    if (socketRef.current) {
+                                        socketRef.current.emit('evidence-event', {
+                                            roomId: roomCodeRef.current,
+                                            type: 'system',
+                                            message: `AI DETECTED: ${reason}`,
+                                            timestamp: new Date().toISOString()
+                                        });
+                                    }
+                                }} 
+                            />
                         </div>
 
                         {/* Malpractice Warnings (Bottom-Left) */}

@@ -163,6 +163,7 @@
     "email": "admin@letscollab.com"
   },
   "dependencies": {
+    "@vladmandic/face-api": "^1.7.15",
     "express": "^5.2.1",
     "framer-motion": "^12.42.2"
   },
