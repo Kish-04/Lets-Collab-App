@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { motion, useScroll, useTransform, AnimatePresence, useSpring, useVelocity, useAnimationFrame, useMotionValueEvent } from 'framer-motion'
-import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, Command, Lock, Cpu, Network, Sparkles, ServerOff, Infinity as InfinityIcon, ArrowRight, Play, Maximize2, MousePointer2, User, Gamepad2 } from 'lucide-react'
+import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, Command, Lock, Cpu, Network, Sparkles, ServerOff, Infinity as InfinityIcon, ArrowRight, Play, Maximize2, MousePointer2, User, Gamepad2, Copy, PenTool, Video } from 'lucide-react'
 import { AppLogo } from '@/components/ircp/shared'
 import { MagneticButton, TiltCard, VelocityMarquee, TextReveal } from '@/components/landing/Animations'
 import Link from 'next/link'
@@ -360,53 +360,53 @@ export default function LandingPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Gaming */}
+              {/* File Sharing */}
               <TiltCard>
                 <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
                   <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                  <div className="absolute top-6 left-6 right-6">
-                    <Gamepad2 className="w-10 h-10 text-indigo-400 mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Massive Multiplayer Gaming</h3>
-                    <p className="text-zinc-400 text-sm">Pass the controller to your friend across the world. Play local co-op games or heavy AAA titles with zero input latency.</p>
+                  <div className="absolute top-6 left-6 right-6 z-10">
+                    <Copy className="w-10 h-10 text-indigo-400 mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Zero-Server File Transfer</h3>
+                    <p className="text-zinc-400 text-sm">Send 10GB files instantly over WebRTC Data Channels. No cloud limits, no server uploads, just pure peer-to-peer drag and drop speed.</p>
                   </div>
                   <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-indigo-500/30 rounded-full blur-[50px] group-hover:bg-indigo-500/50 transition-colors" />
                 </div>
               </TiltCard>
 
-              {/* Movies */}
+              {/* Annotation */}
               <TiltCard>
                 <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
                   <div className="absolute inset-0 bg-gradient-to-br from-rose-500/20 to-orange-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                  <div className="absolute top-6 left-6 right-6">
-                    <Play className="w-10 h-10 text-rose-400 mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Synchronized Movie Nights</h3>
-                    <p className="text-zinc-400 text-sm">Watch 4K movies together. Our native audio mixer captures system audio directly so you hear the explosions, not the echo.</p>
+                  <div className="absolute top-6 left-6 right-6 z-10">
+                    <PenTool className="w-10 h-10 text-rose-400 mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Live Screen Annotation</h3>
+                    <p className="text-zinc-400 text-sm">Turn any screen into a collaborative whiteboard. Draw circles, arrows, and highlight code in real-time over the host's desktop.</p>
                   </div>
                   <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-rose-500/30 rounded-full blur-[50px] group-hover:bg-rose-500/50 transition-colors" />
                 </div>
               </TiltCard>
 
-              {/* Editing */}
+              {/* AI Avatars */}
               <TiltCard>
                 <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
                   <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/20 to-teal-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                  <div className="absolute top-6 left-6 right-6">
-                    <Command className="w-10 h-10 text-emerald-400 mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Remote Video Editing</h3>
-                    <p className="text-zinc-400 text-sm">Review cuts in Premiere Pro or After Effects in real-time. Sub-10ms latency means you see every frame as it drops.</p>
+                  <div className="absolute top-6 left-6 right-6 z-10">
+                    <User className="w-10 h-10 text-emerald-400 mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">AI Voice & Avatars</h3>
+                    <p className="text-zinc-400 text-sm">Morph your voice into Darth Vader or swap your face with a Pikachu mesh using on-device Web Audio and facial landmark AI.</p>
                   </div>
                   <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-emerald-500/30 rounded-full blur-[50px] group-hover:bg-emerald-500/50 transition-colors" />
                 </div>
               </TiltCard>
 
-              {/* Tutorials */}
+              {/* Chat & Record */}
               <TiltCard>
                 <div className="relative h-[300px] rounded-3xl overflow-hidden group bg-zinc-900 border border-white/10">
                   <div className="absolute inset-0 bg-gradient-to-br from-[var(--accent)]/20 to-cyan-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                  <div className="absolute top-6 left-6 right-6">
-                    <Layers className="w-10 h-10 text-[var(--accent)] mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Interactive Tutorials</h3>
-                    <p className="text-zinc-400 text-sm">Don't just share your screen. Let your student take control of your IDE or software to learn hands-on while you supervise.</p>
+                  <div className="absolute top-6 left-6 right-6 z-10">
+                    <Video className="w-10 h-10 text-[var(--accent)] mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Composited Recording</h3>
+                    <p className="text-zinc-400 text-sm">Record your sessions locally with HTML5 canvas mixing. Mux the screen share, webcams, and microphones into a single WebM file instantly.</p>
                   </div>
                   <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-[var(--accent)]/30 rounded-full blur-[50px] group-hover:bg-[var(--accent)]/50 transition-colors" />
                 </div>
@@ -492,19 +492,18 @@ export default function LandingPage() {
                 
                 <div className="divide-y divide-white/5">
                   {[
-                    { feature: "Live remote screen sharing", collab: true, competitor: true },
-                    { feature: "Remote mouse & keyboard control", collab: true, competitor: true },
-                    { feature: "Granular, server-enforced access tiers (view/mouse/keyboard/full)", collab: true, competitor: false },
-                    { feature: "Blockchain-verified session audit trail", collab: true, competitor: false },
-                    { feature: "Independently verifiable history (no vendor trust required)", collab: true, competitor: false },
-                    { feature: "On-device AI monitoring (nothing leaves your machine)", collab: true, competitor: false },
-                    { feature: "In-session chat", collab: true, competitor: true },
-                    { feature: "One-click room sharing", collab: true, competitor: true },
-                    { feature: "Admin oversight dashboard", collab: true, competitor: true },
-                    { feature: "Self-hosted & fully customizable", collab: true, competitor: false },
-                    { feature: "Open, transparent architecture (no black-box backend)", collab: true, competitor: false },
-                    { feature: "Free to use, no subscription lock-in", collab: true, competitor: false },
-                    { feature: "No ad-based or data-monetized business model", collab: true, competitor: false }
+                    { feature: "Live remote screen sharing & WebRTC Audio/Video", collab: true, competitor: true },
+                    { feature: "Remote mouse & OS-level keyboard injection", collab: true, competitor: true },
+                    { feature: "Zero-Server P2P Unlimited File Sharing", collab: true, competitor: false },
+                    { feature: "Live Interactive Screen Annotation (Whiteboarding)", collab: true, competitor: false },
+                    { feature: "End-to-End Encrypted P2P Chat Channels", collab: true, competitor: false },
+                    { feature: "Federated AI Weight Aggregation (TensorFlow.js)", collab: true, competitor: false },
+                    { feature: "AI Virtual Avatars & Pitch Voice Changers", collab: true, competitor: false },
+                    { feature: "Multi-stream Canvas Composited Recording", collab: true, competitor: false },
+                    { feature: "On-device AI Gaze & Emotion Supervisor Tracking", collab: true, competitor: false },
+                    { feature: "Blockchain-verified session audit evidence", collab: true, competitor: false },
+                    { feature: "Granular, server-enforced Access Control Lists", collab: true, competitor: false },
+                    { feature: "Open, transparent architecture (no black-box backend)", collab: true, competitor: false }
                   ].map((row, i) => (
                     <motion.div 
                       key={i}
