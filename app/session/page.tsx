@@ -24,6 +24,10 @@ import {
 } from "@/components/ircp/shared"
 import { PermissionRequestModal } from "@/components/ircp/permission-modal"
 
+import { VoiceChanger, VoiceFilter } from "@/lib/VoiceChanger"
+import { VirtualAvatar, AvatarStyle } from "@/lib/VirtualAvatar"
+import { VirtualBackground, BackgroundStyle } from "@/lib/VirtualBackground"
+
 import dynamic from 'next/dynamic'
 const AiSupervisor = dynamic(() => import('@/components/ircp/supervisor/AiSupervisor').then(mod => mod.AiSupervisor), { ssr: false })
 import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
@@ -235,6 +239,9 @@ function SessionContent() {
     const [logFilter, setLogFilter] = useState<'all' | 'anticheat' | 'system'>('all')
     const [observerCount, setObserverCount] = useState(0)
     const [observationRequest, setObservationRequest] = useState<string | null>(null)
+    const [voiceFilter, setVoiceFilter] = useState<VoiceFilter>('none')
+    const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>('none')
+    const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyle>('none')
     const logScrollRef = useRef<HTMLDivElement>(null)
     // ── Refs ──────────────────────────────────────────────────────────────────
     const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -248,9 +255,81 @@ function SessionContent() {
     const hostPcRefs = useRef<Map<string, RTCPeerConnection>>(new Map())
     const localStreamRef = useRef<MediaStream | null>(null)
     const screenStreamRef = useRef<MediaStream | null>(null)
+    const voiceChangerRef = useRef<VoiceChanger | null>(null)
+    const virtualAvatarRef = useRef<VirtualAvatar | null>(null)
+    const virtualBackgroundRef = useRef<VirtualBackground | null>(null)
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
     const recordedChunksRef = useRef<BlobPart[]>([])
     const engineRef = useRef<AntiCheatEngine | null>(null)
+
+    // ── Apply Voice and Avatar Effects ────────────────────────────────────────
+    useEffect(() => {
+        if (!hasLocalMedia || !localStreamRef.current) return;
+        
+        let processedStream = localStreamRef.current;
+        
+        if (voiceFilter !== 'none') {
+            if (!voiceChangerRef.current) voiceChangerRef.current = new VoiceChanger();
+            processedStream = voiceChangerRef.current.processStream(processedStream, voiceFilter);
+        } else {
+            voiceChangerRef.current?.stop();
+            voiceChangerRef.current = null;
+        }
+
+        if (avatarStyle !== 'none') {
+            if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
+            virtualAvatarRef.current.setAvatarStyle(avatarStyle);
+            
+            if (localCamRef.current && localCamRef.current.readyState >= 2) {
+                const avatarStream = virtualAvatarRef.current.start(localCamRef.current);
+                const finalStream = new MediaStream();
+                processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
+                avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
+                processedStream = finalStream;
+            }
+        } else {
+            virtualAvatarRef.current?.stop();
+            virtualAvatarRef.current = null;
+        }
+
+        if (backgroundStyle !== 'none') {
+            if (!virtualBackgroundRef.current) virtualBackgroundRef.current = new VirtualBackground();
+            virtualBackgroundRef.current.setBackgroundStyle(backgroundStyle);
+            
+            if (localCamRef.current && localCamRef.current.readyState >= 2) {
+                // If avatar is active, we don't want to apply background blur on top of it, so we only apply if avatar is none
+                if (avatarStyle === 'none') {
+                    const bgStream = virtualBackgroundRef.current.start(localCamRef.current);
+                    const finalStream = new MediaStream();
+                    processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
+                    bgStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
+                    processedStream = finalStream;
+                }
+            }
+        } else {
+            virtualBackgroundRef.current?.stop();
+            virtualBackgroundRef.current = null;
+        }
+
+        const pCs = currentRoleRef.current === 'host' ? Array.from(hostPcRefs.current.values()) : [pcRef.current];
+        pCs.forEach(pc => {
+            if (!pc || pc.signalingState === 'closed') return;
+            const senders = pc.getSenders();
+            
+            const audioTrack = processedStream.getAudioTracks()[0];
+            if (audioTrack) {
+                const audioSender = senders.find(s => s.track?.kind === 'audio');
+                if (audioSender) audioSender.replaceTrack(audioTrack);
+            }
+            
+            const videoTrack = processedStream.getVideoTracks()[0];
+            if (videoTrack) {
+                const videoSender = senders.find(s => s.track?.kind === 'video' && s.track !== screenStreamRef.current?.getVideoTracks()[0]);
+                if (videoSender) videoSender.replaceTrack(videoTrack);
+            }
+        });
+        
+    }, [voiceFilter, avatarStyle, hasLocalMedia]);
     const [aiConfig, setAiConfig] = useState({
         eyeTrackingThreshold: 0.80,
         emotionSensitivity: 0.65,
@@ -517,13 +596,21 @@ function SessionContent() {
         statsTimerRefs.current.set(`quality-${peerId}`, timer)
     }
 
-    const addScreenTracksToPeer = (pc: RTCPeerConnection) => {
+    const addMediaTracksToPeer = (pc: RTCPeerConnection) => {
         const screen = screenStreamRef.current
-        if (!screen) return
-        screen.getTracks().forEach(track => {
-            const alreadyAdded = pc.getSenders().some(sender => sender.track === track)
-            if (!alreadyAdded) pc.addTrack(track, screen)
-        })
+        if (screen) {
+            screen.getTracks().forEach(track => {
+                const alreadyAdded = pc.getSenders().some(sender => sender.track === track)
+                if (!alreadyAdded) pc.addTrack(track, screen)
+            })
+        }
+        const local = localStreamRef.current
+        if (local) {
+            local.getTracks().forEach(track => {
+                const alreadyAdded = pc.getSenders().some(sender => sender.track === track)
+                if (!alreadyAdded) pc.addTrack(track, local)
+            })
+        }
     }
 
     const controlPayloadAllowed = (participant: Participant, payload: any) => {
@@ -589,7 +676,7 @@ function SessionContent() {
 
     const negotiateWithController = async (controllerId: string) => {
         const pc = await createPC(controllerId)
-        addScreenTracksToPeer(pc)
+        addMediaTracksToPeer(pc)
         const offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
         socketRef.current?.emit('offer', { offer, roomId: roomCodeRef.current, targetId: controllerId })
@@ -611,7 +698,7 @@ function SessionContent() {
                 if (event.candidate) socketRef.current?.emit('observer-ice-candidate', { targetId: observerId, candidate: event.candidate })
             }
         }
-        addScreenTracksToPeer(pc)
+        addMediaTracksToPeer(pc)
         const offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
         socketRef.current?.emit('observer-offer', { observerId, offer })
@@ -628,7 +715,7 @@ function SessionContent() {
             ? hostPcRefs.current.get(targetId)
             : pcRef.current
         if (existingPc && existingPc.signalingState !== 'closed') {
-            if (currentRoleRef.current === 'host') addScreenTracksToPeer(existingPc)
+            addMediaTracksToPeer(existingPc)
             return existingPc
         }
 
@@ -644,7 +731,6 @@ function SessionContent() {
         if (currentRoleRef.current === 'host' && targetId) {
             const channel = pc.createDataChannel('ircp-input', { ordered: false, maxRetransmits: 0 })
             attachInputChannel(channel, targetId)
-            addScreenTracksToPeer(pc)
         } else {
             pc.ondatachannel = event => {
                 if (event.channel.label === 'ircp-input') attachInputChannel(event.channel, targetId || 'host')
@@ -861,7 +947,7 @@ function SessionContent() {
                 const existingPc = hostPcRefs.current.get(p.id)
                 console.log(`[DEBUG] Participant ${p.id}, has existingPc: ${!!existingPc}`);
                 if (existingPc && existingPc.signalingState !== 'closed') {
-                    addScreenTracksToPeer(existingPc)
+                    addMediaTracksToPeer(existingPc)
                     const offer = await existingPc.createOffer()
                     await existingPc.setLocalDescription(offer)
                     console.log(`[DEBUG] Emitting offer to ${p.id}`);
@@ -875,7 +961,7 @@ function SessionContent() {
             observerIdsRef.current.forEach(async (observerId) => {
                 const pc = observerPcRefs.current.get(observerId)
                 if (pc && pc.signalingState !== 'closed') {
-                    addScreenTracksToPeer(pc)
+                    addMediaTracksToPeer(pc)
                     const offer = await pc.createOffer()
                     await pc.setLocalDescription(offer)
                     console.log(`[DEBUG] Emitting offer to observer ${observerId}`);
@@ -1323,6 +1409,62 @@ function SessionContent() {
                                 </button>
                             )}
                         </div>
+                        {sessionMode === 'collaboration' && (
+                            <div className="mt-4 border-t border-[var(--border)] pt-4">
+                                <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] font-bold block mb-3">Fun Filters</span>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-[10px] text-[var(--text-secondary)] block mb-1">Voice Changer</label>
+                                        <select 
+                                            value={voiceFilter}
+                                            onChange={(e) => setVoiceFilter(e.target.value as VoiceFilter)}
+                                            className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                                        >
+                                            <option value="none">Normal Voice</option>
+                                            <option value="robot">Robot</option>
+                                            <option value="alien">Alien</option>
+                                            <option value="radio">Radio</option>
+                                            <option value="deep">Deep / Witness Protection</option>
+                                            <option value="chipmunk">Chipmunk</option>
+                                            <option value="echo">Canyon Echo</option>
+                                            <option value="male">Male EQ</option>
+                                            <option value="female">Female EQ</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-[var(--text-secondary)] block mb-1">Virtual Avatar</label>
+                                        <select 
+                                            value={avatarStyle}
+                                            onChange={(e) => setAvatarStyle(e.target.value as AvatarStyle)}
+                                            className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                                        >
+                                            <option value="none">Normal Camera</option>
+                                            <option value="sunglasses">Deal With It Glasses</option>
+                                            <option value="anonymous">Anonymous Mask</option>
+                                            <option value="fox">Fox Mask</option>
+                                            <option value="spiderman">Spiderman</option>
+                                            <option value="batman">Batman</option>
+                                            <option value="ironman">Ironman</option>
+                                            <option value="pikachu">Pikachu</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-[var(--text-secondary)] block mb-1">Virtual Background</label>
+                                        <select 
+                                            value={backgroundStyle}
+                                            onChange={(e) => setBackgroundStyle(e.target.value as BackgroundStyle)}
+                                            className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                                        >
+                                            <option value="none">Normal Background</option>
+                                            <option value="blur">Blur Background</option>
+                                            <option value="office">Office Room</option>
+                                            <option value="beach">Tropical Beach</option>
+                                            <option value="space">Outer Space</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </aside>
 

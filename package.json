@@ -163,6 +163,8 @@
     "email": "admin@letscollab.com"
   },
   "dependencies": {
+    "@mediapipe/camera_utils": "^0.3.1675466862",
+    "@mediapipe/selfie_segmentation": "^0.1.1675465747",
     "@vladmandic/face-api": "^1.7.15",
     "express": "^5.2.1",
     "framer-motion": "^12.42.2"
