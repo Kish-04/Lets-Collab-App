@@ -6,7 +6,7 @@ import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, C
 import { AppLogo } from '@/components/ircp/shared'
 import Link from 'next/link'
 
-const desktopDownloadUrl = "https://drive.google.com/uc?export=download&id=1DRnMR3jCPmRNqe8ndQKDcwuHKZGeZhog"
+const desktopDownloadUrl = "https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.0.exe"
 
 // --- Advanced Animation Utilities ---
 
