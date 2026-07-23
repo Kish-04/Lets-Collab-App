@@ -7,7 +7,7 @@ import { AppLogo } from '@/components/ircp/shared'
 import Link from 'next/link'
 
 const desktopDownloadUrl = process.env.NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL ||
-  "https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Lets-Collab-Cloud-Setup.exe"
+  "https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.0.exe"
 
 // --- Advanced Animation Utilities ---
 
