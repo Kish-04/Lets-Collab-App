@@ -164,7 +164,9 @@
   },
   "dependencies": {
     "express": "^5.2.1",
-    "framer-motion": "^12.42.2",
+    "framer-motion": "^12.42.2"
+  },
+  "optionalDependencies": {
     "robotjs": "^0.7.1",
     "vigemclient": "^1.5.3"
   }
