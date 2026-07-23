@@ -16,7 +16,7 @@ import { Suspense } from 'react'
 import { io, Socket } from "socket.io-client"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -27,6 +27,12 @@ import { PermissionRequestModal } from "@/components/ircp/permission-modal"
 import { VoiceChanger, VoiceFilter } from "@/lib/VoiceChanger"
 import { VirtualAvatar, AvatarStyle } from "@/lib/VirtualAvatar"
 import { VirtualBackground, BackgroundStyle } from "@/lib/VirtualBackground"
+import { dataChannelManager } from "@/lib/DataChannelManager"
+import { FileTransfer } from "@/components/ircp/FileTransfer"
+import { P2PChat } from "@/components/ircp/P2PChat"
+import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
+import { SessionRecorder } from "@/lib/SessionRecorder"
+import { FederatedLearner } from "@/lib/FederatedLearner"
 
 import dynamic from 'next/dynamic'
 const AiSupervisor = dynamic(() => import('@/components/ircp/supervisor/AiSupervisor').then(mod => mod.AiSupervisor), { ssr: false })
@@ -258,9 +264,9 @@ function SessionContent() {
     const voiceChangerRef = useRef<VoiceChanger | null>(null)
     const virtualAvatarRef = useRef<VirtualAvatar | null>(null)
     const virtualBackgroundRef = useRef<VirtualBackground | null>(null)
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-    const recordedChunksRef = useRef<BlobPart[]>([])
+    const sessionRecorderRef = useRef<SessionRecorder | null>(null)
     const engineRef = useRef<AntiCheatEngine | null>(null)
+    const federatedLearnerRef = useRef<FederatedLearner | null>(null)
 
     // ── Apply Voice and Avatar Effects ────────────────────────────────────────
     useEffect(() => {
@@ -731,9 +737,21 @@ function SessionContent() {
         if (currentRoleRef.current === 'host' && targetId) {
             const channel = pc.createDataChannel('ircp-input', { ordered: false, maxRetransmits: 0 })
             attachInputChannel(channel, targetId)
+            
+            const fileChannel = pc.createDataChannel('ircp-file', { ordered: true })
+            dataChannelManager.attachChannel(fileChannel, targetId, 'ircp-file')
+            
+            const drawChannel = pc.createDataChannel('ircp-draw', { ordered: false, maxRetransmits: 0 })
+            dataChannelManager.attachChannel(drawChannel, targetId, 'ircp-draw')
+            
+            const chatChannel = pc.createDataChannel('ircp-chat', { ordered: true })
+            dataChannelManager.attachChannel(chatChannel, targetId, 'ircp-chat')
         } else {
             pc.ondatachannel = event => {
                 if (event.channel.label === 'ircp-input') attachInputChannel(event.channel, targetId || 'host')
+                else if (event.channel.label.startsWith('ircp-')) {
+                    dataChannelManager.attachChannel(event.channel, targetId || 'host', event.channel.label)
+                }
             }
         }
 
@@ -1128,36 +1146,33 @@ function SessionContent() {
 
     const toggleRecording = () => {
         if (!isRecording) {
-            if (!screenStreamRef.current) {
+            if (!mainVideoRef.current) {
                 addLog('system', 'Cannot start recording: No screen stream active')
                 return
             }
-            try {
-                const mediaRecorder = new MediaRecorder(screenStreamRef.current)
-                mediaRecorderRef.current = mediaRecorder
-                recordedChunksRef.current = []
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data.size > 0) recordedChunksRef.current.push(e.data)
-                }
-                mediaRecorder.onstop = () => {
-                    const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
-                    const url = URL.createObjectURL(blob)
+            if (!sessionRecorderRef.current) sessionRecorderRef.current = new SessionRecorder()
+            
+            const started = sessionRecorderRef.current.startRecording(
+                mainVideoRef.current,
+                localCamRef.current,
+                remoteCamRef.current,
+                (url) => {
                     const a = document.createElement('a')
                     a.href = url
                     a.download = `session-recording-${Date.now()}.webm`
                     a.click()
-                    URL.revokeObjectURL(url)
                     addLog('recording', 'Recording saved to local device')
                 }
-                mediaRecorder.start()
+            )
+            
+            if (started) {
                 setIsRecording(true)
-                addLog('system', 'Recording started')
-            } catch (err: any) {
-                addLog('system', `Recording failed: ${err.message}`)
+                addLog('recording', 'Advanced Multi-stream Recording started')
             }
         } else {
-            mediaRecorderRef.current?.stop()
+            sessionRecorderRef.current?.stopRecording()
             setIsRecording(false)
+            addLog('recording', 'Recording stopped, preparing download...')
         }
     }
 
@@ -1188,14 +1203,32 @@ function SessionContent() {
                 const data = await res.json()
                 if (data.success) {
                     addLog('recording', `Evidence captured and saved: ${data.url}`)
-                    alert('Evidence captured successfully and uploaded to MinIO! DebugRoom: ' + data.debugRoom);
                 } else {
-                    alert('Evidence capture failed: ' + data.message);
+                    addLog('system', 'Evidence capture failed: ' + data.message)
                 }
             } catch (err) {
                 console.error("Upload failed", err)
             }
         }, 'image/png')
+    }
+
+    const runFederatedEpoch = async () => {
+        if (!federatedLearnerRef.current) federatedLearnerRef.current = new FederatedLearner()
+        
+        // Mock dataset creation for demo
+        addLog('system', 'Generating local heuristic dataset...')
+        for (let i = 0; i < 50; i++) {
+            federatedLearnerRef.current.addSample([Math.random(), Math.random(), Math.random()], Math.random() > 0.5 ? 1 : 0)
+        }
+        
+        addLog('system', 'Starting local Federated Training Epoch...')
+        const loss = await federatedLearnerRef.current.trainLocalModel(10)
+        
+        addLog('system', `Training complete. Final Loss: ${Number(loss).toFixed(4)}. Extracting weights...`)
+        const weights = await federatedLearnerRef.current.getSerializedWeights()
+        
+        socketRef.current?.emit('federated-update', { roomId: roomCodeRef.current, weights })
+        addLog('system', `Securely broadcasted ${weights.length} model weights to aggregator.`)
     }
 
     if (setupMode === "join") {
@@ -1408,7 +1441,18 @@ function SessionContent() {
                                     <span className="hidden sm:inline">Capture</span>
                                 </button>
                             )}
+                            {sessionMode === 'supervised' && role === 'host' && (
+                                <button onClick={runFederatedEpoch} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 text-xs font-bold transition-colors">
+                                    <Brain className="w-4 h-4" />
+                                    <span className="hidden sm:inline">Train FL Epoch</span>
+                                </button>
+                            )}
                         </div>
+                        {sessionMode === 'collaboration' && (
+                            <div className="mt-4 border-t border-[var(--border)] pt-4">
+                                <FileTransfer />
+                            </div>
+                        )}
                         {sessionMode === 'collaboration' && (
                             <div className="mt-4 border-t border-[var(--border)] pt-4">
                                 <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] font-bold block mb-3">Fun Filters</span>
@@ -1484,6 +1528,8 @@ function SessionContent() {
                                     className="w-full h-full object-contain absolute inset-0"
                                 />
                                 <video ref={remoteCamRef} autoPlay playsInline className="w-full h-full object-contain absolute inset-0 pointer-events-none" />
+                                {sessionMode === 'collaboration' && <WhiteboardOverlay isHost={role === 'host'} />}
+                                <P2PChat />
                             </>
                         )}
                         {role === 'host' && !isStreaming && (
