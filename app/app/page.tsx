@@ -255,14 +255,14 @@ export default function HomePage() {
         })
         const data = await res.json()
         if (res.ok) {
-          if (!data.otp) {
+          if (!data.otpRequired) {
             localStorage.setItem('ircp_user', JSON.stringify(data))
             localStorage.setItem('ircp_name', data.name || formData.email)
             localStorage.setItem('ircp_email', formData.email)
             setIsAuth(true)
             setAuthMode(null)
           } else {
-            await sendOTPEmailJS(formData.email, data.otp, data.name || 'User')
+            if (data.otp) await sendOTPEmailJS(formData.email, data.otp, data.name || 'User')
             setAuthMode("verify")
           }
         } else setErrorMsg(data.message || "Login failed")
