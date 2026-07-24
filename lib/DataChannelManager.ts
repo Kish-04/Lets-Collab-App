@@ -59,6 +59,7 @@ export class DataChannelManager {
         const callbacks = this.listeners.get(label);
         if (callbacks) {
             callbacks.delete(callback);
+        }
     }
 
     public getBufferedAmount(label: string, targetPeerId: string): number {
