@@ -54,7 +54,7 @@ export default function LandingPage() {
   }, [])
 
   return (
-    <div ref={containerRef} className="relative min-h-screen bg-[#030305] text-white selection:bg-[var(--accent)] selection:text-black overflow-hidden font-sans cursor-default">
+    <div ref={containerRef} className="relative min-h-screen bg-[#030305] text-white selection:bg-[var(--accent)] selection:text-black overflow-clip font-sans cursor-default">
       
       {/* Custom Trailing Cursor */}
       <motion.div 
