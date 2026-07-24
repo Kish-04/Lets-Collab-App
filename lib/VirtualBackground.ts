@@ -1,5 +1,16 @@
-const SelfieSegmentation = typeof window !== 'undefined' ? require('@mediapipe/selfie_segmentation').SelfieSegmentation : null;
-const Camera = typeof window !== 'undefined' ? require('@mediapipe/camera_utils').Camera : null;
+const getSelfieSegmentation = () => {
+    if (typeof window !== 'undefined' && (window as any).SelfieSegmentation) {
+        return (window as any).SelfieSegmentation;
+    }
+    return null;
+};
+
+const getCamera = () => {
+    if (typeof window !== 'undefined' && (window as any).Camera) {
+        return (window as any).Camera;
+    }
+    return null;
+};
 
 export type BackgroundStyle = 'none' | 'blur' | 'office' | 'beach' | 'space';
 
@@ -25,8 +36,9 @@ export class VirtualBackground {
         this.offscreenCanvas.height = 480;
         this.offscreenCtx = this.offscreenCanvas.getContext('2d');
         
-        if (typeof window !== 'undefined' && SelfieSegmentation) {
-            this.selfieSegmentation = new SelfieSegmentation({
+        const SelfieSegmentationClass = getSelfieSegmentation();
+        if (typeof window !== 'undefined' && SelfieSegmentationClass) {
+            this.selfieSegmentation = new SelfieSegmentationClass({
                 locateFile: (file: string) => {
                     return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
                 }
@@ -95,6 +107,7 @@ export class VirtualBackground {
     }
 
     public start(videoElement: HTMLVideoElement): MediaStream {
+        this.stop(); // Stop any existing loop
         this.isRunning = true;
         
         if (videoElement.readyState >= 2) {
@@ -104,8 +117,9 @@ export class VirtualBackground {
             this.offscreenCanvas.height = this.canvas.height;
         }
 
-        if (this.selfieSegmentation && Camera) {
-            this.camera = new Camera(videoElement, {
+        const CameraClass = getCamera();
+        if (this.selfieSegmentation && CameraClass) {
+            this.camera = new CameraClass(videoElement, {
                 onFrame: async () => {
                     if (this.isRunning) {
                         await this.selfieSegmentation.send({image: videoElement});

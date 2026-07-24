@@ -16,7 +16,7 @@ import { Suspense } from 'react'
 import { io, Socket } from "socket.io-client"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -31,6 +31,7 @@ import { dataChannelManager } from "@/lib/DataChannelManager"
 import { FileTransfer } from "@/components/ircp/FileTransfer"
 import { P2PChat } from "@/components/ircp/P2PChat"
 import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
+import { StandaloneCanvas } from "@/components/ircp/StandaloneCanvas"
 import { SessionRecorder } from "@/lib/SessionRecorder"
 import { FederatedLearner } from "@/lib/FederatedLearner"
 
@@ -248,6 +249,7 @@ function SessionContent() {
     const [voiceFilter, setVoiceFilter] = useState<VoiceFilter>('none')
     const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>('none')
     const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyle>('none')
+    const [isCanvasMode, setIsCanvasMode] = useState(false)
     const logScrollRef = useRef<HTMLDivElement>(null)
     // ── Refs ──────────────────────────────────────────────────────────────────
     const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -779,14 +781,42 @@ function SessionContent() {
             console.log(`[DEBUG] ontrack fired! kind: ${e.track.kind}, streams: ${e.streams ? e.streams.length : 'no streams'}`);
             try {
                 const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
-                if (stream && e.track.kind === 'video') {
-                    const targetVideo = currentRoleRef.current === 'host' ? remoteCamRef.current : mainVideoRef.current
-                    if (targetVideo) {
-                        console.log('[DEBUG] Assigning stream to video element');
-                        targetVideo.srcObject = stream
-                        targetVideo.play().catch(err => console.error('[DEBUG] play() error:', err))
-                    } else {
-                        console.log('[DEBUG] targetVideo is null!');
+                
+                if (stream) {
+                    if (e.track.kind === 'audio') {
+                        // Ensure audio plays correctly
+                        if (remoteCamRef.current) {
+                            if (!remoteCamRef.current.srcObject) {
+                                remoteCamRef.current.srcObject = stream;
+                            } else if (remoteCamRef.current.srcObject !== stream) {
+                                // Fallback: just add the audio track to existing stream
+                                (remoteCamRef.current.srcObject as MediaStream).addTrack(e.track);
+                            }
+                            remoteCamRef.current.play().catch(err => console.error('[DEBUG] audio play() error:', err));
+                        }
+                    } else if (e.track.kind === 'video') {
+                        let targetVideo = currentRoleRef.current === 'host' ? remoteCamRef.current : mainVideoRef.current;
+                        
+                        if (currentRoleRef.current === 'controller') {
+                            // First video track (screen) goes to mainVideoRef, second (camera) goes to remoteCamRef
+                            if (!mainVideoRef.current?.srcObject) {
+                                targetVideo = mainVideoRef.current;
+                            } else {
+                                targetVideo = remoteCamRef.current;
+                            }
+                        }
+
+                        if (targetVideo) {
+                            console.log('[DEBUG] Assigning video stream to element');
+                            if (!targetVideo.srcObject) {
+                                targetVideo.srcObject = stream;
+                            } else if (targetVideo.srcObject !== stream) {
+                                (targetVideo.srcObject as MediaStream).addTrack(e.track);
+                            }
+                            targetVideo.play().catch(err => console.error('[DEBUG] video play() error:', err));
+                        } else {
+                            console.log('[DEBUG] targetVideo is null!');
+                        }
                     }
                 }
             } catch (err) {
@@ -1319,8 +1349,11 @@ function SessionContent() {
                     <button onClick={toggleFullscreen} aria-label="Toggle Fullscreen" className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                     </button>
-                    <button onClick={() => setChatOpen(!chatOpen)} className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                    <button onClick={() => setChatOpen(!chatOpen)} className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Toggle Chat">
                         <MessageSquare className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => setIsCanvasMode(!isCanvasMode)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", isCanvasMode ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle Canvas Mode">
+                        <PenTool className="w-4 h-4" />
                     </button>
                     {role === 'host' ? (
                         <button onClick={() => setShowKillConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-white text-xs font-bold">END SESSION</button>
@@ -1475,7 +1508,7 @@ function SessionContent() {
                                 </button>
                             )}
                         </div>
-                        {sessionMode === 'collaboration' && (
+                        {(sessionMode === 'collaboration' || sessionMode === 'supervised') && (
                             <div className="mt-4 border-t border-[var(--border)] pt-4">
                                 <FileTransfer />
                             </div>
@@ -1541,6 +1574,13 @@ function SessionContent() {
 
                 <main className="flex-1 flex flex-col bg-[var(--bg)]">
                     <div className="flex-1 bg-black relative flex items-center justify-center">
+                        {isCanvasMode && (
+                            <StandaloneCanvas 
+                                isHost={role === 'host'} 
+                                peerId={selectedControllerId || undefined} 
+                                onClose={() => setIsCanvasMode(false)} 
+                            />
+                        )}
                         {(connectionState === 'connected' || (role === 'controller' && connectionState === 'connecting') || (role === 'host' && isStreaming)) && (
                             <>
                                 <video

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Lock, Check } from "lucide-react"
 import { AppLogo, GlowButton, AnimatedBackground, SecurityBadge } from "@/components/ircp/shared"
@@ -14,6 +14,13 @@ export default function LoginPage() {
   const [success, setSuccess] = useState(false)
   const [focusedField, setFocusedField] = useState<string | null>(null)
 
+  useEffect(() => {
+    // Auto-login if previously authenticated
+    if (localStorage.getItem('user_session_token')) {
+      router.push("/")
+    }
+  }, [router])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -22,6 +29,7 @@ export default function LoginPage() {
     await new Promise(resolve => setTimeout(resolve, 1500))
     setLoading(false)
     setSuccess(true)
+    localStorage.setItem('user_session_token', 'active_session')
     
     // Navigate after success animation
     await new Promise(resolve => setTimeout(resolve, 800))
@@ -29,6 +37,7 @@ export default function LoginPage() {
   }
 
   const handleDevSkip = () => {
+    localStorage.setItem('user_session_token', 'active_session')
     router.push("/")
   }
 

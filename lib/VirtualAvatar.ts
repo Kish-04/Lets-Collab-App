@@ -1,4 +1,9 @@
-const faceapi = typeof window !== 'undefined' ? require('@vladmandic/face-api') : null;
+const getFaceApi = () => {
+    if (typeof window !== 'undefined' && (window as any).faceapi) {
+        return (window as any).faceapi;
+    }
+    return null;
+};
 
 export type AvatarStyle = 'none' | 'sunglasses' | 'anonymous' | 'fox' | 'spiderman' | 'batman' | 'ironman' | 'pikachu';
 
@@ -9,6 +14,7 @@ export class VirtualAvatar {
     private isRunning: boolean = false;
     private avatarImage: HTMLImageElement | null = null;
     private currentStyle: AvatarStyle = 'none';
+    private modelsLoaded: boolean = false;
 
     constructor() {
         this.canvas = document.createElement('canvas');
@@ -21,11 +27,15 @@ export class VirtualAvatar {
     }
 
     private async loadModels() {
-        const modelUrl = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+        if (this.modelsLoaded) return;
+        const faceapi = getFaceApi();
+        if (!faceapi) return;
+        const modelUrl = 'https://justadudewhohacks.github.io/face-api.js/models';
         await Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
             faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl)
         ]);
+        this.modelsLoaded = true;
     }
 
     public setAvatarStyle(style: AvatarStyle) {
@@ -60,6 +70,7 @@ export class VirtualAvatar {
     }
 
     public start(videoElement: HTMLVideoElement): MediaStream {
+        this.stop(); // Stop any existing loop
         this.isRunning = true;
         
         // Wait for video to be ready
@@ -77,6 +88,8 @@ export class VirtualAvatar {
             if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete) {
                 try {
                     // Detect face and landmarks
+                    const faceapi = getFaceApi();
+                    if (!faceapi) return;
                     const detection = await faceapi.detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
                     
                     if (detection) {

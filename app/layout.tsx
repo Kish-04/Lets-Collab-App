@@ -3,7 +3,7 @@ import { Exo_2, JetBrains_Mono, DM_Sans } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import ThemeCustomizer from "@/components/ircp/ThemeCustomizer"
 import "./globals.css"
-
+import Script from "next/script"
 const exo2 = Exo_2({
   subsets: ["latin"],
   variable: "--font-display",
@@ -64,6 +64,9 @@ export default function RootLayout({
         ` }} />
       </head>
       <body suppressHydrationWarning className={`${exo2.variable} ${jetbrainsMono.variable} ${dmSans.variable} font-sans antialiased bg-[var(--bg)] text-[var(--text-primary)] transition-colors duration-200`}>
+        <Script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js" strategy="beforeInteractive" />
+        <Script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" strategy="beforeInteractive" />
+        <Script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" strategy="beforeInteractive" />
         {children}
         <ThemeCustomizer />
         <Analytics />

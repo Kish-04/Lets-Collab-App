@@ -6,6 +6,7 @@ export class DataChannelManager {
 
     public attachChannel(channel: RTCDataChannel, peerId: string, label: string) {
         const id = `${label}-${peerId}`;
+        channel.binaryType = 'arraybuffer';
         this.channels.set(id, channel);
 
         channel.onmessage = (event) => {
@@ -58,7 +59,37 @@ export class DataChannelManager {
         const callbacks = this.listeners.get(label);
         if (callbacks) {
             callbacks.delete(callback);
-        }
+    }
+
+    public getBufferedAmount(label: string, targetPeerId: string): number {
+        const channel = this.channels.get(`${label}-${targetPeerId}`);
+        return channel ? channel.bufferedAmount : 0;
+    }
+
+    public async waitForBuffer(label: string, targetPeerId: string, threshold: number = 65535): Promise<void> {
+        const channel = this.channels.get(`${label}-${targetPeerId}`);
+        if (!channel) return;
+        
+        if (channel.bufferedAmount <= threshold) return;
+
+        return new Promise(resolve => {
+            const check = () => {
+                if (!channel || channel.readyState !== 'open' || channel.bufferedAmount <= threshold) {
+                    channel?.removeEventListener('bufferedamountlow', check);
+                    resolve();
+                }
+            };
+            channel.bufferedAmountLowThreshold = threshold;
+            channel.addEventListener('bufferedamountlow', check);
+            // Fallback interval just in case
+            const interval = setInterval(() => {
+                if (!channel || channel.readyState !== 'open' || channel.bufferedAmount <= threshold) {
+                    clearInterval(interval);
+                    channel?.removeEventListener('bufferedamountlow', check);
+                    resolve();
+                }
+            }, 50);
+        });
     }
 }
 

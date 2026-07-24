@@ -30,6 +30,9 @@ export class VoiceChanger {
     }
 
     public processStream(stream: MediaStream, filterType: VoiceFilter): MediaStream {
+        if (this.context.state === 'suspended') {
+            this.context.resume();
+        }
         // Disconnect old source
         if (this.source) {
             this.source.disconnect();
