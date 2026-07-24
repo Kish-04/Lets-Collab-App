@@ -1582,8 +1582,8 @@ function SessionContent() {
                                 "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative transition-opacity pointer-events-auto",
                                 !hasLocalMedia ? "opacity-0 pointer-events-none" : "opacity-100"
                             )}>
-                                {/* The raw camera is hidden but active for AI pipelines */}
-                                <video ref={localCamRef} autoPlay playsInline muted className="hidden" />
+                                {/* The raw camera is visually hidden but must not use display:none so AI pipelines keep getting frames */}
+                                <video ref={localCamRef} autoPlay playsInline muted className="absolute opacity-0 pointer-events-none w-1 h-1" />
                                 {/* The preview shows the filtered result */}
                                 <video ref={localPreviewRef} autoPlay playsInline muted className={cn("w-full h-full object-cover", localCamMuted && "opacity-0")} />
                                 

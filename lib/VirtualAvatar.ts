@@ -21,7 +21,7 @@ export class VirtualAvatar {
     }
 
     private async loadModels() {
-        const modelUrl = 'https://raw.githubusercontent.com/vladmandic/face-api/master/model/';
+        const modelUrl = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
         await Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
             faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl)
