@@ -1568,8 +1568,8 @@ function SessionContent() {
                             <div className={cn(
                                 "transition-all duration-300 pointer-events-auto",
                                 ((role === 'controller' && mainVideoRef.current?.srcObject) || (role === 'host' && isStreaming))
-                                    ? "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative"
-                                    : "fixed inset-0 w-full h-full bg-black z-[-1]"
+                                    ? "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-100"
+                                    : "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-0 pointer-events-none"
                             )}>
                                 <video ref={remoteCamRef} autoPlay playsInline className={cn(
                                     "w-full h-full",
