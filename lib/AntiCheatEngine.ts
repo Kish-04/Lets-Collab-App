@@ -59,7 +59,7 @@ export class AntiCheatEngine {
   }
 
   async initialize() {
-    this.setStatus("loading", "Loading MediaPipe vision runtime…");
+    this.setStatus("loading", "Loading AI Models... (50MB)");
     try {
       // ── 1. TensorFlow backend first ──────────────────────────────────
       this.setStatus("loading", "Initializing TensorFlow.js backend…");
@@ -121,8 +121,8 @@ export class AntiCheatEngine {
       return;
     }
     
-    this.setStatus("loading", "Calibrating AI thresholds... (15s)");
-    console.log("[AntiCheat] Starting 15-second ambient calibration phase...");
+    this.setStatus("loading", "Calibrating AI thresholds... (3s)");
+    console.log("[AntiCheat] Starting 3-second ambient calibration phase...");
 
     let tempAudioCtx: AudioContext | null = null;
     let tempAnalyser: AnalyserNode | null = null;
@@ -145,7 +145,7 @@ export class AntiCheatEngine {
     let volumeSamples: number[] = [];
     let poseVariances: number[] = [];
     let lowConfidenceCount = 0;
-    const TOTAL_SAMPLES = 150; // Sample every 100ms for 15s
+    const TOTAL_SAMPLES = 30; // Sample every 100ms for 3s
     let samplesCollected = 0;
 
     return new Promise((resolve) => {

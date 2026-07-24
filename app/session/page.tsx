@@ -253,6 +253,7 @@ function SessionContent() {
     const mainVideoRef = useRef<HTMLVideoElement>(null)
     const lastViolationTimeRef = useRef<number>(0)  // screen share / remote screen
     const localCamRef = useRef<HTMLVideoElement>(null)  // your camera (PiP)
+    const localPreviewRef = useRef<HTMLVideoElement>(null)
     const antiCheatCamRef = useRef<HTMLVideoElement>(null)  // dedicated anti-cheat camera
     const antiCheatCanvasRef = useRef<HTMLCanvasElement>(null) // dedicated anti-cheat canvas overlay
     const remoteCamRef = useRef<HTMLVideoElement>(null)  // peer camera
@@ -335,7 +336,12 @@ function SessionContent() {
             }
         });
         
-    }, [voiceFilter, avatarStyle, hasLocalMedia]);
+        if (localPreviewRef.current) {
+            localPreviewRef.current.srcObject = processedStream;
+        }
+        
+        
+    }, [voiceFilter, avatarStyle, backgroundStyle, hasLocalMedia]);
     const [aiConfig, setAiConfig] = useState({
         eyeTrackingThreshold: 0.80,
         emotionSensitivity: 0.65,
@@ -456,6 +462,16 @@ function SessionContent() {
             } catch (err: any) {
                 alert(`Camera access denied or missing: ${err.message}`);
                 addLog('system', 'Camera access denied')
+            }
+        }
+    }
+
+    const toggleFullscreen = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(err => console.log(err));
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen().then(() => setIsFullscreen(false)).catch(err => console.log(err));
             }
         }
     }
@@ -1265,9 +1281,7 @@ function SessionContent() {
                     <div onClick={async () => { 
                         if(roomCode) {
                             try {
-                                if (navigator.clipboard && window.isSecureContext) {
-                                    await navigator.clipboard.writeText(roomCode);
-                                } else {
+                                const fallbackCopy = () => {
                                     const textArea = document.createElement("textarea");
                                     textArea.value = roomCode;
                                     textArea.style.position = "fixed";
@@ -1275,6 +1289,16 @@ function SessionContent() {
                                     textArea.select();
                                     document.execCommand('copy');
                                     textArea.remove();
+                                };
+
+                                if (navigator.clipboard) {
+                                    try {
+                                        await navigator.clipboard.writeText(roomCode);
+                                    } catch (e) {
+                                        fallbackCopy();
+                                    }
+                                } else {
+                                    fallbackCopy();
                                 }
                                 setCopied(true);
                                 setTimeout(() => setCopied(false), 2000);
@@ -1292,6 +1316,9 @@ function SessionContent() {
                 <div className="flex items-center gap-2.5">
                     <button onClick={toggleLocalMic} className={cn("p-1.5 rounded-lg border", localMicMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>{localMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
                     <button onClick={toggleLocalCam} aria-label="Toggle Camera" className={cn("p-1.5 rounded-lg border", localCamMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>{localCamMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}</button>
+                    <button onClick={toggleFullscreen} aria-label="Toggle Fullscreen" className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                        {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                    </button>
                     <button onClick={() => setChatOpen(!chatOpen)} className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         <MessageSquare className="w-4 h-4" />
                     </button>
@@ -1527,7 +1554,6 @@ function SessionContent() {
                                     onWheel={event => emitMouse(event, 'wheel')}
                                     className="w-full h-full object-contain absolute inset-0"
                                 />
-                                <video ref={remoteCamRef} autoPlay playsInline className="w-full h-full object-contain absolute inset-0 pointer-events-none" />
                                 {sessionMode === 'collaboration' && <WhiteboardOverlay isHost={role === 'host'} />}
                                 <P2PChat />
                             </>
@@ -1535,18 +1561,38 @@ function SessionContent() {
                         {role === 'host' && !isStreaming && (
                             <button onClick={startSharing} className="px-6 py-2 bg-[var(--accent)] text-black font-bold rounded-full">START SHARING</button>
                         )}
-                        {/* PiP Camera View */}
-                        <div className={cn(
-                            "absolute bottom-4 left-4 w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl z-50 transition-opacity",
-                            !hasLocalMedia ? "opacity-0 pointer-events-none" : "opacity-100"
-                        )}>
-                            <video ref={localCamRef} autoPlay playsInline muted className={cn("w-full h-full object-cover", localCamMuted && "opacity-0")} />
-                            <canvas ref={antiCheatCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none object-cover" />
-                            {riskScore > 0 && <div className="absolute top-0 left-0 right-0 bg-red-600/80 text-white text-xs font-bold text-center py-0.5">VIOLATION: {riskScore} PTS</div>}
-                            {localCamMuted && <div className="absolute inset-0 flex items-center justify-center text-[var(--text-dim)]"><VideoOff className="w-6 h-6" /></div>}
-                            <AiSupervisor 
-                                videoRef={localCamRef} 
-                                isActive={sessionMode === 'supervised'} 
+                        
+                        {/* PiP / Remote Camera Container */}
+                        <div className="absolute bottom-4 right-4 flex flex-col gap-3 z-50 pointer-events-none">
+                            {/* Remote Camera */}
+                            <div className={cn(
+                                "transition-all duration-300 pointer-events-auto",
+                                ((role === 'controller' && mainVideoRef.current?.srcObject) || (role === 'host' && isStreaming))
+                                    ? "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative"
+                                    : "fixed inset-0 w-full h-full bg-black z-[-1]"
+                            )}>
+                                <video ref={remoteCamRef} autoPlay playsInline className={cn(
+                                    "w-full h-full",
+                                    ((role === 'controller' && mainVideoRef.current?.srcObject) || (role === 'host' && isStreaming)) ? "object-cover" : "object-contain"
+                                )} />
+                            </div>
+
+                            {/* Local Camera PiP */}
+                            <div className={cn(
+                                "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative transition-opacity pointer-events-auto",
+                                !hasLocalMedia ? "opacity-0 pointer-events-none" : "opacity-100"
+                            )}>
+                                {/* The raw camera is hidden but active for AI pipelines */}
+                                <video ref={localCamRef} autoPlay playsInline muted className="hidden" />
+                                {/* The preview shows the filtered result */}
+                                <video ref={localPreviewRef} autoPlay playsInline muted className={cn("w-full h-full object-cover", localCamMuted && "opacity-0")} />
+                                
+                                <canvas ref={antiCheatCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none object-cover" />
+                                {riskScore > 0 && <div className="absolute top-0 left-0 right-0 bg-red-600/80 text-white text-xs font-bold text-center py-0.5">VIOLATION: {riskScore} PTS</div>}
+                                {localCamMuted && <div className="absolute inset-0 flex items-center justify-center text-[var(--text-dim)]"><VideoOff className="w-6 h-6" /></div>}
+                                <AiSupervisor 
+                                    videoRef={localCamRef} 
+                                    isActive={sessionMode === 'supervised'} 
                                 onMalpractice={(reason) => {
                                     const warningMsg = `AI Warning: ${reason}`;
                                     addLog('permission', warningMsg);
@@ -1564,6 +1610,7 @@ function SessionContent() {
                                     }
                                 }} 
                             />
+                        </div>
                         </div>
 
                         {/* Malpractice Warnings (Bottom-Left) */}
@@ -1634,9 +1681,11 @@ function SessionContent() {
             {isCalibrating && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md flex-col text-white font-mono">
                     <div className="w-12 h-12 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin mb-6"></div>
-                    <h2 className="text-2xl font-bold text-[var(--accent)] tracking-widest mb-2">CALIBRATING AI...</h2>
-                    <p className="text-[var(--text-secondary)] text-sm mb-1">Sampling ambient noise and lighting (10s).</p>
-                    <p className="text-[var(--text-dim)] text-xs">Please sit naturally and do not speak.</p>
+                    <h2 className="text-2xl font-bold text-[var(--accent)] tracking-widest mb-2">
+                        {antiCheatMsg?.toUpperCase() || "LOADING AI MODELS... (50MB)"}
+                    </h2>
+                    <p className="text-[var(--text-secondary)] text-sm mb-1">Please wait while the AI initializes.</p>
+                    <p className="text-[var(--text-dim)] text-xs">This may take a moment on slower connections.</p>
                 </div>
             )}
 
