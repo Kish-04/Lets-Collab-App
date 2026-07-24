@@ -35,7 +35,7 @@ import { SessionRecorder } from "@/lib/SessionRecorder"
 import { FederatedLearner } from "@/lib/FederatedLearner"
 
 import dynamic from 'next/dynamic'
-const AiSupervisor = dynamic(() => import('@/components/ircp/supervisor/AiSupervisor').then(mod => mod.AiSupervisor), { ssr: false })
+
 import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
 import {
@@ -1590,26 +1590,7 @@ function SessionContent() {
                                 <canvas ref={antiCheatCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none object-cover" />
                                 {riskScore > 0 && <div className="absolute top-0 left-0 right-0 bg-red-600/80 text-white text-xs font-bold text-center py-0.5">VIOLATION: {riskScore} PTS</div>}
                                 {localCamMuted && <div className="absolute inset-0 flex items-center justify-center text-[var(--text-dim)]"><VideoOff className="w-6 h-6" /></div>}
-                                <AiSupervisor 
-                                    videoRef={localCamRef} 
-                                    isActive={sessionMode === 'supervised'} 
-                                onMalpractice={(reason) => {
-                                    const warningMsg = `AI Warning: ${reason}`;
-                                    addLog('permission', warningMsg);
-                                    if (Notification.permission === 'granted') {
-                                        new Notification('Supervisor Warning', { body: warningMsg });
-                                    }
-                                    setMalpracticeWarnings(prev => [...prev, reason].slice(-3));
-                                    if (socketRef.current) {
-                                        socketRef.current.emit('evidence-event', {
-                                            roomId: roomCodeRef.current,
-                                            type: 'system',
-                                            message: `AI DETECTED: ${reason}`,
-                                            timestamp: new Date().toISOString()
-                                        });
-                                    }
-                                }} 
-                            />
+
                         </div>
                         </div>
 

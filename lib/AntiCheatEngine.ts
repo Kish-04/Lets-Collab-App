@@ -46,6 +46,7 @@ export class AntiCheatEngine {
   private lastPredictions: any[] | null = null;
   private audioContext: AudioContext | null = null;
   private audioAnalyser: AnalyserNode | null = null;
+  private missingFaceFrames: number = 0;
   public initStatus: InitStatus = "idle";
   private config: AntiCheatConfig = DEFAULT_CONFIG;
 
@@ -337,10 +338,16 @@ export class AntiCheatEngine {
             const faces = result.faceLandmarks;
 
             if (faces.length === 0) {
-              this.emitEvent("NO_FACE", "No face detected in camera", 10);
+              this.missingFaceFrames++;
+              if (this.missingFaceFrames > 15) {
+                this.emitEvent("NO_FACE", "No face detected in camera", 10);
+                this.missingFaceFrames = 0; // reset to avoid spamming even after debounce
+              }
             } else if (faces.length > 1) {
+              this.missingFaceFrames = 0;
               this.emitEvent("MULTIPLE_FACES", `${faces.length} faces detected`, 20);
             } else {
+              this.missingFaceFrames = 0;
               // ── Facial Blendshapes and Micro-expressions ───────────────
               const blendshapes = result.faceBlendshapes;
               if (blendshapes && blendshapes.length > 0) {
