@@ -329,15 +329,18 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Account not verified. Please register to get a new OTP.' });
     }
 
-    const otp = createOtp();
-    user.otp = otp;
-    user.otpExpires = Date.now() + OTP_TTL_MS;
-    if (global.dbConnected) await user.save();
-    else mockStore.saveUser(user);
+    const token = generateToken(user._id, user.email);
+    setAuthCookie(res, token);
 
-    const otpDelivered = await sendOTPEmail(email, otp, user.name);
-    if (!otpDelivered) return res.status(503).json({ message: otpDeliveryErrorMessage() });
-    res.json(otpResponse({ message: 'OTP sent to email', email, otpRequired: true, name: user.name }, otp));
+    return res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role || 'user',
+      token,
+      otpRequired: false,
+      message: 'Logged in successfully'
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

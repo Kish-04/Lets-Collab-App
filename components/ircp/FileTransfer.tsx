@@ -86,12 +86,7 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
             setProgress(Math.round((offset / buffer.byteLength) * 100))
             
             // Native WebRTC backpressure handling: Wait if buffer exceeds 1MB
-            if (peerId) {
-                await dataChannelManager.waitForBuffer('ircp-file', peerId, 1024 * 1024)
-            } else {
-                // Fallback for broadcast
-                await new Promise(r => setTimeout(r, 2))
-            }
+            await dataChannelManager.waitForBuffer('ircp-file', peerId, 1024 * 1024)
         }
 
         dataChannelManager.send('ircp-file', { type: 'file-end' }, peerId)

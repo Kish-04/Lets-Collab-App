@@ -69,9 +69,13 @@ export class VirtualAvatar {
         };
     }
 
+    private mlLoopRunning: boolean = false;
+    private lastDetection: any = null;
+
     public start(videoElement: HTMLVideoElement): MediaStream {
         this.stop(); // Stop any existing loop
         this.isRunning = true;
+        this.mlLoopRunning = true;
         
         // Wait for video to be ready
         if (videoElement.readyState >= 2) {
@@ -79,55 +83,59 @@ export class VirtualAvatar {
             this.canvas.height = videoElement.videoHeight || 480;
         }
 
-        const renderLoop = async () => {
-            if (!this.isRunning || !this.ctx) return;
-
-            // Draw original video frame
-            this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
-
+        // ML Loop (Runs as fast as CPU allows without blocking render)
+        const mlLoop = async () => {
+            if (!this.mlLoopRunning) return;
             if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete) {
                 try {
-                    // Detect face and landmarks
                     const faceapi = getFaceApi();
-                    if (!faceapi) {
-                        this.loopId = requestAnimationFrame(renderLoop);
-                        return;
-                    }
-                    const detection = await faceapi.detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
-                    
-                    if (detection) {
-                        const landmarks = detection.landmarks;
-                        const box = detection.detection.box;
-
-                        if (this.currentStyle === 'sunglasses') {
-                            // Position over eyes (landmarks 36 to 45)
-                            const leftEye = landmarks.getLeftEye();
-                            const rightEye = landmarks.getRightEye();
-                            
-                            const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
-                            const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
-                            const width = (rightEye[3].x - leftEye[0].x) * 2;
-                            const height = width * 0.4; // aspect ratio approximation
-
-                            this.ctx.drawImage(
-                                this.avatarImage, 
-                                eyeCenterX - width / 2, 
-                                eyeCenterY - height / 2, 
-                                width, 
-                                height
-                            );
-                        } else {
-                            // Full face mask (Anonymous or Fox)
-                            const width = box.width * 1.4;
-                            const height = box.height * 1.4;
-                            const x = box.x - (width - box.width) / 2;
-                            const y = box.y - (height - box.height) / 2;
-
-                            this.ctx.drawImage(this.avatarImage, x, y, width, height);
-                        }
+                    if (faceapi) {
+                        this.lastDetection = await faceapi.detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
                     }
                 } catch (e) {
-                    // Ignore transient ML errors
+                    // Ignore ML errors
+                }
+            }
+            setTimeout(mlLoop, 50); // Small delay to prevent 100% CPU lock
+        };
+        mlLoop();
+
+        // Fast Render Loop (Runs at monitor refresh rate)
+        const renderLoop = () => {
+            if (!this.isRunning || !this.ctx) return;
+
+            // Draw original video frame immediately
+            this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
+
+            // Draw the last known avatar position on top
+            if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete && this.lastDetection) {
+                const detection = this.lastDetection;
+                const landmarks = detection.landmarks;
+                const box = detection.detection.box;
+
+                if (this.currentStyle === 'sunglasses') {
+                    const leftEye = landmarks.getLeftEye();
+                    const rightEye = landmarks.getRightEye();
+                    
+                    const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
+                    const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
+                    const width = (rightEye[3].x - leftEye[0].x) * 2;
+                    const height = width * 0.4;
+
+                    this.ctx.drawImage(
+                        this.avatarImage, 
+                        eyeCenterX - width / 2, 
+                        eyeCenterY - height / 2, 
+                        width, 
+                        height
+                    );
+                } else {
+                    const width = box.width * 1.4;
+                    const height = box.height * 1.4;
+                    const x = box.x - (width - box.width) / 2;
+                    const y = box.y - (height - box.height) / 2;
+
+                    this.ctx.drawImage(this.avatarImage, x, y, width, height);
                 }
             }
 
@@ -142,6 +150,7 @@ export class VirtualAvatar {
 
     public stop() {
         this.isRunning = false;
+        this.mlLoopRunning = false;
         if (this.loopId) {
             cancelAnimationFrame(this.loopId);
         }

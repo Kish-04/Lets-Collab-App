@@ -300,6 +300,7 @@ function SessionContent() {
                     hiddenBgVideoRef.current.muted = true;
                 }
                 hiddenBgVideoRef.current.srcObject = bgStream;
+                hiddenBgVideoRef.current.play().catch(e => console.error("Could not play hidden bg stream", e));
                 currentVideoSource = hiddenBgVideoRef.current;
                 
                 const finalStream = new MediaStream();
@@ -1344,9 +1345,6 @@ function SessionContent() {
                     <button onClick={toggleFullscreen} aria-label="Toggle Fullscreen" className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                     </button>
-                    <button onClick={() => setChatOpen(!chatOpen)} className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Toggle Chat">
-                        <MessageSquare className="w-4 h-4" />
-                    </button>
                     <button onClick={() => setIsCanvasMode(!isCanvasMode)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", isCanvasMode ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle Canvas Mode">
                         <PenTool className="w-4 h-4" />
                     </button>
@@ -1763,58 +1761,6 @@ function SessionContent() {
                     }}
                 />
             )}
-
-                {/* CHAT SIDEBAR */}
-                {chatOpen && (
-                    <div className="w-80 border-l border-[var(--border)] bg-[var(--surface)] flex flex-col z-40 fixed right-0 top-[52px] bottom-0 shadow-2xl">
-                        <div className="p-4 border-b border-[var(--border)] flex justify-between items-center bg-[var(--elevated)]">
-                            <h3 className="font-semibold font-display flex items-center gap-2">
-                                <MessageSquare className="w-4 h-4 text-[var(--violet)]" />
-                                Session Chat
-                            </h3>
-                            <button onClick={() => setChatOpen(false)} className="p-1 hover:bg-[var(--surface)] rounded">
-                                <XCircle className="w-4 h-4 text-[var(--text-secondary)]" />
-                            </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                            {chatMessages.length === 0 ? (
-                                <p className="text-sm text-[var(--text-dim)] text-center mt-4">No messages yet.</p>
-                            ) : chatMessages.map((m, i) => {
-                                const isMe = m.senderId === socketRef.current?.id || m.role === role;
-                                return (
-                                    <div key={i} className={"flex flex-col " + (isMe ? "items-end" : "items-start")}>
-                                        <span className="text-[10px] text-[var(--text-dim)] mb-1">{m.senderName || (m as any).sender || m.senderId || 'Unknown'}</span>
-                                        <div className={"px-3 py-2 rounded-lg text-sm max-w-[90%] break-all " + (isMe ? "bg-[var(--violet)] text-white" : "bg-[var(--elevated)] text-[var(--text-primary)]")}>
-                                            {(m as any).content || m.text}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <div className="p-3 border-t border-[var(--border)] bg-[var(--surface)]">
-                            <div className="flex gap-1 mb-2 px-1">
-                                {['👍', '🚀', '😂', '🔥', '👀', '🎉', '👋'].map(emoji => (
-                                    <button 
-                                        key={emoji}
-                                        onClick={() => setChatInput(prev => prev + emoji)}
-                                        className="hover:bg-[var(--elevated)] rounded p-1 text-base transition-colors"
-                                    >
-                                        {emoji}
-                                    </button>
-                                ))}
-                            </div>
-                            <div className="flex gap-2">
-                                <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => {
-                                    if(e.key === 'Enter') {
-                                        if (!chatInput.trim()) return;
-                                        socketRef.current?.emit('chat-message', { roomId: roomCode, text: chatInput, senderName: role === 'host' ? 'Host' : 'Controller' });
-                                        setChatInput('');
-                                    }
-                                }} placeholder="Type a message..." className="flex-1 bg-[var(--elevated)] border border-[var(--border)] rounded px-3 py-2 text-sm outline-none focus:border-[var(--violet)] transition-colors" />
-                            </div>
-                        </div>
-                    </div>
-                )}
         </div>
     )
 }
