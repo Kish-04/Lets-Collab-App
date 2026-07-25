@@ -130,8 +130,7 @@ export class VirtualBackground {
             });
             this.camera.start();
         }
-        
-        return this.canvas.captureStream(30);
+        return this.canvas.captureStream(90);
     }
 
     public stop() {
