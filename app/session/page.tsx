@@ -269,6 +269,7 @@ function SessionContent() {
     const sessionRecorderRef = useRef<SessionRecorder | null>(null)
     const engineRef = useRef<AntiCheatEngine | null>(null)
     const federatedLearnerRef = useRef<FederatedLearner | null>(null)
+    const hiddenBgVideoRef = useRef<HTMLVideoElement | null>(null)
 
     // ── Apply Voice and Avatar Effects ────────────────────────────────────────
     useEffect(() => {
