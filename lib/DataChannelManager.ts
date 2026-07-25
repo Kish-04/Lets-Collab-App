@@ -67,7 +67,28 @@ export class DataChannelManager {
         return channel ? channel.bufferedAmount : 0;
     }
 
-    public async waitForBuffer(label: string, targetPeerId: string, threshold: number = 65535): Promise<void> {
+    public async waitForBuffer(label: string, targetPeerId?: string, threshold: number = 65535): Promise<void> {
+        if (!targetPeerId) {
+            // Wait for all channels of this label to drain
+            const promises = [];
+            for (const [id, channel] of this.channels.entries()) {
+                if (id.startsWith(`${label}-`) && channel.readyState === 'open' && channel.bufferedAmount > threshold) {
+                    promises.push(new Promise<void>(resolve => {
+                        const check = () => {
+                            if (channel.readyState !== 'open' || channel.bufferedAmount <= threshold) {
+                                channel.removeEventListener('bufferedamountlow', check);
+                                resolve();
+                            }
+                        };
+                        channel.addEventListener('bufferedamountlow', check);
+                        setTimeout(() => { channel.removeEventListener('bufferedamountlow', check); resolve(); }, 5000);
+                    }));
+                }
+            }
+            await Promise.all(promises);
+            return;
+        }
+
         const channel = this.channels.get(`${label}-${targetPeerId}`);
         if (!channel) return;
         
