@@ -136,8 +136,8 @@ export class VirtualAvatar {
 
         renderLoop();
         
-        // Return 90 FPS stream from the augmented canvas
-        return this.canvas.captureStream(90);
+        // Return 30 FPS stream from the augmented canvas
+        return this.canvas.captureStream(30);
     }
 
     public stop() {

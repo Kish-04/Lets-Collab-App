@@ -43,7 +43,7 @@ try {
 
 const express = require('express');
 const uiServer = express();
-let actualUiPort = process.env.UI_PORT || 0; // 0 will auto-assign a free port
+let actualUiPort = process.env.UI_PORT || 41337; // Fixed port to persist localStorage origin, fallback to 0 if busy
 
 function normalizeUrl(value) {
   const trimmed = String(value || '').trim();
@@ -246,16 +246,24 @@ function createWindow() {
 app.whenReady().then(() => {
   try { fs.writeFileSync(getLogPath('electron-debug.log'), 'App is ready! Starting Express server...\n'); } catch(e) {}
   
-  const server = uiServer.listen(actualUiPort, () => {
-    actualUiPort = server.address().port;
-    console.log(`Let's Collab! UI server running on port ${actualUiPort}`);
-    createWindow();
-  });
-
-  server.on('error', (e) => {
-    try { fs.writeFileSync(getLogPath('electron-error.log'), 'Express Error: ' + e.message); } catch(err){}
-    process.exit(1);
-  });
+  const startServer = (port) => {
+      const server = uiServer.listen(port, () => {
+          actualUiPort = server.address().port;
+          console.log(`Let's Collab! UI server running on port ${actualUiPort}`);
+          createWindow();
+      }).on('error', (e) => {
+          if (e.code === 'EADDRINUSE' && port !== 0) {
+              console.log(`Port ${port} in use, falling back to random port.`);
+              startServer(0);
+          } else {
+              console.error('Server error:', e);
+              try { fs.writeFileSync(getLogPath('electron-error.log'), 'Express Error: ' + e.message); } catch(err){}
+              process.exit(1);
+          }
+      });
+  };
+  
+  startServer(actualUiPort);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

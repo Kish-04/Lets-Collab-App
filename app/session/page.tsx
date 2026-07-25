@@ -1505,7 +1505,7 @@ function SessionContent() {
                         </div>
                         {(sessionMode === 'collaboration' || sessionMode === 'supervised') && (
                             <div className="mt-4 border-t border-[var(--border)] pt-4">
-                                <FileTransfer />
+                                <FileTransfer peerId={targetId} />
                             </div>
                         )}
                         {sessionMode === 'collaboration' && (
