@@ -335,7 +335,7 @@ function SessionContent() {
             
             const audioTrack = processedStream.getAudioTracks()[0];
             if (audioTrack) {
-                const audioSender = senders.find(s => s.track?.kind === 'audio');
+                const audioSender = senders.find(s => s.track?.kind === 'audio' && s.track !== screenStreamRef.current?.getAudioTracks()[0]);
                 if (audioSender) audioSender.replaceTrack(audioTrack);
             }
             
@@ -791,40 +791,24 @@ function SessionContent() {
                 const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
                 
                 if (stream) {
-                    if (e.track.kind === 'audio') {
-                        // Ensure audio plays correctly
-                        if (remoteCamRef.current) {
-                            if (!remoteCamRef.current.srcObject) {
-                                remoteCamRef.current.srcObject = stream;
-                            } else if (remoteCamRef.current.srcObject !== stream) {
-                                // Fallback: just add the audio track to existing stream
-                                (remoteCamRef.current.srcObject as MediaStream).addTrack(e.track);
-                            }
-                            remoteCamRef.current.play().catch(err => console.error('[DEBUG] audio play() error:', err));
+                    let targetVideo = currentRoleRef.current === 'host' ? remoteCamRef.current : mainVideoRef.current;
+                    
+                    if (currentRoleRef.current === 'controller') {
+                        if (!mainVideoRef.current?.srcObject || mainVideoRef.current.srcObject === stream) {
+                            targetVideo = mainVideoRef.current;
+                        } else if (!remoteCamRef.current?.srcObject || remoteCamRef.current.srcObject === stream) {
+                            targetVideo = remoteCamRef.current;
                         }
-                    } else if (e.track.kind === 'video') {
-                        let targetVideo = currentRoleRef.current === 'host' ? remoteCamRef.current : mainVideoRef.current;
-                        
-                        if (currentRoleRef.current === 'controller') {
-                            // First video track (screen) goes to mainVideoRef, second (camera) goes to remoteCamRef
-                            if (!mainVideoRef.current?.srcObject) {
-                                targetVideo = mainVideoRef.current;
-                            } else {
-                                targetVideo = remoteCamRef.current;
-                            }
-                        }
+                    }
 
-                        if (targetVideo) {
-                            console.log('[DEBUG] Assigning video stream to element');
-                            if (!targetVideo.srcObject) {
-                                targetVideo.srcObject = stream;
-                            } else if (targetVideo.srcObject !== stream) {
-                                (targetVideo.srcObject as MediaStream).addTrack(e.track);
-                            }
-                            targetVideo.play().catch(err => console.error('[DEBUG] video play() error:', err));
-                        } else {
-                            console.log('[DEBUG] targetVideo is null!');
+                    if (targetVideo) {
+                        console.log('[DEBUG] Assigning stream to element');
+                        if (targetVideo.srcObject !== stream) {
+                            targetVideo.srcObject = stream;
                         }
+                        targetVideo.play().catch(err => console.error('[DEBUG] video play() error:', err));
+                    } else {
+                        console.log('[DEBUG] targetVideo is null!');
                     }
                 }
             } catch (err) {
