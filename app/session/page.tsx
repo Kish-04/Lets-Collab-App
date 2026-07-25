@@ -998,7 +998,10 @@ function SessionContent() {
         console.log('[DEBUG] startSharing CALLED!');
         try {
             console.log('[DEBUG] Calling getDisplayMedia...');
-            const screen = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+            const screen = await navigator.mediaDevices.getDisplayMedia({ 
+                video: { frameRate: { ideal: 120, max: 144 } }, 
+                audio: true 
+            })
             console.log('[DEBUG] getDisplayMedia SUCCESS!');
             screenStreamRef.current = screen
             setIsStreaming(true)
