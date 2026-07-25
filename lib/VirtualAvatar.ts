@@ -89,7 +89,10 @@ export class VirtualAvatar {
                 try {
                     // Detect face and landmarks
                     const faceapi = getFaceApi();
-                    if (!faceapi) return;
+                    if (!faceapi) {
+                        this.loopId = requestAnimationFrame(renderLoop);
+                        return;
+                    }
                     const detection = await faceapi.detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
                     
                     if (detection) {

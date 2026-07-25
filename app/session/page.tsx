@@ -29,7 +29,6 @@ import { VirtualAvatar, AvatarStyle } from "@/lib/VirtualAvatar"
 import { VirtualBackground, BackgroundStyle } from "@/lib/VirtualBackground"
 import { dataChannelManager } from "@/lib/DataChannelManager"
 import { FileTransfer } from "@/components/ircp/FileTransfer"
-import { P2PChat } from "@/components/ircp/P2PChat"
 import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
 import { StandaloneCanvas } from "@/components/ircp/StandaloneCanvas"
 import { SessionRecorder } from "@/lib/SessionRecorder"
@@ -285,12 +284,39 @@ function SessionContent() {
             voiceChangerRef.current = null;
         }
 
+        let currentVideoSource = localCamRef.current;
+
+        if (backgroundStyle !== 'none') {
+            if (!virtualBackgroundRef.current) virtualBackgroundRef.current = new VirtualBackground();
+            virtualBackgroundRef.current.setBackgroundStyle(backgroundStyle);
+            
+            if (currentVideoSource && currentVideoSource.readyState >= 2) {
+                const bgStream = virtualBackgroundRef.current.start(currentVideoSource);
+                if (!hiddenBgVideoRef.current) {
+                    hiddenBgVideoRef.current = document.createElement('video');
+                    hiddenBgVideoRef.current.autoplay = true;
+                    hiddenBgVideoRef.current.playsInline = true;
+                    hiddenBgVideoRef.current.muted = true;
+                }
+                hiddenBgVideoRef.current.srcObject = bgStream;
+                currentVideoSource = hiddenBgVideoRef.current;
+                
+                const finalStream = new MediaStream();
+                processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
+                bgStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
+                processedStream = finalStream;
+            }
+        } else {
+            virtualBackgroundRef.current?.stop();
+            virtualBackgroundRef.current = null;
+        }
+
         if (avatarStyle !== 'none') {
             if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
             virtualAvatarRef.current.setAvatarStyle(avatarStyle);
             
-            if (localCamRef.current && localCamRef.current.readyState >= 2) {
-                const avatarStream = virtualAvatarRef.current.start(localCamRef.current);
+            if (currentVideoSource && (currentVideoSource.readyState >= 2 || currentVideoSource === hiddenBgVideoRef.current)) {
+                const avatarStream = virtualAvatarRef.current.start(currentVideoSource);
                 const finalStream = new MediaStream();
                 processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
                 avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
@@ -299,25 +325,6 @@ function SessionContent() {
         } else {
             virtualAvatarRef.current?.stop();
             virtualAvatarRef.current = null;
-        }
-
-        if (backgroundStyle !== 'none') {
-            if (!virtualBackgroundRef.current) virtualBackgroundRef.current = new VirtualBackground();
-            virtualBackgroundRef.current.setBackgroundStyle(backgroundStyle);
-            
-            if (localCamRef.current && localCamRef.current.readyState >= 2) {
-                // If avatar is active, we don't want to apply background blur on top of it, so we only apply if avatar is none
-                if (avatarStyle === 'none') {
-                    const bgStream = virtualBackgroundRef.current.start(localCamRef.current);
-                    const finalStream = new MediaStream();
-                    processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
-                    bgStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
-                    processedStream = finalStream;
-                }
-            }
-        } else {
-            virtualBackgroundRef.current?.stop();
-            virtualBackgroundRef.current = null;
         }
 
         const pCs = currentRoleRef.current === 'host' ? Array.from(hostPcRefs.current.values()) : [pcRef.current];
@@ -462,8 +469,8 @@ function SessionContent() {
                 setHasLocalMedia(true)
                 addLog('system', 'Camera and Microphone activated')
             } catch (err: any) {
-                alert(`Camera access denied or missing: ${err.message}`);
-                addLog('system', 'Camera access denied')
+                console.error(`Camera access denied or missing: ${err.message}`);
+                addLog('system', `Camera access denied: ${err.message}`);
             }
         }
     }
@@ -1595,7 +1602,6 @@ function SessionContent() {
                                     className="w-full h-full object-contain absolute inset-0"
                                 />
                                 {sessionMode === 'collaboration' && <WhiteboardOverlay isHost={role === 'host'} />}
-                                <P2PChat />
                             </>
                         )}
                         {role === 'host' && !isStreaming && (
