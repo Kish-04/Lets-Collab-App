@@ -21,7 +21,7 @@ class MockEngine {
       volumeSamples = [5, 5, 6, 4]; // mock ambient noise floor
     }
     
-    let poseVariances = [0.1, 0.12, 0.08, 0.15]; // mock pose
+    let poseVariances = Array.from({ length: 15 }, (_, index) => 0.08 + (index % 4) * 0.02); // half of 30 valid pose samples
     let lowConf = mockLowConfidence ? 100 : 0;
     
     let newAudio = 0.05; // DEFAULT_CONFIG fallback

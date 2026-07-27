@@ -78,7 +78,18 @@ export class SessionRecorder {
             ...this.dest.stream.getAudioTracks()
         ]);
 
-        this.mediaRecorder = new MediaRecorder(compositeStream, { mimeType: 'video/webm' });
+        try {
+            const recorderOptions = MediaRecorder.isTypeSupported?.('video/webm')
+                ? { mimeType: 'video/webm' }
+                : undefined;
+            this.mediaRecorder = new MediaRecorder(compositeStream, recorderOptions);
+        } catch {
+            this.isRecording = false;
+            if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+            this.audioCtx?.close().catch(() => { });
+            compositeStream.getTracks().forEach(t => t.stop());
+            return false;
+        }
         this.mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0) this.recordedChunks.push(e.data);
         };
@@ -91,6 +102,9 @@ export class SessionRecorder {
             // Cleanup
             this.audioCtx?.close();
             compositeStream.getTracks().forEach(t => t.stop());
+            this.mediaRecorder = null;
+            this.audioCtx = null;
+            this.dest = null;
         };
         
         this.mediaRecorder.start();

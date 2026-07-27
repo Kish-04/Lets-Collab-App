@@ -10,7 +10,7 @@ const cookieParser = require('cookie-parser');
 const cookie = require('cookie');
 const connectDB = require('./db');
 const authRoutes = require('./authRoutes');
-const { router: adminRoutes, onlineEmails, setRoomLookup } = require('./adminRoutes');
+const { router: adminRoutes, onlineEmails, setRoomLookup, protectAdmin } = require('./adminRoutes');
 const User = require('./User');
 const Alert = require('./alert');
 const SessionLog = require('./sessionLog');
@@ -58,7 +58,7 @@ initBlockchain();
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 
-app.get('/api/sessions/:sessionId/history', async (req, res) => {
+app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const rawLogs = await querySessionLogs(sessionId);
@@ -134,6 +134,8 @@ const PORT = process.env.PORT || 3001;
 const rooms = new Map();
 const endedSessions = [];
 const validPermissions = new Set(['view', 'mouse', 'keyboard', 'full']);
+const FEDERATED_MODEL_VERSION = 'anti-cheat-v1';
+const MAX_FEDERATED_WEIGHTS = 10000;
 setRoomLookup((roomCode) => rooms.get(String(roomCode || '').toUpperCase()));
 const appearanceKeys = new Set([
   'preset', 'background', 'surface', 'elevated', 'border', 'textPrimary',
@@ -161,6 +163,22 @@ function nowTime() {
   return new Date().toLocaleTimeString('en-US', { hour12: false });
 }
 
+function normalizeRoomCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function clampNumber(value, fallback, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function applyRiskPenalty(room, value, fallback = 0) {
+  const penalty = clampNumber(value, fallback, 0, 100);
+  room.riskScore = clampNumber((room.riskScore || 0) + penalty, 0, 0, 100);
+  return penalty;
+}
+
 function initials(name = 'User') {
   return String(name)
     .split(/\s+/)
@@ -175,6 +193,136 @@ function pushEvent(roomCode, type, message) {
   if (!room) return;
   room.events.push({ time: nowTime(), type, message });
   if (room.events.length > 140) room.events.shift();
+}
+
+function createFederatedState() {
+  return {
+    round: 0,
+    pending: new Map(),
+    globalWeights: null,
+    history: [],
+    timer: null,
+    startedAt: null,
+    lastAggregate: null,
+  };
+}
+
+function federatedSummary(room) {
+  if (!room.federated) return null;
+  return {
+    round: room.federated.round,
+    pendingContributors: room.federated.pending.size,
+    hasGlobalModel: Array.isArray(room.federated.globalWeights),
+    lastAggregate: room.federated.lastAggregate,
+    history: room.federated.history.slice(-5),
+  };
+}
+
+function sanitizeWeights(weights) {
+  if (!Array.isArray(weights) || weights.length === 0 || weights.length > MAX_FEDERATED_WEIGHTS) return null;
+  const sanitized = weights.map(Number);
+  return sanitized.every(Number.isFinite) ? sanitized : null;
+}
+
+function roomFederatedMembers(room) {
+  return [room.hostSocketId, ...Array.from(room.controllers.keys())].filter(Boolean);
+}
+
+function getFederatedParticipant(room, socket) {
+  if (socket.id === room.hostSocketId) {
+    return { id: socket.id, name: room.hostName || 'Host', email: room.hostEmail || '', role: 'host' };
+  }
+  const controller = room.controllers.get(socket.id);
+  if (controller) {
+    return { id: socket.id, name: controller.name || 'Controller', email: controller.email || '', role: 'controller' };
+  }
+  return null;
+}
+
+function getRoomParticipant(room, socket, targetControllerId = null) {
+  if (!room || !socket) return null;
+  if (socket.id === room.hostSocketId) {
+    const target = targetControllerId ? room.controllers.get(targetControllerId) : null;
+    return target || {
+      id: socket.id,
+      name: room.hostName || 'Host',
+      email: room.hostEmail || '',
+      role: 'host',
+    };
+  }
+  const controller = room.controllers.get(socket.id);
+  if (controller) return controller;
+  if (room.observers.has(socket.id)) {
+    return { id: socket.id, name: 'Administrator', email: '', role: 'admin' };
+  }
+  return null;
+}
+
+function aggregateFederatedRound(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room?.federated || room.federated.pending.size === 0) return;
+  if (room.federated.timer) {
+    clearTimeout(room.federated.timer);
+    room.federated.timer = null;
+  }
+
+  const updates = Array.from(room.federated.pending.values());
+  const weightLength = updates[0].weights.length;
+  if (!updates.every(update => update.weights.length === weightLength)) {
+    pushEvent(roomCode, 'system', 'Federated round rejected because model weight lengths did not match');
+    room.federated.pending.clear();
+    emitRoomState(roomCode);
+    broadcastSessions();
+    return;
+  }
+
+  const totalSamples = updates.reduce((total, update) => total + update.sampleCount, 0) || updates.length;
+  const aggregate = new Array(weightLength).fill(0);
+  updates.forEach((update) => {
+    const contribution = update.sampleCount / totalSamples;
+    update.weights.forEach((weight, index) => {
+      aggregate[index] += weight * contribution;
+    });
+  });
+
+  const lossUpdates = updates.filter(update => Number.isFinite(update.loss));
+  const avgLoss = lossUpdates.length
+    ? lossUpdates.reduce((total, update) => total + update.loss, 0) / lossUpdates.length
+    : null;
+  const summary = {
+    round: room.federated.round,
+    contributors: updates.map(update => ({
+      id: update.participantId,
+      name: update.participantName,
+      role: update.role,
+      sampleCount: update.sampleCount,
+    })),
+    contributorCount: updates.length,
+    sampleCount: totalSamples,
+    loss: Number.isFinite(avgLoss) ? Number(avgLoss.toFixed(6)) : null,
+    modelVersion: FEDERATED_MODEL_VERSION,
+    aggregatedAt: new Date().toISOString(),
+  };
+
+  room.federated.globalWeights = aggregate;
+  room.federated.lastAggregate = summary;
+  room.federated.history.push(summary);
+  if (room.federated.history.length > 20) room.federated.history.shift();
+  room.federated.pending.clear();
+
+  pushEvent(roomCode, 'system', `Federated round ${summary.round} aggregated from ${summary.contributorCount} participant(s), ${summary.sampleCount} sample(s)`);
+  io.to(roomCode).emit('federated-aggregate', {
+    ...summary,
+    weights: aggregate,
+  });
+  anchorEvent(roomCode, 'FEDERATED_AGGREGATE', {
+    round: summary.round,
+    contributorCount: summary.contributorCount,
+    sampleCount: summary.sampleCount,
+    modelVersion: FEDERATED_MODEL_VERSION,
+  }, room.hostEmail || '');
+  emitRoomState(roomCode);
+  broadcastSessions();
 }
 
 function participantPayload(participant) {
@@ -219,6 +367,7 @@ function roomState(code, room, socket) {
     pendingRequests: Array.from(room.pendingControllers.values()).map(pendingPayload),
     messages: room.messages.slice(-80),
     evidence: room.evidence.slice(-80),
+    federated: federatedSummary(room),
   };
 }
 
@@ -260,6 +409,7 @@ function serializeSessions() {
     pendingControllers: Array.from(room.pendingControllers.values()).map(pendingPayload),
     evidence: room.evidence.slice(-20),
     messageCount: room.messages.length,
+    federated: federatedSummary(room),
   }));
 }
 
@@ -283,6 +433,12 @@ function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = ''
       liveRoom.latestTxHash = txHash;
       pushEvent(code, 'chain', `Audit anchored: ${String(txHash).slice(0, 18)}...`);
       io.to(code).emit('chain-log', {
+        type: eventType.toLowerCase(),
+        hash: txHash,
+        timestamp: nowTime(),
+      });
+      io.to('admins').emit('chain-log', {
+        roomId: code,
         type: eventType.toLowerCase(),
         hash: txHash,
         timestamp: nowTime(),
@@ -364,6 +520,10 @@ async function archiveSession(roomCode, reason) {
   const room = rooms.get(roomCode);
   if (!room || room.archived) return;
   room.archived = true;
+  if (room.federated?.timer) {
+    clearTimeout(room.federated.timer);
+    room.federated.timer = null;
+  }
   const endedAt = Date.now();
   pushEvent(roomCode, 'kill', reason);
   const archived = {
@@ -381,6 +541,7 @@ async function archiveSession(roomCode, reason) {
     riskScore: room.riskScore,
     alertCount: room.alertCount,
     latestTxHash: room.latestTxHash,
+    federated: federatedSummary(room),
   };
   endedSessions.unshift(archived);
   if (endedSessions.length > 100) endedSessions.pop();
@@ -503,15 +664,19 @@ function isClipboardShortcut(payload = {}) {
 function isInputAllowed(participant, payload = {}) {
   const isMouse = ['mousemove', 'mousedown', 'mouseup', 'wheel'].includes(payload.type);
   const isKeyboard = ['keydown', 'keyup'].includes(payload.type);
+  const isGamepad = payload.type === 'gamepad-state';
   if (isKeyboard && isClipboardShortcut(payload) && !participant.clipboardAllowed) return false;
   return participant.permission === 'full'
-    || (participant.permission === 'mouse' && isMouse)
+    || (participant.permission === 'mouse' && (isMouse || isGamepad))
     || (participant.permission === 'keyboard' && isKeyboard);
 }
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
-  console.log('Handshake Headers:', socket.handshake.headers);
+  console.log('Handshake Summary:', {
+    origin: socket.handshake.headers.origin || 'unknown',
+    userAgent: socket.handshake.headers['user-agent'] || 'unknown',
+  });
   isAdminSocket(socket).then((admin) => {
     if (admin) socket.join('admins');
   });
@@ -552,6 +717,7 @@ io.on('connection', (socket) => {
       events: [],
       messages: [],
       evidence: [],
+      federated: createFederatedState(),
       archived: false,
     };
     rooms.set(code, room);
@@ -630,7 +796,8 @@ io.on('connection', (socket) => {
       socket.emit('join-denied', { reason: 'Authentication required. Please sign in before joining a room.' });
       return;
     }
-    const room = rooms.get(String(roomId || '').toUpperCase());
+    const normalizedRoomId = normalizeRoomCode(roomId);
+    const room = rooms.get(normalizedRoomId);
     if (!room || role !== 'controller') {
       socket.emit('room-not-found', { roomId });
       return;
@@ -640,40 +807,41 @@ io.on('connection', (socket) => {
       return;
     }
     if (room.controllers.has(socket.id)) {
-      socket.emit('session-state', roomState(roomId, room, socket));
+      socket.emit('session-state', roomState(normalizedRoomId, room, socket));
       return;
     }
 
     const pending = buildPendingController(socket, actor, meta);
     room.pendingControllers.set(socket.id, pending);
-    socket.pendingRoomCode = roomId;
+    socket.pendingRoomCode = normalizedRoomId;
     socket.role = 'pending-controller';
     socket.userEmail = pending.email;
     socket.emit('join-pending', {
-      roomCode: roomId,
+      roomCode: normalizedRoomId,
       mode: room.mode,
       message: 'Waiting for host approval before the screen opens.',
     });
     io.to(room.hostSocketId).emit('connection-request', pendingPayload(pending));
-    pushEvent(roomId, 'join', `${pending.name} requested to join`);
-    emitRoomState(roomId);
+    pushEvent(normalizedRoomId, 'join', `${pending.name} requested to join`);
+    emitRoomState(normalizedRoomId);
     broadcastSessions();
   });
 
   socket.on('respond-join', async ({ controllerId, approved, permission = 'view', options = {} } = {}, roomId) => {
-    const room = rooms.get(roomId);
+    const normalizedRoomId = normalizeRoomCode(roomId);
+    const room = rooms.get(normalizedRoomId);
     if (!room || socket.id !== room.hostSocketId) return;
     const pending = room.pendingControllers.get(controllerId);
     if (!pending) return;
     if (!approved) {
       room.pendingControllers.delete(controllerId);
       io.to(controllerId).emit('join-denied', { reason: 'Host denied the connection request.' });
-      pushEvent(roomId, 'permission', `${pending.name} was denied before screen access`);
-      emitRoomState(roomId);
+      pushEvent(normalizedRoomId, 'permission', `${pending.name} was denied before screen access`);
+      emitRoomState(normalizedRoomId);
       broadcastSessions();
       return;
     }
-    activateController(roomId, controllerId, permission, options);
+    activateController(normalizedRoomId, controllerId, permission, options);
   });
 
   socket.on('offer', (payload, maybeRoomId) => {
@@ -682,7 +850,12 @@ io.on('connection', (socket) => {
     if (!room || socket.id !== room.hostSocketId || !data.offer) return;
     const targets = data.targetId ? [data.targetId] : Array.from(room.controllers.keys());
     targets.forEach((targetId) => {
-      if (room.controllers.has(targetId)) io.to(targetId).emit('offer', { offer: data.offer, fromId: socket.id, roomId: data.roomId || socket.roomCode });
+      if (room.controllers.has(targetId)) io.to(targetId).emit('offer', {
+        offer: data.offer,
+        fromId: socket.id,
+        roomId: data.roomId || socket.roomCode,
+        mediaStreamIds: data.mediaStreamIds || null,
+      });
     });
   });
 
@@ -690,7 +863,12 @@ io.on('connection', (socket) => {
     const data = payload && payload.answer ? payload : { answer: payload, roomId: maybeRoomId };
     const room = rooms.get(data.roomId || socket.roomCode);
     if (!room || !room.controllers.has(socket.id) || !data.answer) return;
-    io.to(room.hostSocketId).emit('answer', { answer: data.answer, fromId: socket.id, roomId: data.roomId || socket.roomCode });
+    io.to(room.hostSocketId).emit('answer', {
+      answer: data.answer,
+      fromId: socket.id,
+      roomId: data.roomId || socket.roomCode,
+      mediaStreamIds: data.mediaStreamIds || null,
+    });
   });
 
   socket.on('ice-candidate', (payload, maybeRoomId) => {
@@ -710,7 +888,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('input-event', (payload = {}) => {
-    const roomId = payload.room || socket.roomCode;
+    const roomId = normalizeRoomCode(payload.room || socket.roomCode);
     const room = rooms.get(roomId);
     const participant = room?.controllers.get(socket.id);
     if (!room || !participant) return;
@@ -726,10 +904,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('request-access', (payload = {}, roomId) => {
-    const room = rooms.get(roomId);
+    const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(normalizedRoomId);
     const participant = room?.controllers.get(socket.id);
     if (!room || !participant) return;
-    pushEvent(roomId, 'permission', `Access requested by ${participant.name}`);
+    pushEvent(normalizedRoomId, 'permission', `Access requested by ${participant.name}`);
     io.to(room.hostSocketId).emit('request-access', {
       ...payload,
       controllerId: socket.id,
@@ -742,7 +921,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('access-granted', async (permission, options = {}, roomId) => {
-    const room = rooms.get(roomId);
+    const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(normalizedRoomId);
     if (!room || !validPermissions.has(permission) || !await canModerate(socket, room)) return;
     const targets = options.targetId ? [options.targetId] : Array.from(room.controllers.keys());
     const updatesDefault = !options.targetId;
@@ -758,11 +938,11 @@ io.on('connection', (socket) => {
       });
     });
     if (updatesDefault) room.defaultPermission = permission;
-    pushEvent(roomId, 'permission', `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
-    emitRoomState(roomId);
+    pushEvent(normalizedRoomId, 'permission', `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
+    emitRoomState(normalizedRoomId);
     const targetParticipant = options.targetId ? room.controllers.get(options.targetId) : null;
     const targetEmail = targetParticipant ? targetParticipant.email : '';
-    anchorEvent(roomId, 'ACCESS_CHANGED', { permission, targetId: options.targetId || null }, room.hostEmail, targetEmail);
+    anchorEvent(normalizedRoomId, 'ACCESS_CHANGED', { permission, targetId: options.targetId || null }, room.hostEmail, targetEmail);
     broadcastSessions();
   });
 
@@ -822,9 +1002,74 @@ io.on('connection', (socket) => {
     broadcastSessions();
   });
 
+  socket.on('federated-update', ({ roomId, weights, sampleCount = 1, loss = null, modelVersion = FEDERATED_MODEL_VERSION } = {}) => {
+    const normalizedRoomId = String(roomId || socket.roomCode || '').toUpperCase();
+    const room = rooms.get(normalizedRoomId);
+    if (!room || room.mode !== 'supervised') {
+      socket.emit('federated-error', { message: 'Federated updates are only accepted for live supervised rooms.' });
+      return;
+    }
+
+    const participant = getFederatedParticipant(room, socket);
+    if (!participant) {
+      socket.emit('federated-error', { message: 'Only the host or approved controllers can submit federated updates.' });
+      return;
+    }
+
+    const sanitizedWeights = sanitizeWeights(weights);
+    if (!sanitizedWeights) {
+      socket.emit('federated-error', { message: 'Invalid federated model weights.' });
+      return;
+    }
+    if (room.federated.globalWeights && room.federated.globalWeights.length !== sanitizedWeights.length) {
+      socket.emit('federated-error', { message: 'Model weight shape does not match the current room aggregate.' });
+      return;
+    }
+
+    const safeSampleCount = Math.max(1, Math.min(10000, Math.round(Number(sampleCount) || 1)));
+    const safeLoss = Number.isFinite(Number(loss)) ? Number(loss) : null;
+
+    if (!room.federated.startedAt || room.federated.pending.size === 0) {
+      room.federated.round += 1;
+      room.federated.startedAt = Date.now();
+    }
+
+    room.federated.pending.set(socket.id, {
+      participantId: socket.id,
+      participantName: participant.name,
+      role: participant.role,
+      weights: sanitizedWeights,
+      sampleCount: safeSampleCount,
+      loss: safeLoss,
+      modelVersion: String(modelVersion || FEDERATED_MODEL_VERSION),
+      receivedAt: new Date().toISOString(),
+    });
+
+    pushEvent(normalizedRoomId, 'system', `Federated update accepted from ${participant.name} (${safeSampleCount} sample(s))`);
+    socket.emit('federated-update-accepted', {
+      roomId: normalizedRoomId,
+      round: room.federated.round,
+      pendingContributors: room.federated.pending.size,
+    });
+
+    const expectedContributors = roomFederatedMembers(room).length;
+    const quorum = Math.max(1, Math.min(2, expectedContributors));
+    if (room.federated.pending.size >= quorum) {
+      aggregateFederatedRound(normalizedRoomId);
+    } else if (!room.federated.timer) {
+      room.federated.timer = setTimeout(() => aggregateFederatedRound(normalizedRoomId), 2500);
+    }
+
+    emitRoomState(normalizedRoomId);
+    broadcastSessions();
+  });
+
   socket.on('quality-update', ({ roomId, quality = {} } = {}) => {
-    const room = rooms.get(roomId || socket.roomCode);
+    const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(normalizedRoomId);
     if (!room) return;
+    const participant = getRoomParticipant(room, socket);
+    if (!participant || participant.role === 'admin') return;
     const safeQuality = {
       latency: Number.isFinite(quality.latency) ? quality.latency : null,
       fps: Number.isFinite(quality.fps) ? quality.fps : null,
@@ -832,9 +1077,8 @@ io.on('connection', (socket) => {
       health: ['excellent', 'good', 'fair', 'poor', 'unknown'].includes(quality.health) ? quality.health : 'unknown',
     };
     if (socket.id === room.hostSocketId) room.hostQuality = safeQuality;
-    const participant = room.controllers.get(socket.id);
-    if (participant) participant.quality = safeQuality;
-    io.to('admins').emit('quality-update', { roomId: roomId || socket.roomCode, socketId: socket.id, quality: safeQuality });
+    if (participant.role === 'controller') participant.quality = safeQuality;
+    io.to('admins').emit('quality-update', { roomId: normalizedRoomId, socketId: socket.id, quality: safeQuality });
     broadcastSessions();
   });
 
@@ -978,23 +1222,22 @@ io.on('connection', (socket) => {
   });
 
   socket.on('system-alert', (payload = {}) => {
-    const roomId = payload.room || socket.roomCode;
+    const roomId = normalizeRoomCode(payload.room || socket.roomCode);
     const room = rooms.get(roomId);
     if (!room || room.mode !== 'supervised') return;
-    const controller = room.controllers.get(socket.id);
-    if (socket.id !== room.hostSocketId && !controller) return;
-    const participant = socket.id === room.hostSocketId ? 'Host' : controller.name || 'Controller';
-    const penalty = payload.penalty || 0;
-    room.riskScore = Math.min(100, room.riskScore + penalty);
+    const participant = getRoomParticipant(room, socket);
+    if (!participant || participant.role === 'admin') return;
+    const participantName = participant.name || (participant.role === 'host' ? 'Host' : 'Controller');
+    const penalty = applyRiskPenalty(room, payload.penalty, 0);
     room.alertCount += 1;
-    pushEvent(roomId, payload.type === 'anticheat_violation' ? 'anticheat' : 'system', `${participant}: ${payload.message || 'Activity detected'}`);
+    pushEvent(roomId, payload.type === 'anticheat_violation' ? 'anticheat' : 'system', `${participantName}: ${payload.message || 'Activity detected'}`);
     if (global.dbConnected) {
       Alert.create({
         room: roomId,
         hostEmail: room.hostEmail || undefined,
         type: payload.type || 'activity',
         event: payload.event || undefined,
-        message: `${participant}: ${payload.message || 'Activity detected'}`,
+        message: `${participantName}: ${payload.message || 'Activity detected'}`,
         penalty,
       }).catch((err) => console.error('Alert save error:', err));
     } else {
@@ -1003,7 +1246,7 @@ io.on('connection', (socket) => {
         hostEmail: room.hostEmail || undefined,
         type: payload.type || 'activity',
         event: payload.event || undefined,
-        message: `${participant}: ${payload.message || 'Activity detected'}`,
+        message: `${participantName}: ${payload.message || 'Activity detected'}`,
         penalty,
       });
     }
@@ -1013,13 +1256,13 @@ io.on('connection', (socket) => {
       anchorEvent(
         roomId,
         'AI_ANTI_CHEAT_ALERT',
-        { event: payload.event, participant, message: payload.message, penalty, timestamp: nowTime() },
+        { event: payload.event, participant: participantName, message: payload.message, penalty, timestamp: nowTime() },
         room.hostEmail || '',
-        ''
+        participant.email || ''
       );
     }
 
-    io.to('admins').emit('system-alert', { ...payload, room: roomId, participant });
+    io.to('admins').emit('system-alert', { ...payload, room: roomId, participant: participantName, penalty });
     emitRoomState(roomId);
     broadcastSessions();
   });
@@ -1027,19 +1270,15 @@ io.on('connection', (socket) => {
   socket.on('ping-ircp', () => socket.emit('pong-ircp'));
 
   const handleAntiCheatAlert = (data = {}) => {
-    const roomCode = data.roomCode || data.roomId || socket.roomCode;
+    const roomCode = normalizeRoomCode(data.roomCode || data.roomId || socket.roomCode);
     const room = rooms.get(roomCode);
     if (!room || room.mode !== 'supervised') return;
 
-    const controller = room.controllers.get(data.controllerId || socket.id);
-    const participant = data.participant || controller || (socket.id === room.hostSocketId
-      ? { name: 'Host', email: room.hostEmail }
-      : null);
+    const participant = getRoomParticipant(room, socket, data.controllerId);
     if (!participant) return;
 
     const message = data.message || data.reason || 'AI proctoring alert detected';
-    const penalty = Number(data.penalty || 15);
-    room.riskScore = Math.min(100, room.riskScore + penalty);
+    const penalty = applyRiskPenalty(room, data.penalty, 15);
     room.alertCount += 1;
 
     pushEvent(roomCode, 'anticheat', `[AI PROCTORING ALERT] ${participant.name}: ${message}`);
@@ -1081,18 +1320,26 @@ io.on('connection', (socket) => {
   socket.on('anticheat-alert', handleAntiCheatAlert);
 
   socket.on('permission-violation', (data) => {
-    const { roomCode, action, controllerName, controllerEmail } = data;
+    const { action } = data || {};
+    const roomCode = normalizeRoomCode(data?.roomCode || data?.roomId || socket.roomCode);
     const room = rooms.get(roomCode);
-    if (!room) return;
+    if (!room || socket.id !== room.hostSocketId) return;
+    const participant = data?.controllerId
+      ? room.controllers.get(data.controllerId)
+      : Array.from(room.controllers.values()).find(candidate => (
+        (data?.controllerEmail && candidate.email === data.controllerEmail)
+        || (data?.controllerName && candidate.name === data.controllerName)
+      ));
+    if (!participant) return;
     
-    pushEvent(roomCode, 'permission', `${controllerName}'s input was blocked (${action})`);
+    pushEvent(roomCode, 'permission', `${participant.name}'s input was blocked (${action || 'unknown action'})`);
     
     anchorEvent(
       roomCode,
       'PERMISSION_VIOLATION',
-      { action, controller: controllerName, timestamp: nowTime() },
+      { action: action || 'unknown action', controller: participant.name, timestamp: nowTime() },
       room.hostEmail || '',
-      controllerEmail || ''
+      participant.email || ''
     );
     emitRoomState(roomCode);
   });

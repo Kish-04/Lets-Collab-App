@@ -7,6 +7,18 @@ import { cn } from '@/lib/utils'
 
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: '', dark: '.dark' } as const
+const CSS_IDENTIFIER_RE = /[^a-zA-Z0-9_-]/g
+const CSS_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|(?:rgb|rgba|hsl|hsla|oklch|oklab|lab|lch)\([0-9a-zA-Z%.,\s/-]+\)|var\(--[a-zA-Z0-9_-]+\)|[a-zA-Z]+)$/
+
+function sanitizeCssIdentifier(value: string) {
+  return value.replace(CSS_IDENTIFIER_RE, '-')
+}
+
+function sanitizeCssColor(value: unknown) {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  return CSS_COLOR_RE.test(trimmed) ? trimmed : ''
+}
 
 export type ChartConfig = {
   [k in string]: {
@@ -47,7 +59,7 @@ function ChartContainer({
   >['children']
 }) {
   const uniqueId = React.useId()
-  const chartId = `chart-${id || uniqueId.replace(/:/g, '')}`
+  const chartId = `chart-${sanitizeCssIdentifier(id || uniqueId.replace(/:/g, ''))}`
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -90,7 +102,8 @@ ${colorConfig
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
+    const safeColor = sanitizeCssColor(color)
+    return safeColor ? `  --color-${sanitizeCssIdentifier(key)}: ${safeColor};` : null
   })
   .join('\n')}
 }

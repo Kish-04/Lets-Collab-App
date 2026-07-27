@@ -15,6 +15,7 @@ server/data/
 server/uploads/
 server/cache/
 server/artifacts/
+scratch/
 chrome/
 mkcert.exe
 local-key.pem

@@ -1,0 +1,192 @@
+# Audit Log
+
+## Phase 1 - File-by-File Audit
+
+- `server/index.js` - FIXED: gated REST chain-history behind `protectAdmin`, replaced raw handshake-header logging with a redacted summary, normalized room-code handling on join/approval/input paths, clamped alert penalties/risk scoring, and derived alert/audit participants from live room membership instead of trusting client-supplied identity.
+- `server/authRoutes.js` - FLAGGED: auth flow is functional, but verified/login responses still return JWTs in JSON for backward compatibility in addition to the httpOnly cookie.
+- `server/adminRoutes.js` - FIXED: admin endpoints after `router.use(protectAdmin)` are gated; evidence upload is intentionally before the admin middleware and has its own authenticated host/admin guard; exported `protectAdmin` so the session-history REST endpoint can reuse the same gate.
+- `server/User.js` - CLEAN: password hashing and role/banned/session fields match auth and admin usage.
+- `server/config.js` - CLEAN: JWT secret handling, CORS parsing, and production warnings are explicit; local desktop origins are allowed by design.
+- `server/db.js` - CLEAN: development database failure degrades to mock storage and production database failure exits.
+- `server/mockStore.js` - CLEAN: mock user, alert, and session log methods cover the current Mongoose fallback paths.
+- `server/blockchainLogger.js` - CLEAN: JS calls `logEvent(string,string,string,string,string)` matching the compiled ABI, queues transactions, and falls back to mock logging outside production when the chain is unavailable.
+- `server/contracts/IRCPTracker.sol` - CLEAN: contract ABI surface matches backend expectations for `logEvent`, `getGlobalLogCount`, `getSessionLogs`, `logs`, and `EventLogged`.
+- `server/alert.js` - CLEAN: schema covers alert fields used by anti-cheat, system-alert, and evidence upload paths.
+- `server/compile.js` - FIXED: exits non-zero on Solidity compiler errors instead of printing errors and continuing to write/claim a successful artifact.
+- `server/contracts/address.json` - CLEAN: contains an address/block pair consumed by blockchain logger when no `CONTRACT_ADDRESS` overrides it.
+- `server/contracts/IRCPTracker.json` - CLEAN: generated ABI includes the six backend-used entries and bytecode is present.
+- `server/.env.example` - CLEAN: documents current server auth, database, CORS, admin bootstrap, email, blockchain, TURN, and mock-store variables used by the backend.
+- `server/hardhat.config.js` - CLEAN: local and Sepolia networks use expected environment variable names.
+- `server/package.json` - CLEAN: scripts cover start/dev/syntax/contract/API/contract tests and dependencies match the lockfile root package.
+- `server/package-lock.json` - CLEAN: full JSON parse succeeded; lockfile v3 root dependencies/devDependencies match `server/package.json` and no scratch/debug path references were present.
+- `server/scripts/deploy.js` - CLEAN: deploys `IRCPTracker` and writes the address/block file consumed by the backend.
+- `server/sessionLog.js` - FIXED: added `federated` as mixed schema data so MongoDB archives retain the same federated aggregate summary that mock storage already keeps.
+- `server/test/api.test.js` - FIXED: covers basic admin/evidence unauthenticated rejections and now forces mock DB/mock blockchain/blank email env before importing the server.
+- `server/test/SessionAudit.js` - CLEAN: verifies contract `logEvent` and `getSessionLogs` behavior.
+- `server/test-query.js` - FIXED: now reads RPC URL and session id from environment/argv and resolves contract artifacts relative to the script instead of depending on CWD and a hardcoded session.
+- `server/tests/api.test.js` - CLEAN: minimal invalid-login auth test.
+- `server/test-sepolia.js` - CLEAN: uses production mode and env-backed blockchain logger for Sepolia smoke logging.
+- `server/verify-minio.js` - FIXED: now reads Mongo/S3 connection details from environment with local MinIO defaults instead of hardcoding every service endpoint/credential.
+- `server/verify-sepolia.js` - FIXED: now loads `server/.env`, uses env/argv transaction and contract inputs, and exits with usage guidance instead of verifying stale hardcoded Sepolia values.
+- `app/session/page.tsx` - FIXED: confirmed WebRTC routes host screen/camera by `mediaStreamIds` instead of arrival order and renders host-side controller camera streams by controller id; confirmed chat UI renders and emits `chat-message`; confirmed filter dropdowns use neutral avatar/background/voice values; removed stale duplicate focus-loss tracker that emitted to the wrong server event and leaked a visibility listener; added `controllerId` to permission-violation audit payloads; allowed `gamepad-state` under mouse/full permission to match the existing gamepad polling feature.
+- `app/page.tsx` - FIXED: changed the landing comparison table from the inaccurate “End-to-End Encrypted P2P Chat Channels” claim to the implemented server-audited in-session chat.
+- `app/app/page.tsx` - CLEAN: real user registration/login/OTP/forgot/reset flow uses backend auth endpoints and stores local user display state after successful cookie/JWT issuance.
+- `app/admin/page.tsx` - CLEAN: overview data is loaded from protected admin reports endpoint with auth headers/cookies and redirects on 401/403.
+- `app/admin/alerts/page.tsx` - FLAGGED: page is functional, but displayed room risk totals are client-derived from loaded/live alert deltas rather than authoritative server room state.
+- `app/admin/blockchain/page.tsx` - FIXED: page listens for admin `chain-log` refresh signals; backend now emits `chain-log` to `admins` as well as the live room.
+- `app/admin/reports/page.tsx` - FIXED: escaped report titles, headers, and cell values before writing printable PDF HTML.
+- `app/admin/sessions/page.tsx` - CLEAN: admin live-session view, visible observation workflow, and interventions map to existing authenticated socket handlers.
+- `app/admin/users/page.tsx` - CLEAN: user listing/ban/role changes use protected admin REST endpoints.
+- `app/login/page.tsx` - FIXED: replaced fake localStorage-only demo authentication with a redirect to `/app`, where the real backend auth flow lives.
+- `app/admin/login/page.tsx` - FIXED: admin login uses backend auth/verify endpoints, gates entry by returned admin role, and no longer forwards OTPs through browser-side EmailJS or hardcoded public EmailJS fallback IDs.
+- `lib/AntiCheatEngine.ts` - FIXED: calibration now can actually adapt head-pose margin after at least half of the configured samples instead of waiting for an impossible `> 50` samples from a 30-sample calibration.
+- `hooks/useFederatedAI.ts` - FIXED: COCO-SSD detection loop now uses a ref-backed violation callback so parent rerenders do not restart the interval unnecessarily.
+- `components/ircp/supervisor/AiSupervisor.tsx` - CLEAN: imported by the live session page and correctly bridges `useFederatedAI` detections into supervised malpractice reporting.
+- `lib/FederatedLearner.ts` - FIXED: local training tensors are disposed in a `finally` block so failed TensorFlow fits do not leak tensors.
+- `lib/DataChannelManager.ts` - FIXED: broadcast matching now uses the exact `${label}-` prefix rather than a loose string prefix.
+- `lib/SessionRecorder.ts` - FIXED: MediaRecorder startup now falls back when `video/webm` is unsupported and cleans up canvas/audio streams if recorder construction fails.
+- `lib/VirtualAvatar.ts` - FLAGGED: local neutral SVG avatar assets are present and the overlay pipeline degrades to raw video, but face-api model loading still depends on external CDN/GitHub-hosted assets.
+- `lib/VirtualBackground.ts` - FIXED: background choices use local assets including `matrix`, and MediaPipe/CDN failure now falls back to drawing the raw camera stream instead of returning a blank canvas stream.
+- `lib/VoiceChanger.ts` - CLEAN: all listed voice filters, including `megaphone`, are implemented with Web Audio routing and do not require external assets.
+- `lib/appearance.ts` - CLEAN: persisted appearance values are normalized with hex validation and bounded numeric controls before being applied as CSS variables.
+- `lib/utils.ts` - CLEAN: backend URL resolution, auth-header extraction, and TURN fallback behavior match the app's local/Electron/deployed runtime needs.
+- `components/ircp/FileTransfer.tsx` - FIXED: receiver now tracks the active sender and validates file metadata so chunks from concurrent peers cannot corrupt an in-progress transfer.
+- `components/ircp/WhiteboardOverlay.tsx` - CLEAN: overlay annotation messages use normalized canvas coordinates and the shared draw data channel.
+- `components/ircp/StandaloneCanvas.tsx` - CLEAN: standalone canvas supports pen/eraser/background/clear/save flows and mirrors draw events over the shared draw data channel.
+- `components/ircp/ThemeCustomizer.tsx` - CLEAN: appearance presets/custom values are normalized, persisted locally, and locked when a host-driven session style is active.
+- `components/ircp/permission-modal.tsx` - FIXED: removed unused demo export with sample personal data; production modal remains wired for host approval options.
+- `components/ircp/shared.tsx` - FIXED: clipboard buttons now fall back to legacy copy behavior when `navigator.clipboard` is unavailable or denied.
+- `hooks/use-mobile.ts` - CLEAN: responsive breakpoint hook attaches and removes the media-query listener correctly.
+- `hooks/use-toast.ts` - CLEAN: toast store/reducer follows the local shadcn pattern and has no network/storage/security side effects.
+- `app/admin/layout.tsx` - CLEAN: layout performs client-side admin navigation gating for UX, while actual data/actions remain protected by backend role checks.
+- `app/app/error.tsx` - CLEAN: route error boundary hides exception detail in production.
+- `app/error.tsx` - CLEAN: app error boundary hides exception detail in production.
+- `app/global-error.tsx` - CLEAN: global error boundary hides exception detail in production and renders a complete html/body shell.
+- `app/history/page.tsx` - FIXED: protected session-history requests now include cookies and stored auth headers after the backend route was gated behind admin auth.
+- `app/recent/page.tsx` - FIXED: removed fake hardcoded recent-session room codes and replaced them with an honest empty state until a user-scoped recent-session API exists.
+- `app/layout.tsx` - FLAGGED: global script loading for face-api and MediaPipe still relies on CDN-hosted browser assets, so avatar/background AI availability depends on external script delivery.
+- `app/globals.css` - CLEAN: global theme variables, reduced-motion handling, and animation utilities align with the current appearance system.
+- `components/theme-provider.tsx` - CLEAN: thin `next-themes` provider wrapper only forwards props and children.
+- `components/landing/Animations.tsx` - CLEAN: animation helpers are client-only and have no data/security side effects.
+- `components/landing/FeatureOrbit.tsx` - FIXED: removed stale P2P-encrypted-chat/copyrighted-avatar/fictional voice-filter claims and moved the scroll motion subscription into `useMotionValueEvent`.
+- `components/ui/accordion.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/alert.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/alert-dialog.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/aspect-ratio.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/avatar.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/badge.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/breadcrumb.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/button.tsx` - CLEAN: generated button variant wrapper, no storage/network/executable HTML behavior.
+- `components/ui/button-group.tsx` - CLEAN: generated button-group wrapper, no storage/network/executable HTML behavior.
+- `components/ui/calendar.tsx` - CLEAN: generated calendar wrapper, no storage/network/executable HTML behavior.
+- `components/ui/card.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/carousel.tsx` - CLEAN: generated carousel wrapper, no storage/network/executable HTML behavior.
+- `components/ui/chart.tsx` - FIXED: chart style injection now sanitizes CSS identifiers and color values before writing generated CSS through `dangerouslySetInnerHTML`.
+- `components/ui/checkbox.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/collapsible.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/command.tsx` - CLEAN: generated command palette wrapper, no storage/network/executable HTML behavior.
+- `components/ui/context-menu.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/dialog.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/drawer.tsx` - CLEAN: generated drawer wrapper, no storage/network/executable HTML behavior.
+- `components/ui/dropdown-menu.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/empty.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/field.tsx` - CLEAN: generated form-field wrapper, no storage/network/executable HTML behavior.
+- `components/ui/form.tsx` - CLEAN: generated `react-hook-form` wrapper, no storage/network/executable HTML behavior.
+- `components/ui/hover-card.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/input.tsx` - CLEAN: generated input wrapper, no storage/network/executable HTML behavior.
+- `components/ui/input-group.tsx` - CLEAN: generated input-group wrapper, no storage/network/executable HTML behavior.
+- `components/ui/input-otp.tsx` - CLEAN: generated OTP input wrapper, no storage/network/executable HTML behavior.
+- `components/ui/item.tsx` - CLEAN: generated item layout wrapper, no storage/network/executable HTML behavior.
+- `components/ui/kbd.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/label.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/menubar.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/navigation-menu.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/pagination.tsx` - CLEAN: generated pagination wrapper, no storage/network/executable HTML behavior.
+- `components/ui/popover.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/progress.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/radio-group.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/resizable.tsx` - CLEAN: generated resizable-panel wrapper, no storage/network/executable HTML behavior.
+- `components/ui/scroll-area.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/select.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/separator.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/sheet.tsx` - CLEAN: generated sheet/dialog wrapper, no storage/network/executable HTML behavior.
+- `components/ui/sidebar.tsx` - CLEAN: generated sidebar state wrapper only writes a non-sensitive `sidebar_state` UI cookie.
+- `components/ui/skeleton.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/slider.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/sonner.tsx` - CLEAN: generated toaster wrapper, no storage/network/executable HTML behavior.
+- `components/ui/spinner.tsx` - CLEAN: generated presentational wrapper, no storage/network/executable HTML behavior.
+- `components/ui/switch.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/table.tsx` - CLEAN: generated table wrapper, no storage/network/executable HTML behavior.
+- `components/ui/tabs.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/textarea.tsx` - CLEAN: generated textarea wrapper, no storage/network/executable HTML behavior.
+- `components/ui/toast.tsx` - CLEAN: generated Radix UI toast wrapper, no storage/network/executable HTML behavior.
+- `components/ui/toaster.tsx` - CLEAN: generated toaster bridge, no storage/network/executable HTML behavior.
+- `components/ui/toggle.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/toggle-group.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/tooltip.tsx` - CLEAN: generated Radix UI wrapper, no storage/network/executable HTML behavior.
+- `components/ui/use-mobile.tsx` - CLEAN: generated mobile breakpoint hook mirrors the root hook and has no storage/network/security side effects.
+- `components/ui/use-toast.ts` - CLEAN: generated toast store/reducer has no network/storage/security side effects.
+- `main.js` - FIXED: Electron permission and display-capture handlers now only grant media/screen access to trusted renderer origins; IPC sender validation and input clamping remain in place.
+- `preload.js` - CLEAN: context bridge exposes a narrow API surface for config, whitelisted IPC sends, and system-event subscription without Node integration.
+- `app-config.example.json` - CLEAN: example config contains non-secret local defaults only.
+- `app-config.json` - FLAGGED: tracked app config points at the current Render backend URL; not a secret, but it is environment-specific and should be regenerated per release channel.
+- `Launch-DRCSLA-App.bat` - CLEAN: launcher only locates installed/unpacked Electron app paths and starts the desktop client.
+- `Launch-LetsCollab.bat` - CLEAN: launcher only locates installed/unpacked Electron app paths and starts the desktop client.
+- `package.json` - FIXED: Electron package file globs now exclude tracked local logs, diffs, and one-off debug scripts from installer output; lint script now targets source/test paths with installed ESLint tooling.
+- `package-lock.json` - FIXED: lockfile root dependency metadata now includes the ESLint/Next lint tooling required by the lint script.
+- `Dockerfile.backend` - CLEAN: backend image installs server dependencies and starts the Express/Socket.IO service for the compose-managed local stack.
+- `Dockerfile.frontend` - CLEAN: frontend image installs native browser/media dependencies and starts Next dev mode for the compose-managed local stack.
+- `docker-compose.yml` - CLEAN: compose stack wires MongoDB, Hardhat, MinIO, backend, and frontend with healthchecks and dependency ordering.
+- `vercel.json` - CLEAN: Vercel build uses the Next.js framework and disables install scripts, matching the static frontend deployment path.
+- `next.config.mjs` - CLEAN: static export and unoptimized images match the Electron/static-host deployment model.
+- `tsconfig.json` - CLEAN: TypeScript config is strict enough for the current Next.js app and does not include secret-bearing paths.
+- `postcss.config.mjs` - CLEAN: Tailwind PostCSS config only loads the Tailwind plugin.
+- `eslint.config.mjs` - FIXED: lint config is now a Next 16-compatible flat ESLint config and ignores generated build/extraction folders.
+- `components.json` - CLEAN: shadcn component aliases point inside the repo and do not affect runtime behavior.
+- `.dockerignore` - CLEAN: Docker context excludes dependency folders, build output, local env files, and scratch artifacts.
+- `.gitignore` - CLEAN: local env files, build outputs, logs, caches, and generated artifacts are ignored for future changes.
+- `.vercelignore` - CLEAN: Vercel upload excludes backend/server-only code and local build/debug artifacts.
+- `.env.example` - CLEAN: example environment documents non-secret placeholders for frontend, backend, auth, email, blockchain, storage, TURN, and mock fallback settings.
+- `.env.production` - FLAGGED: real local production env file exists and is correctly ignored; values were intentionally not read or modified.
+- `server/.env` - FLAGGED: real backend env file exists and is correctly ignored; values were intentionally not read or modified.
+- `build/installer.nsh` - CLEAN: NSIS custom page installs ViGEmBus only when the bundled MSI is present and larger than the placeholder.
+- `public/avatars/*.svg` - FIXED: local neutral avatar overlays now exist for cyberpunk visor, neon mask, pixel face, hologram, sketch outline, synthwave, and anime styles.
+- `public/backgrounds/*.svg` - FIXED: local background assets now exist for office, beach, space, and matrix styles, removing hotlinked background dependencies.
+- `public/logo.ico` - CLEAN: local Electron icon asset exists for configured Windows/macOS packaging.
+- `README.md` - FIXED: project name, AI feature description, Docker instructions, and production deployment guidance now match the actual DRCSFA/static-export architecture.
+- `test/calibration.test.js` - FIXED: calibration mock data now exercises the corrected half-sample threshold.
+- `test/calibration.test.mjs` - FIXED: ESM calibration smoke mirrors the corrected half-sample threshold.
+- `check-repo.js` - FLAGGED: local utility is hardcoded to a specific GitHub release endpoint and remains a one-off diagnostic script.
+- `e2e_audit.js` - FLAGGED: local audit script depends on hardcoded Windows/Chrome/artifact paths and direct MongoDB OTP access, so it is not portable CI coverage.
+- `test-e2e.js` - FLAGGED: browser smoke targets a hardcoded localhost port and is not wired into package scripts.
+- `test-upload.js` - FLAGGED: upload smoke uses unauthenticated admin upload behavior and ad hoc dependencies, so it no longer represents the protected route contract.
+- `test-violation.js` - FLAGGED: socket smoke still models the older client-supplied identity pattern; the backend now derives violation identity from room membership.
+- `test_flags.js` - FLAGGED: local browser diagnostic depends on a hardcoded Chrome executable path.
+- `test_click.js` - FLAGGED: local browser diagnostic targets a hardcoded live Vercel URL.
+- `capture_error.js` - FLAGGED: local browser diagnostic is useful for manual debugging but is not portable CI coverage.
+- `asar_temp/` - FLAGGED: tracked build extraction snapshot duplicates generated app/server content and should be removed from version control in a dedicated cleanup commit.
+- `diff.txt`, `diff_utf8.txt`, `fix*.js`, `patch*.js`, `modify.js`, `inject-sidebar.js` - FLAGGED: tracked one-off patch/debug artifacts remain in the repository and should be removed in a dedicated cleanup commit.
+
+## Verification
+
+- `node --check main.js` - PASS.
+- `node --check preload.js` - PASS.
+- `node --check server/index.js` - PASS.
+- `node --check server/adminRoutes.js` - PASS.
+- `node test/calibration.test.mjs` - PASS: 3 tests passed.
+- `npm run typecheck` / `npm.cmd run typecheck` - PASS: `tsc --noEmit`.
+- `npm.cmd run build` - PASS after granting network for `next/font/google`; the restricted-network attempt failed only because DM Sans, Exo 2, and JetBrains Mono could not be fetched from Google Fonts.
+- `npm.cmd run lint` - PASS with 9 warnings: hook dependency warnings in `app/page.tsx`, `app/session/page.tsx`, `components/ircp/StandaloneCanvas.tsx`, `components/ircp/shared.tsx`, plus two `next/no-img-element` warnings.
+- `npm --prefix server run check` - PASS: backend JS syntax checks completed.
+- `npm --prefix server run test:api` - PASS: 3 tests passed in isolated mock DB/mock blockchain mode.
+- `npm --prefix server run test:contracts` - PASS: Hardhat `IRCPTracker` event logging test passed.
+- `node scratch/live-smoke.js --self-host` - PASS: registered host/controller, read OTPs from terminal log, verified JWTs, created supervised room, approved controller with mouse permission, relayed mouse input, blocked keyboard input server-side with `Your current permission is mouse.`, delivered chat, raised risk score to 25, and aggregated a federated round from 2 contributors with weights approximately `[0.3, 0.6]`.
+- Dependency audit note: `npm install` reported existing vulnerability counts in root/backend dependency trees. They were not auto-fixed because `npm audit fix --force` can introduce breaking upgrades and needs a separate dependency-upgrade review.
+
+## Deployment Checks
+
+- Render backend `https://let-s-collab-tjwc.onrender.com/health` - PASS: HTTP 200 with `{"ok":true,"dbConnected":true,"blockchainActive":false}` on 2026-07-27.
+- Render backend root `https://let-s-collab-tjwc.onrender.com` - FLAGGED: HTTP 404. The API health route is live, but there is no public root route on the backend service.
+- Vercel frontend `https://letscollab-pearl.vercel.app/` - PASS: HTTP 200 HTML on 2026-07-27.
+- Vercel frontend `https://letscollab-pearl.vercel.app/session?create=true&mode=collaboration` - PASS: HTTP 200 HTML on 2026-07-27.
+- Manual dashboard note: the pushed branch `codex/audit-real-feature-fixes` is on GitHub, but Render/Vercel production will only reflect these commits after the branch is merged or the dashboards are configured to deploy it.

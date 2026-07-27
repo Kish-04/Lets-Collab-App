@@ -10,7 +10,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run build",
-    "lint": "eslint .",
+    "lint": "eslint app components hooks lib main.js preload.js \"server/*.js\" \"server/test/*.js\" \"test/*.js\" \"test/*.mjs\"",
     "electron:dev": "electron .",
     "build:electron": "electron-builder",
     "build:win": "electron-builder --win nsis",
@@ -50,8 +50,13 @@
       "!chrome",
       "!out/downloads",
       "!public/downloads",
+      "!*.log",
+      "!*.txt",
+      "!capture_error.js",
+      "!check-repo.js",
       "!e2e_audit.js",
       "!test-*.js",
+      "!test_*.js",
       "!test_*.ts",
       "!fix*.js",
       "!patch*.js",
@@ -62,11 +67,11 @@
       "target": [
         "zip"
       ],
-      "icon": "public/logo.png"
+      "icon": "public/logo.ico"
     },
     "win": {
       "target": "nsis",
-      "icon": "public/logo.png"
+      "icon": "public/logo.ico"
     },
     "nsis": {
       "include": "build/installer.nsh",
@@ -88,7 +93,6 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
-    "@emailjs/browser": "^4.4.1",
     "@hookform/resolvers": "^3.9.1",
     "@mediapipe/tasks-vision": "^0.10.32",
     "@radix-ui/react-accordion": "1.2.12",
@@ -135,6 +139,8 @@
     "electron": "^32.3.3",
     "electron-builder": "^26.15.3",
     "embla-carousel-react": "8.6.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.1.6",
     "input-otp": "1.4.2",
     "lucide-react": "^0.564.0",
     "mongoose": "^9.7.4",

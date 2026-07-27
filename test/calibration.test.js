@@ -32,7 +32,7 @@ const htmlContent = `
         }
         
         let volumeSamples = [5, 5, 6, 4]; // mock ambient noise floor
-        let poseVariances = [0.1, 0.12, 0.08, 0.15]; // mock pose
+        let poseVariances = Array.from({ length: 15 }, (_, index) => 0.08 + (index % 4) * 0.02); // half of 30 valid pose samples
         let lowConf = window.MOCK_LOW_CONFIDENCE ? 100 : 0;
         
         const avgNoise = volumeSamples.reduce((a,b)=>a+b)/volumeSamples.length;

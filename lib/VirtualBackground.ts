@@ -12,7 +12,14 @@ const getCamera = () => {
     return null;
 };
 
-export type BackgroundStyle = 'none' | 'blur' | 'office' | 'beach' | 'space';
+export type BackgroundStyle = 'none' | 'blur' | 'office' | 'beach' | 'space' | 'matrix';
+
+const backgroundSources: Record<Exclude<BackgroundStyle, 'none' | 'blur'>, string> = {
+    office: '/backgrounds/office.svg',
+    beach: '/backgrounds/beach.svg',
+    space: '/backgrounds/space.svg',
+    matrix: '/backgrounds/matrix.svg',
+};
 
 export class VirtualBackground {
     private canvas: HTMLCanvasElement;
@@ -24,6 +31,7 @@ export class VirtualBackground {
     private backgroundImage: HTMLImageElement | null = null;
     private offscreenCanvas: HTMLCanvasElement;
     private offscreenCtx: CanvasRenderingContext2D | null;
+    private fallbackFrameId: number = 0;
 
     constructor() {
         this.canvas = document.createElement('canvas');
@@ -60,15 +68,7 @@ export class VirtualBackground {
         }
 
         this.backgroundImage = new Image();
-        if (style === 'office') {
-            this.backgroundImage.src = 'https://cdn.pixabay.com/photo/2018/03/10/12/00/teamwork-3213924_1280.jpg';
-        } else if (style === 'beach') {
-            this.backgroundImage.src = 'https://cdn.pixabay.com/photo/2015/04/23/22/00/tree-736885_1280.jpg';
-        } else if (style === 'space') {
-            this.backgroundImage.src = 'https://cdn.pixabay.com/photo/2011/12/14/12/11/astronaut-11080_1280.jpg';
-        }
-        
-        this.backgroundImage.crossOrigin = 'anonymous';
+        this.backgroundImage.src = backgroundSources[style];
     }
 
     private onResults(results: any) {
@@ -129,14 +129,26 @@ export class VirtualBackground {
                 height: this.canvas.height
             });
             this.camera.start();
+        } else {
+            const drawFallbackFrame = () => {
+                if (!this.isRunning || !this.ctx) return;
+                this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
+                this.fallbackFrameId = requestAnimationFrame(drawFallbackFrame);
+            };
+            drawFallbackFrame();
         }
         return this.canvas.captureStream(30);
     }
 
     public stop() {
         this.isRunning = false;
+        if (this.fallbackFrameId) {
+            cancelAnimationFrame(this.fallbackFrameId);
+            this.fallbackFrameId = 0;
+        }
         if (this.camera) {
             this.camera.stop();
+            this.camera = null;
         }
     }
 }

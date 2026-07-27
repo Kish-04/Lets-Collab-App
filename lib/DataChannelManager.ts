@@ -41,7 +41,7 @@ export class DataChannelManager {
         } else {
             // Broadcast to all peers for this label
             this.channels.forEach((channel, id) => {
-                if (id.startsWith(label) && channel.readyState === 'open') {
+                if (id.startsWith(`${label}-`) && channel.readyState === 'open') {
                     channel.send(payload as any);
                 }
             });

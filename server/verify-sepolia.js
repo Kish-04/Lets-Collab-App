@@ -1,11 +1,16 @@
-require('dotenv').config({ path: __dirname + '/server/.env' });
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { ethers } = require('ethers');
 
 (async () => {
-  const provider = new ethers.JsonRpcProvider('https://ethereum-sepolia-rpc.publicnode.com');
+  const provider = new ethers.JsonRpcProvider(process.env.SEPOLIA_RPC_URL || process.env.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
   
-  const txHash = '0x629c27406f838a105fbc541787677e611a6bbe6e0b27c18a16ef7f9832145d1a';
-  const contractAddress = '0x5b0FD227eCC75A8C95FE23887248D6fA107296dA';
+  const txHash = process.env.SEPOLIA_TX_HASH || process.argv[2];
+  const contractAddress = process.env.CONTRACT_ADDRESS || process.argv[3];
+  if (!txHash || !contractAddress) {
+    console.error('Usage: node verify-sepolia.js <txHash> <contractAddress> or set SEPOLIA_TX_HASH and CONTRACT_ADDRESS.');
+    process.exit(1);
+  }
 
   console.log(`\n--- Verification Script Started ---`);
   

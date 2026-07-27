@@ -25,6 +25,9 @@ const output = JSON.parse(solc.compile(JSON.stringify(input)));
 
 if (output.errors) {
   output.errors.forEach((err) => console.error(err.formattedMessage));
+  if (output.errors.some((err) => err.severity === 'error')) {
+    process.exit(1);
+  }
 }
 
 const contract = output.contracts['IRCPTracker.sol']['IRCPTracker'];

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#020804"/>
+  <g font-family="monospace" font-size="34" fill="#22c55e">
+    <text x="42" y="74">01011010</text>
+    <text x="42" y="154" fill-opacity="0.62">10100101</text>
+    <text x="42" y="238" fill-opacity="0.38">00111010</text>
+    <text x="228" y="98" fill-opacity="0.82">11001001</text>
+    <text x="228" y="204" fill-opacity="0.48">01001110</text>
+    <text x="410" y="68" fill-opacity="0.56">00101101</text>
+    <text x="410" y="156">11100110</text>
+    <text x="410" y="262" fill-opacity="0.36">10010111</text>
+    <text x="610" y="112" fill-opacity="0.8">01101001</text>
+    <text x="610" y="226" fill-opacity="0.5">10111000</text>
+    <text x="798" y="82">10011100</text>
+    <text x="798" y="174" fill-opacity="0.58">01110101</text>
+    <text x="798" y="296" fill-opacity="0.32">11010010</text>
+    <text x="1012" y="112" fill-opacity="0.88">01010111</text>
+    <text x="1012" y="232" fill-opacity="0.46">11100011</text>
+    <text x="112" y="414" fill-opacity="0.48">10010110</text>
+    <text x="326" y="468" fill-opacity="0.72">01101100</text>
+    <text x="548" y="410" fill-opacity="0.44">11001010</text>
+    <text x="746" y="502" fill-opacity="0.68">00110101</text>
+    <text x="970" y="450" fill-opacity="0.5">10100110</text>
+  </g>
+  <path d="M0 0 H1280 V720 H0 Z" fill="none" stroke="#22c55e" stroke-opacity="0.22" stroke-width="18"/>
+  <rect y="570" width="1280" height="150" fill="#052e16" fill-opacity="0.44"/>
+</svg>

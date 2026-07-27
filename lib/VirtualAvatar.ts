@@ -5,7 +5,17 @@ const getFaceApi = () => {
     return null;
 };
 
-export type AvatarStyle = 'none' | 'sunglasses' | 'anonymous' | 'fox' | 'spiderman' | 'batman' | 'ironman' | 'pikachu';
+export type AvatarStyle = 'none' | 'cyberpunk' | 'neon' | 'pixel' | 'hologram' | 'sketch' | 'synthwave' | 'anime';
+
+const avatarSources: Record<Exclude<AvatarStyle, 'none'>, string> = {
+    cyberpunk: '/avatars/cyberpunk-visor.svg',
+    neon: '/avatars/neon-mask.svg',
+    pixel: '/avatars/pixel-face.svg',
+    hologram: '/avatars/hologram.svg',
+    sketch: '/avatars/sketch-outline.svg',
+    synthwave: '/avatars/synthwave.svg',
+    anime: '/avatars/anime.svg',
+};
 
 export class VirtualAvatar {
     private canvas: HTMLCanvasElement;
@@ -46,25 +56,11 @@ export class VirtualAvatar {
         }
 
         this.avatarImage = new Image();
-        if (style === 'sunglasses') {
-            this.avatarImage.src = '/avatars/sunglasses.png';
-        } else if (style === 'anonymous') {
-            this.avatarImage.src = '/avatars/anonymous.png';
-        } else if (style === 'fox') {
-            this.avatarImage.src = '/avatars/fox.png';
-        } else if (style === 'spiderman') {
-            this.avatarImage.src = '/avatars/spiderman.png';
-        } else if (style === 'batman') {
-            this.avatarImage.src = '/avatars/batman.png';
-        } else if (style === 'ironman') {
-            this.avatarImage.src = '/avatars/ironman.png';
-        } else if (style === 'pikachu') {
-            this.avatarImage.src = '/avatars/pikachu.png';
-        }
+        this.avatarImage.src = avatarSources[style];
         
-        // Setup fallback for missing images so the app doesn't crash if the user hasn't downloaded them yet
+        // Fall back cleanly if a packaged visual asset is missing.
         this.avatarImage.onerror = () => {
-            console.warn(`Avatar image not found: ${this.avatarImage?.src}. Please place a transparent PNG in the public/avatars folder.`);
+            console.warn(`Avatar image not found: ${this.avatarImage?.src}.`);
             this.currentStyle = 'none';
         };
     }
@@ -113,7 +109,7 @@ export class VirtualAvatar {
                 const landmarks = detection.landmarks;
                 const box = detection.detection.box;
 
-                if (this.currentStyle === 'sunglasses') {
+                if (this.currentStyle === 'cyberpunk') {
                     const leftEye = landmarks.getLeftEye();
                     const rightEye = landmarks.getRightEye();
                     
