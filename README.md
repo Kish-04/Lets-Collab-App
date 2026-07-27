@@ -1,18 +1,18 @@
-# Decentralized Remote Collaborative System with Local AI Proctoring (DRCSLA)
+# Decentralized Remote Collaborative System with Federated AI (DRCSFA)
 
-A secure, decentralized platform for remote collaboration, proctoring, and assistance. Features WebRTC video/screen sharing, Electron-based remote desktop control, local AI-driven anti-cheat monitoring, and an immutable blockchain audit log.
+A secure, decentralized platform for remote collaboration, proctoring, and assistance. Features WebRTC video/screen sharing, Electron-based remote desktop control, local and federated anti-cheat monitoring, audited session chat, and immutable blockchain audit anchoring.
 
 ## Architecture
 - **Frontend:** Next.js (React), TailwindCSS, Radix UI Primitives
 - **Backend:** Node.js, Express, Socket.IO
 - **Desktop Client:** Electron, RobotJS (for native OS input)
 - **Database:** MongoDB (with local JSON fallback)
-- **AI Engine:** TensorFlow.js, MediaPipe Vision (Local Client-side analysis)
+- **AI Engine:** TensorFlow.js, MediaPipe Vision, federated client update aggregation
 - **Blockchain:** Hardhat (Local Ethereum node for anchoring audit logs)
 
 ## Prerequisites
 - Node.js (v22 recommended)
-- Docker & Docker Compose (for MongoDB)
+- Docker & Docker Compose (for the full local stack)
 - Windows OS (for the Electron Host App to execute `robotjs` inputs correctly)
 
 ## Quick Start Setup
@@ -29,15 +29,15 @@ cp .env.example .env
 ```
 Ensure you generate a strong `JWT_SECRET` (at least 32 characters) for production use.
 
-### 3. Start MongoDB
-Use Docker to spin up a local instance:
+### 3. Start the Full Local Stack
+Use Docker Compose to start MongoDB, Hardhat, MinIO, the backend, and the frontend:
 ```bash
 docker-compose up -d
 ```
-*(If you don't use Docker, ensure a local MongoDB instance is running on port 27017, or update `MONGO_URI` in `.env`)*
+The Web UI will be available at [http://localhost:3000](http://localhost:3000).
 
-### 4. Start the Application Servers
-Open two terminal windows:
+### 4. Manual Development Mode
+If you do not use Docker, ensure MongoDB is running or let the backend fall back to mock storage. Then open two terminal windows:
 
 **Terminal 1 (Next.js Frontend):**
 ```bash
@@ -59,9 +59,9 @@ npm run electron:dev
 
 ## Production Deployment
 1. Build the Next.js application: `npm run build`
-2. Start the production frontend: `npm run start`
-3. Ensure the backend (`npm run server`) is managed by PM2 or a similar process manager.
-4. Ensure `NODE_ENV=production` is set in your `.env`.
+2. Deploy the exported static frontend from `out/` or use the existing Vercel configuration.
+3. Deploy the backend separately and set `NEXT_PUBLIC_BACKEND_URL` to that backend URL.
+4. Ensure the backend process has production `JWT_SECRET`, MongoDB, object storage, email, blockchain, and TURN settings.
 5. HTTPS and a proper TURN server are strictly required for production WebRTC.
 
 ## WebRTC Configuration

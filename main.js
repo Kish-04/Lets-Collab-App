@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, desktopCapturer, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -48,6 +48,42 @@ let actualUiPort = process.env.UI_PORT || 41337; // Fixed port to persist localS
 function normalizeUrl(value) {
   const trimmed = String(value || '').trim();
   return trimmed ? trimmed.replace(/\/$/, '') : '';
+}
+
+function getUrlOrigin(value) {
+  try {
+    return new URL(value).origin;
+  } catch (err) {
+    return '';
+  }
+}
+
+function getTrustedRendererOrigins() {
+  const origins = new Set([
+    `http://127.0.0.1:${actualUiPort}`,
+    `http://localhost:${actualUiPort}`,
+  ]);
+  const appUrlOrigin = getUrlOrigin(process.env.APP_URL);
+  if (appUrlOrigin) origins.add(appUrlOrigin);
+  return origins;
+}
+
+function isTrustedRendererUrl(value) {
+  const origin = getUrlOrigin(value);
+  return Boolean(origin && getTrustedRendererOrigins().has(origin));
+}
+
+function isTrustedIpcSender(event, channel) {
+  const senderUrl = event.senderFrame?.url || event.sender?.getURL?.() || '';
+  if (isTrustedRendererUrl(senderUrl)) return true;
+  console.warn(`[SECURITY] Blocked ${channel} IPC from untrusted renderer: ${senderUrl || 'unknown'}`);
+  return false;
+}
+
+function clampNumber(value, min, max, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
 }
 
 function readJsonConfig(filePath) {
@@ -166,7 +202,20 @@ function createWindow() {
     });
   };
 
-  loadWithRetry(process.env.APP_URL || `http://127.0.0.1:${actualUiPort}/app`);
+  const appStartUrl = process.env.APP_URL || `http://127.0.0.1:${actualUiPort}/app`;
+  loadWithRetry(appStartUrl);
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isTrustedRendererUrl(url)) return { action: 'allow' };
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isTrustedRendererUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+  });
 
   // Forward renderer console logs to main process terminal and a file
   win.webContents.on('console-message', (event, level, message, line, sourceId) => {
@@ -177,7 +226,7 @@ function createWindow() {
   // --- PERMISSION HANDLERS (Required for WebRTC Camera/Mic/Screen in Electron) ---
   win.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedPermissions = ['media', 'display-capture'];
-    if (allowedPermissions.includes(permission)) {
+    if (allowedPermissions.includes(permission) && isTrustedRendererUrl(webContents.getURL())) {
       callback(true);
     } else {
       console.log(`Denied permission request for: ${permission}`);
@@ -187,7 +236,7 @@ function createWindow() {
 
   win.webContents.session.setPermissionCheckHandler((webContents, permission) => {
     const allowedPermissions = ['media', 'display-capture'];
-    if (allowedPermissions.includes(permission)) {
+    if (allowedPermissions.includes(permission) && isTrustedRendererUrl(webContents.getURL())) {
       return true;
     }
     return false;
@@ -195,6 +244,14 @@ function createWindow() {
 
   // Handle getDisplayMedia requests for screen sharing
   win.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+    const requestUrl = request?.frame?.url || request?.webContents?.getURL?.() || '';
+    const requestOrigin = request?.securityOrigin || getUrlOrigin(requestUrl);
+    if (!requestOrigin || !getTrustedRendererOrigins().has(requestOrigin)) {
+      console.warn(`[SECURITY] Blocked display capture from untrusted renderer: ${requestOrigin || requestUrl || 'unknown'}`);
+      callback();
+      return;
+    }
+
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       // Automatically share the primary screen (first source)
       if (sources && sources.length > 0) {
@@ -225,12 +282,9 @@ function createWindow() {
     if (currentText !== previousClipboardText && currentText.trim().length > 0) {
       previousClipboardText = currentText;
       
-      // Optionally restrict length of logged text to avoid huge payloads
-      const snippet = currentText.length > 50 ? currentText.substring(0, 50) + '...' : currentText;
-      
       win.webContents.send('system-event', {
         type: 'CLIPBOARD_CHANGE',
-        message: `Clipboard activity detected: "${snippet}"`
+        message: 'Clipboard activity detected'
       });
       if (clipboardGuardEnabled) {
         clipboard.clear();
@@ -280,43 +334,46 @@ app.on('window-all-closed', () => {
 
 // --- IPC HANDLERS FOR REMOTE INPUT ---
 ipcMain.on('execute-input', (event, payload) => {
+  if (!isTrustedIpcSender(event, 'execute-input')) return;
+  if (!payload || typeof payload !== 'object') return;
+
   if (payload.type === 'gamepad-state') {
     if (virtualGamepad) {
       try {
         // payload expects axes and buttons arrays
         // Axes: LeftX, LeftY, RightX, RightY (range -1 to 1)
         if (payload.axes && payload.axes.length >= 4) {
-          virtualGamepad.axis.leftX.setValue(payload.axes[0]);
-          virtualGamepad.axis.leftY.setValue(-payload.axes[1]); // Invert Y
-          virtualGamepad.axis.rightX.setValue(payload.axes[2]);
-          virtualGamepad.axis.rightY.setValue(-payload.axes[3]);
+          virtualGamepad.axis.leftX.setValue(clampNumber(payload.axes[0], -1, 1));
+          virtualGamepad.axis.leftY.setValue(-clampNumber(payload.axes[1], -1, 1)); // Invert Y
+          virtualGamepad.axis.rightX.setValue(clampNumber(payload.axes[2], -1, 1));
+          virtualGamepad.axis.rightY.setValue(-clampNumber(payload.axes[3], -1, 1));
         }
         
         // Buttons (0-16 for X360 standard)
         if (payload.buttons && payload.buttons.length >= 17) {
-          virtualGamepad.button.A.setValue(payload.buttons[0].pressed);
-          virtualGamepad.button.B.setValue(payload.buttons[1].pressed);
-          virtualGamepad.button.X.setValue(payload.buttons[2].pressed);
-          virtualGamepad.button.Y.setValue(payload.buttons[3].pressed);
+          virtualGamepad.button.A.setValue(Boolean(payload.buttons[0].pressed));
+          virtualGamepad.button.B.setValue(Boolean(payload.buttons[1].pressed));
+          virtualGamepad.button.X.setValue(Boolean(payload.buttons[2].pressed));
+          virtualGamepad.button.Y.setValue(Boolean(payload.buttons[3].pressed));
           
-          virtualGamepad.button.LEFT_SHOULDER.setValue(payload.buttons[4].pressed);
-          virtualGamepad.button.RIGHT_SHOULDER.setValue(payload.buttons[5].pressed);
+          virtualGamepad.button.LEFT_SHOULDER.setValue(Boolean(payload.buttons[4].pressed));
+          virtualGamepad.button.RIGHT_SHOULDER.setValue(Boolean(payload.buttons[5].pressed));
           
-          virtualGamepad.axis.leftTrigger.setValue(payload.buttons[6].value); // LT analog
-          virtualGamepad.axis.rightTrigger.setValue(payload.buttons[7].value); // RT analog
+          virtualGamepad.axis.leftTrigger.setValue(clampNumber(payload.buttons[6].value, 0, 1)); // LT analog
+          virtualGamepad.axis.rightTrigger.setValue(clampNumber(payload.buttons[7].value, 0, 1)); // RT analog
           
-          virtualGamepad.button.BACK.setValue(payload.buttons[8].pressed);
-          virtualGamepad.button.START.setValue(payload.buttons[9].pressed);
+          virtualGamepad.button.BACK.setValue(Boolean(payload.buttons[8].pressed));
+          virtualGamepad.button.START.setValue(Boolean(payload.buttons[9].pressed));
           
-          virtualGamepad.button.LEFT_THUMB.setValue(payload.buttons[10].pressed);
-          virtualGamepad.button.RIGHT_THUMB.setValue(payload.buttons[11].pressed);
+          virtualGamepad.button.LEFT_THUMB.setValue(Boolean(payload.buttons[10].pressed));
+          virtualGamepad.button.RIGHT_THUMB.setValue(Boolean(payload.buttons[11].pressed));
           
-          virtualGamepad.button.D_UP.setValue(payload.buttons[12].pressed);
-          virtualGamepad.button.D_DOWN.setValue(payload.buttons[13].pressed);
-          virtualGamepad.button.D_LEFT.setValue(payload.buttons[14].pressed);
-          virtualGamepad.button.D_RIGHT.setValue(payload.buttons[15].pressed);
+          virtualGamepad.button.D_UP.setValue(Boolean(payload.buttons[12].pressed));
+          virtualGamepad.button.D_DOWN.setValue(Boolean(payload.buttons[13].pressed));
+          virtualGamepad.button.D_LEFT.setValue(Boolean(payload.buttons[14].pressed));
+          virtualGamepad.button.D_RIGHT.setValue(Boolean(payload.buttons[15].pressed));
           
-          virtualGamepad.button.GUIDE.setValue(payload.buttons[16].pressed);
+          virtualGamepad.button.GUIDE.setValue(Boolean(payload.buttons[16].pressed));
         }
       } catch (err) {
         console.error('Error updating virtual gamepad:', err.message);
@@ -338,8 +395,8 @@ ipcMain.on('execute-input', (event, payload) => {
     
     // We expect payload.x and payload.y to be percentages (0.0 to 1.0)
     // based on the client's position over the video feed.
-    const realX = Math.round(payload.x * screenSize.width);
-    const realY = Math.round(payload.y * screenSize.height);
+    const realX = Math.round(clampNumber(payload.x, 0, 1) * screenSize.width);
+    const realY = Math.round(clampNumber(payload.y, 0, 1) * screenSize.height);
 
     switch (payload.type) {
       case 'mousemove':
@@ -385,6 +442,7 @@ ipcMain.on('execute-input', (event, payload) => {
 });
 
 ipcMain.on('set-clipboard-guard', (event, locked) => {
+  if (!isTrustedIpcSender(event, 'set-clipboard-guard')) return;
   clipboardGuardEnabled = Boolean(locked);
   if (clipboardGuardEnabled) clipboard.clear();
 });
