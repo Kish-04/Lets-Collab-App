@@ -182,3 +182,11 @@
 - `npm --prefix server run test:contracts` - PASS: Hardhat `IRCPTracker` event logging test passed.
 - `node scratch/live-smoke.js --self-host` - PASS: registered host/controller, read OTPs from terminal log, verified JWTs, created supervised room, approved controller with mouse permission, relayed mouse input, blocked keyboard input server-side with `Your current permission is mouse.`, delivered chat, raised risk score to 25, and aggregated a federated round from 2 contributors with weights approximately `[0.3, 0.6]`.
 - Dependency audit note: `npm install` reported existing vulnerability counts in root/backend dependency trees. They were not auto-fixed because `npm audit fix --force` can introduce breaking upgrades and needs a separate dependency-upgrade review.
+
+## Deployment Checks
+
+- Render backend `https://let-s-collab-tjwc.onrender.com/health` - PASS: HTTP 200 with `{"ok":true,"dbConnected":true,"blockchainActive":false}` on 2026-07-27.
+- Render backend root `https://let-s-collab-tjwc.onrender.com` - FLAGGED: HTTP 404. The API health route is live, but there is no public root route on the backend service.
+- Vercel frontend `https://letscollab-pearl.vercel.app/` - PASS: HTTP 200 HTML on 2026-07-27.
+- Vercel frontend `https://letscollab-pearl.vercel.app/session?create=true&mode=collaboration` - PASS: HTTP 200 HTML on 2026-07-27.
+- Manual dashboard note: the pushed branch `codex/audit-real-feature-fixes` is on GitHub, but Render/Vercel production will only reflect these commits after the branch is merged or the dashboards are configured to deploy it.
