@@ -240,35 +240,3 @@ export function PermissionRequestModal({
     </div>
   )
 }
-
-// Demo component to show the modal
-export function PermissionModalDemo() {
-  const [isOpen, setIsOpen] = useState(true)
-  
-  return (
-    <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center">
-      <GlowButton onClick={() => setIsOpen(true)}>
-        Show Permission Request
-      </GlowButton>
-      
-      <PermissionRequestModal
-        isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
-        onAllow={(permission, options) => {
-          console.log("Allowed:", permission, options)
-          setIsOpen(false)
-        }}
-        onDeny={() => {
-          console.log("Denied")
-          setIsOpen(false)
-        }}
-        requester={{
-          name: "Kishan Karthik S",
-          initials: "KK",
-          device: "MacBook Pro",
-          ip: "192.168.1.42"
-        }}
-      />
-    </div>
-  )
-}

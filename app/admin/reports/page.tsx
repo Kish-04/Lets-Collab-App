@@ -46,10 +46,19 @@ function downloadCSV(rows: Record<string, any>[], filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function escapeHtml(value: string) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function downloadPDF(title: string, headers: string[], rows: string[][], filename: string) {
   // Build a simple HTML table and print it as PDF via browser
   const html = `
-    <html><head><title>${title}</title>
+    <html><head><title>${escapeHtml(title)}</title>
     <style>
       body { font-family: monospace; padding: 24px; color: #000; }
       h1 { font-size: 18px; margin-bottom: 4px; }
@@ -59,11 +68,11 @@ function downloadPDF(title: string, headers: string[], rows: string[][], filenam
       td { padding: 5px 8px; border-bottom: 1px solid #eee; }
       tr:nth-child(even) td { background: #f9f9f9; }
     </style></head><body>
-    <h1>${title}</h1>
+    <h1>${escapeHtml(title)}</h1>
     <p>Generated: ${new Date().toLocaleString()}</p>
     <table>
-      <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
+      <thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
     </table>
     </body></html>`
   const win = window.open('', '_blank')

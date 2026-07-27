@@ -3,7 +3,6 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, Key, ShieldCheck, User } from "lucide-react"
-import emailjs from "@emailjs/browser"
 import { AppLogo, GlowButton } from "@/components/ircp/shared"
 import { getBackendUrl } from "@/lib/utils"
 
@@ -15,18 +14,6 @@ export default function AdminLoginPage() {
   const [errorMsg, setErrorMsg] = useState("")
   const [otpRequired, setOtpRequired] = useState(false)
   const [otp, setOtp] = useState("")
-
-  const sendOTPEmailJS = async (toEmail: string, otpCode: string, toName: string = 'Administrator') => {
-    try {
-      const templateParams = { to_name: toName, to_email: toEmail, passcode: otpCode }
-      const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || 'service_vlnxzdl'
-      const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || 'template_ogznez9'
-      const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || 'tQS6xbi2oi4XC64JV'
-      await emailjs.send(serviceId, templateId, templateParams, publicKey)
-    } catch (err: any) {
-      console.error('[EmailJS ERROR] Failed to send OTP:', err)
-    }
-  }
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -44,9 +31,6 @@ export default function AdminLoginPage() {
       if (response.ok) {
         if (data.otpRequired) {
           setOtpRequired(true)
-          if (data.otp) {
-            await sendOTPEmailJS(data.email, data.otp, data.user?.name || data.name || "Admin")
-          }
           setErrorMsg("OTP sent to your email. Please enter it below.")
           setLoading(false)
           return

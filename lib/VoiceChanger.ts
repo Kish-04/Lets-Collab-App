@@ -1,4 +1,4 @@
-export type VoiceFilter = 'none' | 'robot' | 'alien' | 'radio' | 'deep' | 'chipmunk' | 'echo' | 'male' | 'female';
+export type VoiceFilter = 'none' | 'robot' | 'alien' | 'radio' | 'megaphone' | 'deep' | 'chipmunk' | 'echo' | 'male' | 'female';
 
 export class VoiceChanger {
     private context: AudioContext;
@@ -12,6 +12,7 @@ export class VoiceChanger {
     private outputGain: GainNode;
     private delayNode: DelayNode;
     private feedbackGain: GainNode;
+    private distortionNode: WaveShaperNode;
 
     constructor() {
         this.context = new window.AudioContext();
@@ -24,6 +25,7 @@ export class VoiceChanger {
         this.outputGain = this.context.createGain();
         this.delayNode = this.context.createDelay();
         this.feedbackGain = this.context.createGain();
+        this.distortionNode = this.context.createWaveShaper();
 
         // Start oscillator for ring mod (AM Synthesis)
         this.ringModulator.start();
@@ -50,6 +52,7 @@ export class VoiceChanger {
         this.outputGain.disconnect();
         this.delayNode.disconnect();
         this.feedbackGain.disconnect();
+        this.distortionNode.disconnect();
         this.source.disconnect();
 
         if (filterType === 'none') {
@@ -84,6 +87,18 @@ export class VoiceChanger {
 
             this.source.connect(this.filter);
             this.filter.connect(this.destination);
+        } else if (filterType === 'megaphone') {
+            this.filter.type = 'bandpass';
+            this.filter.frequency.value = 1800;
+            this.filter.Q.value = 1.6;
+            this.distortionNode.curve = this.createDistortionCurve(180);
+            this.distortionNode.oversample = '2x';
+            this.outputGain.gain.value = 1.35;
+
+            this.source.connect(this.filter);
+            this.filter.connect(this.distortionNode);
+            this.distortionNode.connect(this.outputGain);
+            this.outputGain.connect(this.destination);
         } else if (filterType === 'deep') {
             // Simple lowpass + slight AM synthesis
             this.filter.type = 'lowpass';
@@ -156,6 +171,19 @@ export class VoiceChanger {
         stream.getVideoTracks().forEach(track => processedStream.addTrack(track));
 
         return processedStream;
+    }
+
+    private createDistortionCurve(amount: number) {
+        const samples = 44100;
+        const curve = new Float32Array(samples);
+        const deg = Math.PI / 180;
+
+        for (let i = 0; i < samples; i += 1) {
+            const x = (i * 2) / samples - 1;
+            curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+        }
+
+        return curve;
     }
 
     public stop() {

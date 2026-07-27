@@ -389,7 +389,7 @@ export default function LandingPage() {
                     // Elite Collaboration Features
                     { feature: "Zero-Server P2P Unlimited File Sharing", collab: true, competitor: false },
                     { feature: "Live Interactive Screen Annotation (Whiteboarding)", collab: true, competitor: false },
-                    { feature: "End-to-End Encrypted P2P Chat Channels", collab: true, competitor: false },
+                    { feature: "Server-audited in-session chat", collab: true, competitor: true },
                     { feature: "Federated AI Weight Aggregation (TensorFlow.js)", collab: true, competitor: false },
                     { feature: "AI Virtual Avatars & Pitch Voice Changers", collab: true, competitor: false },
                     { feature: "Multi-stream Canvas Composited Recording", collab: true, competitor: false }

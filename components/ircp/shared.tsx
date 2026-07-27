@@ -4,6 +4,28 @@ import { cn } from "@/lib/utils"
 import { Copy, ExternalLink } from "lucide-react"
 import { useState, useEffect } from "react"
 
+async function copyToClipboard(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+      return true
+    }
+  } catch {
+    // Fall through to the legacy copy path.
+  }
+
+  const textarea = document.createElement("textarea")
+  textarea.value = value
+  textarea.setAttribute("readonly", "")
+  textarea.style.position = "fixed"
+  textarea.style.opacity = "0"
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand("copy")
+  document.body.removeChild(textarea)
+  return copied
+}
+
 // Status Badge Component
 type StatusType = "live" | "connecting" | "idle" | "high-risk" | "synced" | "warning"
 
@@ -54,9 +76,10 @@ export function RoomCodeDisplay({
   const [copied, setCopied] = useState(false)
   
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await copyToClipboard(code)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
   
   const chars = code.split("")
@@ -575,9 +598,10 @@ export function TxHash({
   const truncated = `${hash.slice(0, 6)}...${hash.slice(-4)}`
   
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(hash)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await copyToClipboard(hash)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
   
   return (

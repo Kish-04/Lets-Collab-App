@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getBackendUrl } from '@/lib/utils';
+import { getAuthHeaders, getBackendUrl } from '@/lib/utils';
 
 export default function SessionHistoryWrapper() {
   return (
@@ -26,7 +26,10 @@ function SessionHistoryViewer() {
     }
     const fetchHistory = async () => {
       try {
-        const res = await fetch(`${getBackendUrl()}/api/sessions/${encodeURIComponent(sessionId)}/history`);
+        const res = await fetch(`${getBackendUrl()}/api/sessions/${encodeURIComponent(sessionId)}/history`, {
+          credentials: 'include',
+          headers: getAuthHeaders(),
+        });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           setError(data.message || 'Failed to fetch history');

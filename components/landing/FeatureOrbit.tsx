@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useRef, useState } from 'react'
-import { motion, useScroll, useTransform, useSpring, AnimatePresence } from 'framer-motion'
+import { motion, useScroll, useTransform, useSpring, useMotionValueEvent, AnimatePresence } from 'framer-motion'
 import { Globe, Monitor, Brain, Users, Wand2, Shield, Network, MousePointer2, Gamepad2, FileDown, Eye, Maximize, Activity, Lock, Presentation, Smile, Settings, Search } from 'lucide-react'
 
 const features = [
@@ -34,7 +34,7 @@ const features = [
     color: "from-emerald-500 to-teal-400",
     glow: "rgba(45, 212, 191, 0.5)",
     points: [
-      { t: "AI Supervisor", d: "Runs in the background of supervised sessions to monitor host behavior." },
+      { t: "AI Supervisor", d: "Runs in supervised sessions to monitor the active participant camera and interaction signals." },
       { t: "Biometric Tracking", d: "Uses facial landmark detection to track gaze deviation (eye movement away from the screen) and stress/emotion states." },
       { t: "Tab/Window Monitoring", d: "Detects if the user switches tabs or minimizes the application." },
       { t: "Federated Local Training (FL)", d: "Uses TensorFlow.js to train a local neural network on user heuristic data. It extracts the model weights and securely pushes them to the aggregator node to protect data privacy." },
@@ -50,7 +50,7 @@ const features = [
     points: [
       { t: "Zero-Server P2P File Sharing", d: "A drag-and-drop zone that chunks files (of any size) and sends them directly to the other user over the P2P data channel." },
       { t: "Live Screen Annotation", d: "An invisible interactive layer over the screen share allows the controller to draw circles, arrows, or notes directly on the host's screen." },
-      { t: "Encrypted P2P Chat", d: "A slide-out chat window where messages are end-to-end encrypted and bypass the server completely." },
+      { t: "Audited Session Chat", d: "A slide-out chat window broadcasts room messages through the backend and records chat activity in the room audit trail." },
       { t: "Advanced Multi-stream Recording", d: "HTML5 Canvas compositing merges the main screen share, local webcam PIP, remote webcam PIP, and both microphones into one WebM video." }
     ]
   },
@@ -61,8 +61,8 @@ const features = [
     color: "from-[var(--accent)] to-fuchsia-400",
     glow: "rgba(217, 70, 239, 0.5)",
     points: [
-      { t: "Voice Changers (Web Audio API)", d: "Real-time audio pitch shifting and manipulation. Users can sound like a Robot, an Alien, Darth Vader, a Chipmunk, or swap genders." },
-      { t: "Virtual Avatars (Face-api.js)", d: "Facial mesh tracking that maps 2D assets onto the user's face in real-time. (e.g., Spiderman, Batman, Pikachu, Hacker Mask)." },
+      { t: "Voice Changers (Web Audio API)", d: "Real-time audio filtering and manipulation for robot, alien, radio, megaphone, deep, chipmunk, echo, male, and female styles." },
+      { t: "Virtual Avatars (Face-api.js)", d: "Facial landmark tracking maps packaged 2D overlays such as cyberpunk, neon, pixel, hologram, sketch, synthwave, and anime styles onto the user's face in real time." },
       { t: "Virtual Backgrounds (MediaPipe)", d: "AI body-segmentation that removes the user's physical background and replaces it with heavy blur or customized images." }
     ]
   },
@@ -95,11 +95,9 @@ export function FeatureOrbit() {
   const [activeIndex, setActiveIndex] = useState(0)
 
   // Update active index based on scroll
-  currentIndexProgress.on("change", (v) => {
+  useMotionValueEvent(currentIndexProgress, "change", (v) => {
     const idx = Math.round(v)
-    if (idx !== activeIndex && idx >= 0 && idx < features.length) {
-      setActiveIndex(idx)
-    }
+    setActiveIndex((current) => (idx !== current && idx >= 0 && idx < features.length ? idx : current))
   })
 
   const activeFeature = features[activeIndex]

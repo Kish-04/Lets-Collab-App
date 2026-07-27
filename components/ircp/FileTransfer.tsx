@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { File, UploadCloud, Download, CheckCircle, AlertCircle } from 'lucide-react'
+import { File, UploadCloud } from 'lucide-react'
 
 export function FileTransfer({ peerId }: { peerId?: string }) {
     const [status, setStatus] = useState<string>('Idle')
@@ -13,25 +13,32 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
     const currentFileNameRef = useRef<string>('')
     const currentFileSizeRef = useRef<number>(0)
     const receivedSizeRef = useRef<number>(0)
+    const currentSenderRef = useRef<string>('')
 
     useEffect(() => {
         const handleMessage = (data: any, senderId: string) => {
             if (data instanceof ArrayBuffer) {
+                if (!currentSenderRef.current || currentSenderRef.current !== senderId || currentFileSizeRef.current <= 0) return
                 fileChunksRef.current.push(data)
                 receivedSizeRef.current += data.byteLength
-                setProgress(Math.round((receivedSizeRef.current / currentFileSizeRef.current) * 100))
+                setProgress(Math.min(100, Math.round((receivedSizeRef.current / currentFileSizeRef.current) * 100)))
                 return
             }
             
             if (data.type === 'file-start') {
-                setStatus(`Receiving ${data.name}...`)
+                const safeName = typeof data.name === 'string' && data.name.trim() ? data.name.trim().slice(0, 180) : 'shared-file'
+                const safeSize = Number(data.size)
+                if (!Number.isFinite(safeSize) || safeSize <= 0) return
+                setStatus(`Receiving ${safeName}...`)
                 setProgress(0)
-                setIncomingFile({ name: data.name, size: data.size })
-                currentFileNameRef.current = data.name
-                currentFileSizeRef.current = data.size
+                setIncomingFile({ name: safeName, size: safeSize })
+                currentFileNameRef.current = safeName
+                currentFileSizeRef.current = safeSize
                 receivedSizeRef.current = 0
                 fileChunksRef.current = []
+                currentSenderRef.current = senderId
             } else if (data.type === 'file-end') {
+                if (!currentSenderRef.current || currentSenderRef.current !== senderId) return
                 setStatus('Download complete!')
                 const blob = new Blob(fileChunksRef.current)
                 const url = URL.createObjectURL(blob)
@@ -44,6 +51,7 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
                     setStatus('Idle')
                     setIncomingFile(null)
                     setProgress(0)
+                    currentSenderRef.current = ''
                 }, 3000)
             }
         }

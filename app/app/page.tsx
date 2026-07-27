@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation"
 import { motion, AnimatePresence, useSpring } from "framer-motion"
 import { Monitor, Gamepad2, LayoutDashboard, ArrowRight, User, Lock, Mail, ShieldAlert, Activity, Sparkles, Network, Download } from "lucide-react"
 import { io, Socket } from "socket.io-client"
-import emailjs from "@emailjs/browser"
 import { AppLogo, StatusBadge, GlowButton, PermissionTag, LiveDot } from "@/components/ircp/shared"
 import { cn, getBackendUrl } from "@/lib/utils"
 
@@ -205,18 +204,6 @@ export default function HomePage() {
     if (roomId.trim()) router.push(`/session?room=${roomId.toUpperCase()}`)
   }
 
-  const sendOTPEmailJS = async (toEmail: string, otp: string, toName: string = 'User') => {
-    try {
-      const templateParams = { to_name: toName, to_email: toEmail, passcode: otp }
-      const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID || 'service_vlnxzdl'
-      const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID || 'template_ogznez9'
-      const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY || 'tQS6xbi2oi4XC64JV'
-      await emailjs.send(serviceId, templateId, templateParams, publicKey)
-    } catch (err: any) {
-      console.error('[EmailJS ERROR] Failed to send OTP:', err)
-    }
-  }
-
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -230,7 +217,6 @@ export default function HomePage() {
         })
         const data = await res.json()
         if (res.ok) {
-          if (data.otp) await sendOTPEmailJS(formData.email, data.otp, formData.name)
           setAuthMode("verify")
         } else setErrorMsg(data.message || "Registration failed")
       }
@@ -262,7 +248,6 @@ export default function HomePage() {
             setIsAuth(true)
             setAuthMode(null)
           } else {
-            if (data.otp) await sendOTPEmailJS(formData.email, data.otp, data.name || 'User')
             setAuthMode("verify")
           }
         } else setErrorMsg(data.message || "Login failed")
@@ -274,7 +259,6 @@ export default function HomePage() {
         })
         const data = await res.json()
         if (res.ok) {
-          if (data.otp) await sendOTPEmailJS(formData.email, data.otp, 'User')
           setAuthMode("reset")
         } else setErrorMsg(data.message || "Failed to send reset link")
       }

@@ -202,7 +202,7 @@ export class AntiCheatEngine {
           }
 
           let newHeadMargin = DEFAULT_CONFIG.headPoseMargin;
-          if (poseVariances.length > 50) { // need at least half the samples to be valid
+          if (poseVariances.length >= Math.ceil(TOTAL_SAMPLES / 2)) { // need at least half the samples to be valid
             const sortedVariances = [...poseVariances].sort((a, b) => a - b);
             const p95 = sortedVariances[Math.floor(sortedVariances.length * 0.95)];
             newHeadMargin = Math.max(0.3, p95 + 0.15); // pad the natural variance by 0.15

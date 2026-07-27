@@ -10,7 +10,7 @@ declare global {
 }
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import type { MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from "react"
+import type { FormEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense } from 'react'
 import { io, Socket } from "socket.io-client"
@@ -31,8 +31,9 @@ import { dataChannelManager } from "@/lib/DataChannelManager"
 import { FileTransfer } from "@/components/ircp/FileTransfer"
 import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
 import { StandaloneCanvas } from "@/components/ircp/StandaloneCanvas"
+import { AiSupervisor } from "@/components/ircp/supervisor/AiSupervisor"
 import { SessionRecorder } from "@/lib/SessionRecorder"
-import { FederatedLearner } from "@/lib/FederatedLearner"
+import { FederatedFeatures, FederatedLearner } from "@/lib/FederatedLearner"
 
 import dynamic from 'next/dynamic'
 
@@ -104,6 +105,10 @@ const permissionLevels = [
     { id: "full" as const, label: "Full Control", icon: Zap },
 ]
 
+const quickChatEmojis = ['👍', '🙏', '✅', '🔥', '😂', '🎉']
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
+
 function formatDuration(s: number) {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
@@ -155,37 +160,6 @@ function SessionContent() {
     const startedAtRef = useRef(0)
 
     // ── Malpractice Detection (OS-Level Focus Loss) ───────────────────────────
-    useEffect(() => {
-        if (sessionModeRef.current !== 'supervised') return;
-        
-        const handleFocusLoss = () => {
-            const warningMsg = `Malpractice Detected: Window lost focus or tab switched.`;
-            addLog('permission', warningMsg);
-            if (Notification.permission === 'granted') {
-                new Notification('Supervisor Warning', { body: warningMsg });
-            }
-            // Send malpractice warning to the server so the host/admin is notified
-            if (socketRef.current) {
-                socketRef.current.emit('evidence-event', {
-                    roomId: roomCodeRef.current,
-                    type: 'system',
-                    message: `MALPRACTICE WARNING: ${currentRoleRef.current} switched apps/tabs!`,
-                    timestamp: new Date().toISOString()
-                });
-            }
-        };
-
-        window.addEventListener('blur', handleFocusLoss);
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) handleFocusLoss();
-        });
-
-        return () => {
-            window.removeEventListener('blur', handleFocusLoss);
-            document.removeEventListener('visibilitychange', handleFocusLoss);
-        }
-    }, []);
-
     // ── Session state ───────────────────────────────────────────────────────────
     const [role, setRole] = useState<Role>(initialRoom || joinDirect ? "controller" : "host")
     const [sessionMode, setSessionMode] = useState<SessionMode>(requestedMode)
@@ -230,6 +204,7 @@ function SessionContent() {
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
     const [chatInput, setChatInput] = useState("")
     const [chatOpen, setChatOpen] = useState(false)
+    const [remoteCameraStreams, setRemoteCameraStreams] = useState<Record<string, MediaStream>>({})
     const [evidence, setEvidence] = useState<EvidenceItem[]>([])
     const [packetLoss, setPacketLoss] = useState<number | null>(null)
     const [streamFps, setStreamFps] = useState<number | null>(null)
@@ -258,6 +233,7 @@ function SessionContent() {
     const antiCheatCamRef = useRef<HTMLVideoElement>(null)  // dedicated anti-cheat camera
     const antiCheatCanvasRef = useRef<HTMLCanvasElement>(null) // dedicated anti-cheat canvas overlay
     const remoteCamRef = useRef<HTMLVideoElement>(null)  // peer camera
+    const remoteCamRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
     const socketRef = useRef<Socket | null>(null)
     const pcRef = useRef<RTCPeerConnection | null>(null)
     const hostPcRefs = useRef<Map<string, RTCPeerConnection>>(new Map())
@@ -270,6 +246,7 @@ function SessionContent() {
     const engineRef = useRef<AntiCheatEngine | null>(null)
     const federatedLearnerRef = useRef<FederatedLearner | null>(null)
     const hiddenBgVideoRef = useRef<HTMLVideoElement | null>(null)
+    const chatScrollRef = useRef<HTMLDivElement>(null)
 
     // ── Apply Voice and Avatar Effects ────────────────────────────────────────
     useEffect(() => {
@@ -369,6 +346,11 @@ function SessionContent() {
     const roomCodeRef = useRef<string | null>(null)
     const participantsRef = useRef<Participant[]>([])
     const clipboardAllowedRef = useRef(false)
+    const remoteMediaStreamIdsRef = useRef<{ screen?: string | null; camera?: string | null }>({})
+    const latencyRef = useRef(0)
+    const packetLossRef = useRef<number | null>(null)
+    const streamFpsRef = useRef<number | null>(null)
+    const riskScoreRef = useRef(0)
     const observerPcRefs = useRef<Map<string, RTCPeerConnection>>(new Map())
     const observerIdsRef = useRef<Set<string>>(new Set())
     const hostInputChannelRefs = useRef<Map<string, RTCDataChannel>>(new Map())
@@ -379,6 +361,35 @@ function SessionContent() {
     useEffect(() => { roomCodeRef.current = roomCode }, [roomCode])
     useEffect(() => { participantsRef.current = participants }, [participants])
     useEffect(() => { clipboardAllowedRef.current = clipboardAllowed }, [clipboardAllowed])
+    useEffect(() => { latencyRef.current = latency }, [latency])
+    useEffect(() => { packetLossRef.current = packetLoss }, [packetLoss])
+    useEffect(() => { streamFpsRef.current = streamFps }, [streamFps])
+    useEffect(() => { riskScoreRef.current = riskScore }, [riskScore])
+
+    useEffect(() => {
+        const activeIds = new Set(participants.map(participant => participant.id))
+        setRemoteCameraStreams(previous => {
+            const next = Object.fromEntries(Object.entries(previous).filter(([id]) => activeIds.has(id)))
+            return Object.keys(next).length === Object.keys(previous).length ? previous : next
+        })
+        Array.from(remoteCamRefs.current.keys()).forEach(id => {
+            if (!activeIds.has(id)) remoteCamRefs.current.delete(id)
+        })
+    }, [participants])
+
+    useEffect(() => {
+        Object.entries(remoteCameraStreams).forEach(([controllerId, stream]) => {
+            const video = remoteCamRefs.current.get(controllerId)
+            if (!video) return
+            if (video.srcObject !== stream) video.srcObject = stream
+            video.play().catch(() => { })
+        })
+    }, [remoteCameraStreams])
+
+    useEffect(() => {
+        if (!chatOpen) return
+        chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight })
+    }, [chatMessages, chatOpen])
 
     useEffect(() => {
         if (role !== 'host') return
@@ -418,6 +429,59 @@ function SessionContent() {
     const addLog = useCallback((type: LogEntry['type'], message: string) => {
         setSessionLogs(prev => [...prev, { time: new Date().toLocaleTimeString('en-US', { hour12: false }), type, message }].slice(-100))
     }, [])
+
+    const ensureFederatedLearner = useCallback(() => {
+        if (!federatedLearnerRef.current) federatedLearnerRef.current = new FederatedLearner()
+        return federatedLearnerRef.current
+    }, [])
+
+    const recordFederatedSample = useCallback((features: FederatedFeatures, label: number) => {
+        ensureFederatedLearner().addSample(features.map(clamp01) as FederatedFeatures, label)
+    }, [ensureFederatedLearner])
+
+    const federatedFeaturesForEvent = useCallback((eventType: string): FederatedFeatures => {
+        if (['NO_FACE', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'PHONE_DETECTED'].includes(eventType)) return [1, 0, 0.15]
+        if (['VOICE_DETECTED', 'TALKING_DETECTED', 'STRESS_DETECTED', 'EMOTION_ANOMALY'].includes(eventType)) return [0.35, 0, 1]
+        if (eventType === 'TAB_SWITCHED') return [0.2, 1, 0.1]
+        return [0.2, 0.2, 0.2]
+    }, [])
+
+    const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6]) => {
+        setMalpracticeWarnings(prev => [...prev, reason].slice(-3))
+        window.setTimeout(() => {
+            setMalpracticeWarnings(prev => prev.filter(warning => warning !== reason))
+        }, 5000)
+        socketRef.current?.emit('anticheat-alert', {
+            roomId: roomCodeRef.current,
+            controllerId: socketRef.current?.id,
+            type: 'anticheat_violation',
+            reason,
+            penalty,
+        })
+        recordFederatedSample(features, 1)
+        addLog('anticheat', `Malpractice detected: ${reason}`)
+    }, [addLog, recordFederatedSample])
+
+    const getLocalMediaStreamIds = useCallback(() => ({
+        screen: screenStreamRef.current?.id || null,
+        camera: localStreamRef.current?.id || null,
+    }), [])
+
+    const assignVideoStream = useCallback((video: HTMLVideoElement | null, stream: MediaStream) => {
+        if (!video) return
+        if (video.srcObject !== stream) video.srcObject = stream
+        video.play().catch(() => { })
+    }, [])
+
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || connectionState !== 'connected') return
+        const timer = window.setInterval(() => {
+            const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
+            const frameDrop = streamFpsRef.current === null ? 0 : clamp01((24 - streamFpsRef.current) / 24)
+            recordFederatedSample([0, Math.max(networkInstability, frameDrop), 0], 0)
+        }, 30000)
+        return () => window.clearInterval(timer)
+    }, [sessionMode, connectionState, recordFederatedSample])
 
     const toggleLocalMic = async () => {
         if (localStreamRef.current) {
@@ -505,6 +569,7 @@ function SessionContent() {
         })
         engine.onEvent((ev: AntiCheatEvent) => {
             addLog('anticheat', `${ev.type}: ${ev.message} (+${ev.scorePenalty})`)
+            recordFederatedSample(federatedFeaturesForEvent(ev.type), ev.scorePenalty > 0 ? 1 : 0)
             setRiskScore(s => Math.min(100, s + ev.scorePenalty))
             setGaugeGlow(true)
             setTimeout(() => setGaugeGlow(false), 800)
@@ -553,7 +618,7 @@ function SessionContent() {
         runCalibration();
         
         return () => engine.stop()
-    }, [sessionMode, role, addLog])
+    }, [sessionMode, role, addLog, federatedFeaturesForEvent, recordFederatedSample])
 
     useEffect(() => {
         if (engineRef.current) engineRef.current.setConfig(aiConfig)
@@ -649,6 +714,7 @@ function SessionContent() {
     const controlPayloadAllowed = (participant: Participant, payload: any) => {
         const isMouse = ['mousemove', 'mousedown', 'mouseup', 'wheel'].includes(payload?.type)
         const isKeyboard = ['keydown', 'keyup'].includes(payload?.type)
+        const isGamepad = payload?.type === 'gamepad-state'
         const key = String(payload?.key || '').toLowerCase()
         const code = String(payload?.code || '').toLowerCase()
         const hasClipboardModifier = Boolean(payload?.modifiers?.ctrl || payload?.modifiers?.meta)
@@ -656,7 +722,7 @@ function SessionContent() {
 
         if (isKeyboard && isClipboardShortcut && !participant.clipboardAllowed) return false
         return participant.permission === 'full'
-            || (participant.permission === 'mouse' && isMouse)
+            || (participant.permission === 'mouse' && (isMouse || isGamepad))
             || (participant.permission === 'keyboard' && isKeyboard)
     }
 
@@ -673,6 +739,7 @@ function SessionContent() {
                 socketRef.current?.emit('permission-violation', {
                     roomCode: roomCodeRef.current,
                     action: actionType,
+                    controllerId,
                     controllerName: participant.name,
                     controllerEmail: participant.email
                 });
@@ -712,7 +779,12 @@ function SessionContent() {
         addMediaTracksToPeer(pc)
         const offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
-        socketRef.current?.emit('offer', { offer, roomId: roomCodeRef.current, targetId: controllerId })
+        socketRef.current?.emit('offer', {
+            offer,
+            roomId: roomCodeRef.current,
+            targetId: controllerId,
+            mediaStreamIds: getLocalMediaStreamIds(),
+        })
     }
 
     const negotiateWithObserver = async (observerId: string) => {
@@ -786,30 +858,30 @@ function SessionContent() {
             if (e.candidate) socketRef.current?.emit('ice-candidate', { candidate: e.candidate, roomId: roomCodeRef.current || joinInput, targetId })
         }
 
-        pc.ontrack = (e) => {
-            console.log(`[DEBUG] ontrack fired! kind: ${e.track.kind}, streams: ${e.streams ? e.streams.length : 'no streams'}`);
+        pc.ontrack = (event) => {
+            console.log(`[DEBUG] ontrack fired! kind: ${event.track.kind}, streams: ${event.streams ? event.streams.length : 'no streams'}`);
             try {
-                const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
-                
-                if (stream) {
-                    let targetVideo = currentRoleRef.current === 'host' ? remoteCamRef.current : mainVideoRef.current;
-                    
-                    if (currentRoleRef.current === 'controller') {
-                        if (!mainVideoRef.current?.srcObject || mainVideoRef.current.srcObject === stream) {
-                            targetVideo = mainVideoRef.current;
-                        } else if (!remoteCamRef.current?.srcObject || remoteCamRef.current.srcObject === stream) {
-                            targetVideo = remoteCamRef.current;
-                        }
-                    }
+                const stream = event.streams && event.streams.length > 0 ? event.streams[0] : new MediaStream([event.track]);
+                if (!stream) return;
 
-                    if (targetVideo) {
-                        console.log('[DEBUG] Assigning stream to element');
-                        if (targetVideo.srcObject !== stream) {
-                            targetVideo.srcObject = stream;
-                        }
-                        targetVideo.play().catch(err => console.error('[DEBUG] video play() error:', err));
+                if (currentRoleRef.current === 'host') {
+                    const controllerId = targetId || stream.id;
+                    setRemoteCameraStreams(previous => (
+                        previous[controllerId] === stream ? previous : { ...previous, [controllerId]: stream }
+                    ));
+                } else {
+                    const remoteIds = remoteMediaStreamIdsRef.current;
+                    const isScreenStream = Boolean(remoteIds.screen && stream.id === remoteIds.screen);
+                    const isCameraStream = Boolean(remoteIds.camera && stream.id === remoteIds.camera);
+
+                    if (isCameraStream) {
+                        assignVideoStream(remoteCamRef.current, stream);
+                    } else if (isScreenStream || !mainVideoRef.current?.srcObject || mainVideoRef.current.srcObject === stream) {
+                        assignVideoStream(mainVideoRef.current, stream);
+                    } else if (!remoteCamRef.current?.srcObject || remoteCamRef.current.srcObject === stream) {
+                        assignVideoStream(remoteCamRef.current, stream);
                     } else {
-                        console.log('[DEBUG] targetVideo is null!');
+                        assignVideoStream(mainVideoRef.current, stream);
                     }
                 }
             } catch (err) {
@@ -870,6 +942,7 @@ function SessionContent() {
             setPermission(state.permission); 
             setParticipants(state.participants || [])
             setPendingJoinRequests(state.pendingRequests || [])
+            setChatMessages(state.messages || [])
             setObserverCount(state.observerCount || 0)
         })
         socket.on('join-approved', ({ permission: approvedPermission, clipboardAllowed: approvedClipboard }: any) => {
@@ -886,11 +959,18 @@ function SessionContent() {
         socket.on('offer', async (payload: any) => {
             console.log('[DEBUG] Received offer:', payload.offer.type);
             try {
+                remoteMediaStreamIdsRef.current = payload.mediaStreamIds || {}
                 const pc = pcRef.current && pcRef.current.signalingState !== 'closed' ? pcRef.current : await createPC()
                 await pc.setRemoteDescription(new RTCSessionDescription(payload.offer))
+                addMediaTracksToPeer(pc)
                 const answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
-                socket.emit('answer', { answer, roomId: code || roomCodeRef.current || joinInput, targetId: payload.fromId })
+                socket.emit('answer', {
+                    answer,
+                    roomId: code || roomCodeRef.current || joinInput,
+                    targetId: payload.fromId,
+                    mediaStreamIds: getLocalMediaStreamIds(),
+                })
                 console.log('[DEBUG] Answer sent successfully');
             } catch (err) {
                 console.error('[DEBUG] Error handling offer:', err);
@@ -946,6 +1026,19 @@ function SessionContent() {
             await pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
         })
         socket.on('chat-message', (message: ChatMessage) => setChatMessages(prev => [...prev, message].slice(-100)))
+        socket.on('federated-update-accepted', ({ round, pendingContributors }: { round: number; pendingContributors: number }) => {
+            addLog('system', `Federated update accepted for round ${round} (${pendingContributors} pending)`)
+        })
+        socket.on('federated-aggregate', async ({ round, weights, contributorCount, sampleCount, loss }: any) => {
+            const ok = await ensureFederatedLearner().setSerializedWeights(weights)
+            addLog(
+                'system',
+                ok
+                    ? `Federated round ${round} applied from ${contributorCount} contributor(s), ${sampleCount} sample(s), loss ${loss ?? 'n/a'}`
+                    : `Federated round ${round} received but model shape did not match`
+            )
+        })
+        socket.on('federated-error', ({ message }: { message: string }) => addLog('system', `Federated update failed: ${message}`))
         socket.on('evidence-event', (item: EvidenceItem) => {
             setEvidence(prev => [item, ...prev].slice(0, 80))
             if (item.type === 'join' && item.message?.includes('disconnected') && Notification.permission === 'granted') {
@@ -1011,7 +1104,12 @@ function SessionContent() {
                     const offer = await existingPc.createOffer()
                     await existingPc.setLocalDescription(offer)
                     console.log(`[DEBUG] Emitting offer to ${p.id}`);
-                    socketRef.current?.emit('offer', { offer, roomId: roomCodeRef.current, targetId: p.id })
+                    socketRef.current?.emit('offer', {
+                        offer,
+                        roomId: roomCodeRef.current,
+                        targetId: p.id,
+                        mediaStreamIds: getLocalMediaStreamIds(),
+                    })
                 } else {
                     console.log(`[DEBUG] Negotiating new PC for ${p.id}`);
                     await negotiateWithController(p.id)
@@ -1156,24 +1254,10 @@ function SessionContent() {
     useEffect(() => {
         if (role !== 'controller' || sessionMode !== 'supervised' || connectionState !== 'connected') return;
 
-        const handleMalpractice = (reason: string) => {
-            setMalpracticeWarnings(prev => [...prev, reason].slice(-3));
-            setTimeout(() => {
-                setMalpracticeWarnings(prev => prev.filter(w => w !== reason));
-            }, 5000);
-            socketRef.current?.emit('anticheat-alert', {
-                roomId: roomCode,
-                controllerId: socketRef.current.id,
-                type: 'anticheat_violation',
-                reason: reason
-            });
-            addLog('system', `Malpractice detected: ${reason}`);
-        };
-
-        const onBlur = () => handleMalpractice('Application lost focus (external app/click)');
+        const onBlur = () => reportMalpractice('Application lost focus (external app/click)', 15, [0.15, 1, 0.1]);
         const onVisibilityChange = () => {
             if (document.visibilityState === 'hidden') {
-                handleMalpractice('Tab switch or minimized app detected');
+                reportMalpractice('Tab switch or minimized app detected', 15, [0.2, 1, 0.1]);
             }
         };
 
@@ -1184,7 +1268,7 @@ function SessionContent() {
             window.removeEventListener('blur', onBlur);
             document.removeEventListener('visibilitychange', onVisibilityChange);
         };
-    }, [role, sessionMode, connectionState, roomCode, addLog]);
+    }, [role, sessionMode, connectionState, reportMalpractice]);
 
     const toggleRecording = () => {
         if (!isRecording) {
@@ -1193,11 +1277,14 @@ function SessionContent() {
                 return
             }
             if (!sessionRecorderRef.current) sessionRecorderRef.current = new SessionRecorder()
+            const remoteVideo = role === 'host' && selectedControllerId
+                ? remoteCamRefs.current.get(selectedControllerId) || null
+                : remoteCamRef.current
             
             const started = sessionRecorderRef.current.startRecording(
                 mainVideoRef.current,
                 localCamRef.current,
-                remoteCamRef.current,
+                remoteVideo,
                 (url) => {
                     const a = document.createElement('a')
                     a.href = url
@@ -1255,22 +1342,41 @@ function SessionContent() {
     }
 
     const runFederatedEpoch = async () => {
-        if (!federatedLearnerRef.current) federatedLearnerRef.current = new FederatedLearner()
-        
-        // Mock dataset creation for demo
-        addLog('system', 'Generating local heuristic dataset...')
-        for (let i = 0; i < 50; i++) {
-            federatedLearnerRef.current.addSample([Math.random(), Math.random(), Math.random()], Math.random() > 0.5 ? 1 : 0)
+        const learner = ensureFederatedLearner()
+        let sampleCount = learner.getPendingSampleCount()
+
+        if (sampleCount === 0) {
+            const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
+            const riskSignal = clamp01(riskScoreRef.current / 100)
+            learner.addSample([riskSignal, networkInstability, riskSignal], riskScoreRef.current >= 30 ? 1 : 0)
+            sampleCount = learner.getPendingSampleCount()
+            addLog('system', 'Queued one live telemetry snapshot for federated training')
         }
-        
+
         addLog('system', 'Starting local Federated Training Epoch...')
-        const loss = await federatedLearnerRef.current.trainLocalModel(10)
+        const loss = await learner.trainLocalModel(10)
         
-        addLog('system', `Training complete. Final Loss: ${Number(loss).toFixed(4)}. Extracting weights...`)
-        const weights = await federatedLearnerRef.current.getSerializedWeights()
+        addLog('system', `Training complete. Final Loss: ${loss === null ? 'n/a' : Number(loss).toFixed(4)}. Extracting weights...`)
+        const weights = await learner.getSerializedWeights()
         
-        socketRef.current?.emit('federated-update', { roomId: roomCodeRef.current, weights })
-        addLog('system', `Securely broadcasted ${weights.length} model weights to aggregator.`)
+        socketRef.current?.emit('federated-update', {
+            roomId: roomCodeRef.current,
+            weights,
+            sampleCount,
+            loss,
+            modelVersion: 'anti-cheat-v1',
+        })
+        addLog('system', `Submitted ${weights.length} model weights from ${sampleCount} telemetry sample(s) to the aggregator.`)
+    }
+
+    const sendChatMessage = (event?: FormEvent) => {
+        event?.preventDefault()
+        const text = chatInput.trim()
+        const activeRoom = roomCodeRef.current
+        if (!text || !activeRoom) return
+        socketRef.current?.emit('chat-message', { roomId: activeRoom, text })
+        setChatInput('')
+        setChatOpen(true)
     }
 
     if (setupMode === "join") {
@@ -1340,6 +1446,18 @@ function SessionContent() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2.5">
+                    <button
+                        onClick={() => setChatOpen(open => !open)}
+                        aria-label="Toggle Session Chat"
+                        className={cn("relative p-1.5 rounded-lg border transition-colors", chatOpen ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)]")}
+                    >
+                        <MessageSquare className="w-4 h-4" />
+                        {chatMessages.length > 0 && (
+                            <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--red)] px-1 text-[9px] font-bold text-white">
+                                {Math.min(chatMessages.length, 99)}
+                            </span>
+                        )}
+                    </button>
                     <button onClick={toggleLocalMic} className={cn("p-1.5 rounded-lg border", localMicMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>{localMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
                     <button onClick={toggleLocalCam} aria-label="Toggle Camera" className={cn("p-1.5 rounded-lg border", localCamMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>{localCamMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}</button>
                     <button onClick={toggleFullscreen} aria-label="Toggle Fullscreen" className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
@@ -1521,6 +1639,7 @@ function SessionContent() {
                                             <option value="robot">Robot</option>
                                             <option value="alien">Alien</option>
                                             <option value="radio">Radio</option>
+                                            <option value="megaphone">Megaphone</option>
                                             <option value="deep">Deep / Witness Protection</option>
                                             <option value="chipmunk">Chipmunk</option>
                                             <option value="echo">Canyon Echo</option>
@@ -1536,13 +1655,13 @@ function SessionContent() {
                                             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
                                         >
                                             <option value="none">Normal Camera</option>
-                                            <option value="sunglasses">Deal With It Glasses</option>
-                                            <option value="anonymous">Anonymous Mask</option>
-                                            <option value="fox">Fox Mask</option>
-                                            <option value="spiderman">Spiderman</option>
-                                            <option value="batman">Batman</option>
-                                            <option value="ironman">Ironman</option>
-                                            <option value="pikachu">Pikachu</option>
+                                            <option value="cyberpunk">Cyberpunk Visor</option>
+                                            <option value="neon">Neon Mask</option>
+                                            <option value="pixel">8-Bit Pixel Face</option>
+                                            <option value="hologram">Hologram</option>
+                                            <option value="sketch">Sketch Outline</option>
+                                            <option value="synthwave">Synthwave</option>
+                                            <option value="anime">Anime</option>
                                         </select>
                                     </div>
                                     <div>
@@ -1557,6 +1676,7 @@ function SessionContent() {
                                             <option value="office">Office Room</option>
                                             <option value="beach">Tropical Beach</option>
                                             <option value="space">Outer Space</option>
+                                            <option value="matrix">Matrix</option>
                                         </select>
                                     </div>
                                 </div>
@@ -1596,18 +1716,42 @@ function SessionContent() {
                         
                         {/* PiP / Remote Camera Container */}
                         <div className="absolute bottom-4 right-4 flex flex-col gap-3 z-50 pointer-events-none">
-                            {/* Remote Camera */}
-                            <div className={cn(
-                                "transition-all duration-300 pointer-events-auto",
-                                ((role === 'controller' && mainVideoRef.current?.srcObject) || (role === 'host' && isStreaming))
-                                    ? "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-100"
-                                    : "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-0 pointer-events-none"
-                            )}>
-                                <video ref={remoteCamRef} autoPlay playsInline className={cn(
-                                    "w-full h-full",
-                                    ((role === 'controller' && mainVideoRef.current?.srcObject) || (role === 'host' && isStreaming)) ? "object-cover" : "object-contain"
-                                )} />
-                            </div>
+                            {role === 'host' ? (
+                                participants
+                                    .filter(participant => remoteCameraStreams[participant.id])
+                                    .map(participant => (
+                                        <div key={participant.id} className="w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative pointer-events-auto">
+                                            <video
+                                                ref={node => {
+                                                    if (node) {
+                                                        remoteCamRefs.current.set(participant.id, node)
+                                                        assignVideoStream(node, remoteCameraStreams[participant.id])
+                                                    } else {
+                                                        remoteCamRefs.current.delete(participant.id)
+                                                    }
+                                                }}
+                                                autoPlay
+                                                playsInline
+                                                className="h-full w-full object-cover"
+                                            />
+                                            <div className="absolute bottom-0 left-0 right-0 truncate bg-black/65 px-2 py-1 text-[10px] font-bold text-white">
+                                                {participant.name}
+                                            </div>
+                                        </div>
+                                    ))
+                            ) : (
+                                <div className={cn(
+                                    "transition-all duration-300 pointer-events-auto",
+                                    mainVideoRef.current?.srcObject
+                                        ? "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-100"
+                                        : "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-0 pointer-events-none"
+                                )}>
+                                    <video ref={remoteCamRef} autoPlay playsInline className={cn(
+                                        "w-full h-full",
+                                        mainVideoRef.current?.srcObject ? "object-cover" : "object-contain"
+                                    )} />
+                                </div>
+                            )}
 
                             {/* Local Camera PiP */}
                             <div className={cn(
@@ -1620,6 +1764,11 @@ function SessionContent() {
                                 <video ref={localPreviewRef} autoPlay playsInline muted className={cn("w-full h-full object-cover", localCamMuted && "opacity-0")} />
                                 
                                 <canvas ref={antiCheatCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none object-cover" />
+                                <AiSupervisor
+                                    videoRef={localCamRef}
+                                    isActive={role === 'controller' && sessionMode === 'supervised' && hasLocalMedia && !localCamMuted}
+                                    onMalpractice={reason => reportMalpractice(reason, 15, [0.8, 0.1, 0.5])}
+                                />
                                 {riskScore > 0 && <div className="absolute top-0 left-0 right-0 bg-red-600/80 text-white text-xs font-bold text-center py-0.5">VIOLATION: {riskScore} PTS</div>}
                                 {localCamMuted && <div className="absolute inset-0 flex items-center justify-center text-[var(--text-dim)]"><VideoOff className="w-6 h-6" /></div>}
 
@@ -1629,14 +1778,90 @@ function SessionContent() {
                         {/* Malpractice Warnings (Bottom-Left) */}
                         <div className="absolute bottom-4 left-56 z-50 flex flex-col gap-2 pointer-events-none">
                             {malpracticeWarnings.map((warning, idx) => (
-                                <div key={idx} className="bg-red-900/90 border border-red-500 text-white px-4 py-2 rounded-lg shadow-lg font-bold text-sm animate-[slideIn_0.3s_ease-out]">
-                                    <span className="mr-2">⚠️</span> MALPRACTICE DETECTED: {warning}
+                                <div key={idx} className="flex items-center gap-2 bg-red-900/90 border border-red-500 text-white px-4 py-2 rounded-lg shadow-lg font-bold text-sm animate-[slideIn_0.3s_ease-out]">
+                                    <AlertTriangle className="h-4 w-4 shrink-0" /> MALPRACTICE DETECTED: {warning}
                                 </div>
                             ))}
                         </div>
                     </div>
                 </main>
             </div>
+
+            {chatOpen && (
+                <div className="fixed right-4 top-16 z-[90] flex h-[min(560px,calc(100vh-5rem))] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
+                    <div className="flex h-12 items-center justify-between border-b border-[var(--border)] px-4">
+                        <div className="flex items-center gap-2">
+                            <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
+                            <span className="text-sm font-bold text-[var(--text-primary)]">Session Chat</span>
+                        </div>
+                        <button
+                            onClick={() => setChatOpen(false)}
+                            aria-label="Close Session Chat"
+                            className="rounded-md p-1 text-[var(--text-dim)] hover:bg-[var(--elevated)] hover:text-[var(--text-primary)]"
+                        >
+                            <XCircle className="h-4 w-4" />
+                        </button>
+                    </div>
+                    <div ref={chatScrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+                        {chatMessages.length === 0 ? (
+                            <div className="flex h-full items-center justify-center text-center text-xs text-[var(--text-dim)]">
+                                No messages yet.
+                            </div>
+                        ) : (
+                            chatMessages.map(message => {
+                                const mine = message.senderId === socketRef.current?.id
+                                return (
+                                    <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
+                                        <div className={cn(
+                                            "max-w-[82%] rounded-lg border px-3 py-2",
+                                            mine
+                                                ? "border-[var(--accent)]/40 bg-[var(--accent)]/15"
+                                                : "border-[var(--border)] bg-[var(--bg)]"
+                                        )}>
+                                            <div className="mb-1 flex items-center justify-between gap-3">
+                                                <span className="truncate text-[10px] font-bold uppercase text-[var(--text-secondary)]">{message.senderName}</span>
+                                                <span className="shrink-0 font-mono text-[9px] text-[var(--text-dim)]">{message.time}</span>
+                                            </div>
+                                            <p className="break-words text-sm leading-relaxed text-[var(--text-primary)]">{message.text}</p>
+                                        </div>
+                                    </div>
+                                )
+                            })
+                        )}
+                    </div>
+                    <div className="border-t border-[var(--border)] p-3">
+                        <div className="mb-2 flex gap-1">
+                            {quickChatEmojis.map(emoji => (
+                                <button
+                                    key={emoji}
+                                    type="button"
+                                    onClick={() => setChatInput(value => `${value}${emoji}`)}
+                                    className="flex h-7 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] text-sm hover:border-[var(--accent)]"
+                                >
+                                    {emoji}
+                                </button>
+                            ))}
+                        </div>
+                        <form onSubmit={sendChatMessage} className="flex gap-2">
+                            <input
+                                value={chatInput}
+                                onChange={event => setChatInput(event.target.value)}
+                                maxLength={1000}
+                                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                                placeholder="Message everyone"
+                            />
+                            <button
+                                type="submit"
+                                disabled={!chatInput.trim()}
+                                aria-label="Send Message"
+                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-black disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                                <Send className="h-4 w-4" />
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
 
             {showAiSettings && currentRoleRef.current === 'host' && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
