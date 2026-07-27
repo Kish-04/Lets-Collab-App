@@ -37,6 +37,7 @@ const sessionLogSchema = new mongoose.Schema({
     by: String,
     label: String,
   }],
+  federated: { type: mongoose.Schema.Types.Mixed },
   riskScore: { type: Number, default: 0 },
   alertCount: { type: Number, default: 0 },
   latestTxHash: String,

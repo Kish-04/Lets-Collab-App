@@ -1,7 +1,22 @@
 process.env.NODE_ENV = 'test';
+const path = require('path');
+Object.assign(process.env, {
+  JWT_SECRET: 'test_jwt_secret_with_more_than_32_chars',
+  MONGO_URI: 'mongodb://127.0.0.1:1/api-test',
+  MONGO_CONNECT_TIMEOUT_MS: '250',
+  RPC_URL: 'http://127.0.0.1:9',
+  SEPOLIA_RPC_URL: 'http://127.0.0.1:9',
+  CONTRACT_ADDRESS: '',
+  ALLOW_MOCK_BLOCKCHAIN: 'true',
+  LOG_OTP: 'false',
+  RESEND_API_KEY: '',
+  EMAILJS_SERVICE_ID: '',
+  EMAILJS_TEMPLATE_ID: '',
+  EMAILJS_PUBLIC_KEY: '',
+  MOCK_STORE_FILE: path.join(__dirname, '../../scratch/api-test-mock-store.json'),
+});
 const request = require('supertest');
 const { app, server } = require('../index');
-const connectDB = require('../db');
 const mongoose = require('mongoose');
 
 describe('API Tests', () => {
@@ -12,9 +27,7 @@ describe('API Tests', () => {
   afterAll(async () => {
     // Close the server and DB connection so Jest can exit
     server.close();
-    if (mongoose.connection.readyState === 1) {
-      await mongoose.disconnect();
-    }
+    await mongoose.disconnect().catch(() => {});
   });
 
   it('should reject unauthenticated requests to /api/admin/users', async () => {

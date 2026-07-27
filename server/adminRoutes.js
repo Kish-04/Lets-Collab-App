@@ -339,4 +339,4 @@ router.get('/reports', async (req, res) => {
   }
 });
 
-module.exports = { router, onlineEmails, setRoomLookup };
+module.exports = { router, onlineEmails, setRoomLookup, protectAdmin };
