@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
 const User = require('./User');
 const { signJwt } = require('./config');
@@ -175,7 +176,23 @@ function validateRegisterInput(name, email, password) {
   return null;
 }
 
-router.post('/register', async (req, res) => {
+const otpSendLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { message: 'Too many OTP requests. Please try again after 15 minutes.' },
+  validate: { ip: false },
+  keyGenerator: (req) => req.ip + '_' + normalizeEmail(req.body.email)
+});
+
+const otpVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { message: 'Too many verification attempts. Please request a new OTP.' },
+  validate: { ip: false },
+  keyGenerator: (req) => req.ip + '_' + normalizeEmail(req.body.email)
+});
+
+router.post('/register', otpSendLimiter, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
     const email = normalizeEmail(req.body.email);
@@ -230,7 +247,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/verify-otp', async (req, res) => {
+router.post('/verify-otp', otpVerifyLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     const otp = String(req.body.otp || '').trim();
@@ -346,7 +363,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', otpSendLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     if (!email) return res.status(400).json({ message: 'Email is required' });
