@@ -483,6 +483,53 @@ function SessionContent() {
         return () => window.clearInterval(timer)
     }, [sessionMode, connectionState, recordFederatedSample])
 
+    const mediaStreamPromiseRef = useRef<Promise<MediaStream> | null>(null)
+
+    const acquireLocalMedia = useCallback(async (videoRequired = true) => {
+        if (localStreamRef.current) return localStreamRef.current
+        if (mediaStreamPromiseRef.current) return mediaStreamPromiseRef.current
+
+        if (!navigator.mediaDevices) {
+            throw new Error("Media devices not available (requires HTTPS/localhost).")
+        }
+
+        mediaStreamPromiseRef.current = navigator.mediaDevices.getUserMedia({ 
+            video: videoRequired, 
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+        })
+
+        try {
+            const stream = await mediaStreamPromiseRef.current
+            localStreamRef.current = stream
+            setHasLocalMedia(true)
+            return stream
+        } finally {
+            mediaStreamPromiseRef.current = null
+        }
+    }, [])
+
+    const stopLocalMedia = useCallback(() => {
+        if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(t => t.stop())
+            localStreamRef.current = null
+            setHasLocalMedia(false)
+            setLocalCamMuted(true)
+            setLocalMicMuted(true)
+        }
+    }, [])
+
+    useEffect(() => {
+        return () => {
+            stopLocalMedia()
+        }
+    }, [stopLocalMedia])
+
+    useEffect(() => {
+        if (connectionState === 'idle') {
+            stopLocalMedia()
+        }
+    }, [connectionState, stopLocalMedia])
+
     const toggleLocalMic = async () => {
         if (localStreamRef.current) {
             const audioTrack = localStreamRef.current.getAudioTracks()[0]
@@ -492,19 +539,12 @@ function SessionContent() {
                 addLog('system', `Microphone ${audioTrack.enabled ? 'enabled' : 'muted'}`)
             }
         } else {
-            if (!navigator.mediaDevices) {
-                alert("Microphone access requires a secure connection (HTTPS) or localhost. Since you are connecting via a local IP, the browser blocks access to media devices.");
-                return;
-            }
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
-                })
-                localStreamRef.current = stream
+                await acquireLocalMedia(false)
                 setLocalMicMuted(false)
-                setHasLocalMedia(true)
                 addLog('system', 'Microphone activated')
-            } catch (err) {
+            } catch (err: any) {
+                alert(err.message)
                 addLog('system', 'Microphone access denied')
             }
         }
@@ -519,20 +559,11 @@ function SessionContent() {
                 addLog('system', `Camera ${videoTrack.enabled ? 'enabled' : 'disabled'}`)
             }
         } else {
-            if (!navigator.mediaDevices) {
-                alert("Camera access requires a secure connection (HTTPS) or localhost. Since you are connecting via a local IP, the browser blocks access to media devices.");
-                return;
-            }
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: true, 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
-                })
-                localStreamRef.current = stream
+                const stream = await acquireLocalMedia(true)
                 if (localCamRef.current) localCamRef.current.srcObject = stream
                 setLocalCamMuted(false)
                 setLocalMicMuted(false)
-                setHasLocalMedia(true)
                 addLog('system', 'Camera and Microphone activated')
             } catch (err: any) {
                 console.error(`Camera access denied or missing: ${err.message}`);
@@ -586,17 +617,12 @@ function SessionContent() {
             // Try to acquire actual mic/cam just for the calibration/proctoring phase
             let tempStream: MediaStream | undefined;
             try {
-                tempStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: true, 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
-                });
-                localStreamRef.current = tempStream;
+                tempStream = await acquireLocalMedia(true);
                 if (localCamRef.current) {
                     localCamRef.current.srcObject = tempStream;
                 }
                 setLocalCamMuted(false);
                 setLocalMicMuted(false);
-                setHasLocalMedia(true);
             } catch (err) {
                 addLog('system', 'Camera/Mic denied during calibration.');
             }
@@ -617,8 +643,11 @@ function SessionContent() {
         
         runCalibration();
         
-        return () => engine.stop()
-    }, [sessionMode, role, addLog, federatedFeaturesForEvent, recordFederatedSample])
+        return () => {
+            engine.stop()
+            stopLocalMedia()
+        }
+    }, [sessionMode, role, addLog, federatedFeaturesForEvent, recordFederatedSample, stopLocalMedia])
 
     useEffect(() => {
         if (engineRef.current) engineRef.current.setConfig(aiConfig)
