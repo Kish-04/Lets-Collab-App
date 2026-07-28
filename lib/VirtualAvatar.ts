@@ -1,3 +1,5 @@
+import { loadExternalScript } from './utils';
+
 const getFaceApi = () => {
     if (typeof window !== 'undefined' && (window as any).faceapi) {
         return (window as any).faceapi;
@@ -38,6 +40,8 @@ export class VirtualAvatar {
 
     private async loadModels() {
         if (this.modelsLoaded) return;
+        
+        await loadExternalScript("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js");
         const faceapi = getFaceApi();
         if (!faceapi) return;
         const modelUrl = 'https://justadudewhohacks.github.io/face-api.js/models';

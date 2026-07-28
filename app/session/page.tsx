@@ -223,10 +223,12 @@ function SessionContent() {
     const [voiceFilter, setVoiceFilter] = useState<VoiceFilter>('none')
     const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>('none')
     const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyle>('none')
+    const [customBackgroundUrl, setCustomBackgroundUrl] = useState<string | null>(null)
     const [isCanvasMode, setIsCanvasMode] = useState(false)
     const logScrollRef = useRef<HTMLDivElement>(null)
     // ── Refs ──────────────────────────────────────────────────────────────────
     const mainVideoRef = useRef<HTMLVideoElement>(null)
+    const backgroundInputRef = useRef<HTMLInputElement>(null)
     const lastViolationTimeRef = useRef<number>(0)  // screen share / remote screen
     const localCamRef = useRef<HTMLVideoElement>(null)  // your camera (PiP)
     const localPreviewRef = useRef<HTMLVideoElement>(null)
@@ -266,7 +268,7 @@ function SessionContent() {
 
         if (backgroundStyle !== 'none') {
             if (!virtualBackgroundRef.current) virtualBackgroundRef.current = new VirtualBackground();
-            virtualBackgroundRef.current.setBackgroundStyle(backgroundStyle);
+            virtualBackgroundRef.current.setBackgroundStyle(backgroundStyle, backgroundStyle === 'custom' && customBackgroundUrl ? customBackgroundUrl : undefined);
             
             if (currentVideoSource && currentVideoSource.readyState >= 2) {
                 const bgStream = virtualBackgroundRef.current.start(currentVideoSource);
@@ -329,7 +331,7 @@ function SessionContent() {
         }
         
         
-    }, [voiceFilter, avatarStyle, backgroundStyle, hasLocalMedia]);
+    }, [voiceFilter, avatarStyle, backgroundStyle, customBackgroundUrl, hasLocalMedia]);
     const [aiConfig, setAiConfig] = useState({
         eyeTrackingThreshold: 0.80,
         emotionSensitivity: 0.65,
@@ -1697,7 +1699,14 @@ function SessionContent() {
                                         <label className="text-[10px] text-[var(--text-secondary)] block mb-1">Virtual Background</label>
                                         <select 
                                             value={backgroundStyle}
-                                            onChange={(e) => setBackgroundStyle(e.target.value as BackgroundStyle)}
+                                            onChange={(e) => {
+                                                const val = e.target.value as BackgroundStyle;
+                                                if (val === 'custom') {
+                                                    backgroundInputRef.current?.click();
+                                                } else {
+                                                    setBackgroundStyle(val);
+                                                }
+                                            }}
                                             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
                                         >
                                             <option value="none">Normal Background</option>
@@ -1706,7 +1715,27 @@ function SessionContent() {
                                             <option value="beach">Tropical Beach</option>
                                             <option value="space">Outer Space</option>
                                             <option value="matrix">Matrix</option>
+                                            <option value="custom">Choose your own...</option>
                                         </select>
+                                        <input 
+                                            type="file" 
+                                            ref={backgroundInputRef} 
+                                            className="hidden" 
+                                            accept="image/*"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                    const url = URL.createObjectURL(file);
+                                                    setCustomBackgroundUrl(url);
+                                                    setBackgroundStyle('custom');
+                                                } else {
+                                                    if (backgroundStyle === 'custom' && !customBackgroundUrl) {
+                                                        setBackgroundStyle('none');
+                                                    }
+                                                }
+                                                e.target.value = '';
+                                            }} 
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -1794,9 +1823,8 @@ function SessionContent() {
                                 
                                 <canvas ref={antiCheatCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none object-cover" />
                                 <AiSupervisor
-                                    videoRef={localCamRef}
                                     isActive={role === 'controller' && sessionMode === 'supervised' && hasLocalMedia && !localCamMuted}
-                                    onMalpractice={reason => reportMalpractice(reason, 15, [0.8, 0.1, 0.5])}
+                                    status={antiCheatStatus}
                                 />
                                 {riskScore > 0 && <div className="absolute top-0 left-0 right-0 bg-red-600/80 text-white text-xs font-bold text-center py-0.5">VIOLATION: {riskScore} PTS</div>}
                                 {localCamMuted && <div className="absolute inset-0 flex items-center justify-center text-[var(--text-dim)]"><VideoOff className="w-6 h-6" /></div>}

@@ -1,3 +1,5 @@
+import { loadExternalScript } from './utils';
+
 const getSelfieSegmentation = () => {
     if (typeof window !== 'undefined' && (window as any).SelfieSegmentation) {
         return (window as any).SelfieSegmentation;
@@ -12,9 +14,9 @@ const getCamera = () => {
     return null;
 };
 
-export type BackgroundStyle = 'none' | 'blur' | 'office' | 'beach' | 'space' | 'matrix';
+export type BackgroundStyle = 'none' | 'blur' | 'office' | 'beach' | 'space' | 'matrix' | 'custom';
 
-const backgroundSources: Record<Exclude<BackgroundStyle, 'none' | 'blur'>, string> = {
+const backgroundSources: Record<Exclude<BackgroundStyle, 'none' | 'blur' | 'custom'>, string> = {
     office: '/backgrounds/office.svg',
     beach: '/backgrounds/beach.svg',
     space: '/backgrounds/space.svg',
@@ -43,7 +45,14 @@ export class VirtualBackground {
         this.offscreenCanvas.width = 640;
         this.offscreenCanvas.height = 480;
         this.offscreenCtx = this.offscreenCanvas.getContext('2d');
-        
+    }
+
+    private async initSelfieSegmentation() {
+        if (this.selfieSegmentation) return;
+
+        await loadExternalScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
+        await loadExternalScript("https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js");
+
         const SelfieSegmentationClass = getSelfieSegmentation();
         if (typeof window !== 'undefined' && SelfieSegmentationClass) {
             this.selfieSegmentation = new SelfieSegmentationClass({
@@ -60,7 +69,7 @@ export class VirtualBackground {
         }
     }
 
-    public setBackgroundStyle(style: BackgroundStyle) {
+    public setBackgroundStyle(style: BackgroundStyle, customImageUrl?: string) {
         this.currentStyle = style;
         if (style === 'none' || style === 'blur') {
             this.backgroundImage = null;
@@ -68,7 +77,11 @@ export class VirtualBackground {
         }
 
         this.backgroundImage = new Image();
-        this.backgroundImage.src = backgroundSources[style];
+        if (style === 'custom' && customImageUrl) {
+            this.backgroundImage.src = customImageUrl;
+        } else if (style !== 'custom') {
+            this.backgroundImage.src = backgroundSources[style as keyof typeof backgroundSources];
+        }
     }
 
     private onResults(results: any) {
@@ -110,6 +123,9 @@ export class VirtualBackground {
         this.stop(); // Stop any existing loop
         this.isRunning = true;
         
+        // Lazy load scripts in the background
+        this.initSelfieSegmentation();
+
         if (videoElement.readyState >= 2) {
             this.canvas.width = videoElement.videoWidth || 640;
             this.canvas.height = videoElement.videoHeight || 480;
@@ -121,7 +137,7 @@ export class VirtualBackground {
         if (this.selfieSegmentation && CameraClass) {
             this.camera = new CameraClass(videoElement, {
                 onFrame: async () => {
-                    if (this.isRunning) {
+                    if (this.isRunning && this.selfieSegmentation) {
                         await this.selfieSegmentation.send({image: videoElement});
                     }
                 },
@@ -130,12 +146,28 @@ export class VirtualBackground {
             });
             this.camera.start();
         } else {
+            // Fallback while loading or if not supported
             const drawFallbackFrame = () => {
                 if (!this.isRunning || !this.ctx) return;
                 this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
                 this.fallbackFrameId = requestAnimationFrame(drawFallbackFrame);
             };
             drawFallbackFrame();
+            
+            // Re-check once scripts load
+            if (!this.selfieSegmentation && typeof window !== 'undefined') {
+                const checkInterval = setInterval(() => {
+                    if (!this.isRunning) {
+                        clearInterval(checkInterval);
+                        return;
+                    }
+                    if (this.selfieSegmentation && getCamera()) {
+                        clearInterval(checkInterval);
+                        if (this.fallbackFrameId) cancelAnimationFrame(this.fallbackFrameId);
+                        this.start(videoElement); // restart with properly loaded models
+                    }
+                }, 500);
+            }
         }
         return this.canvas.captureStream(30);
     }

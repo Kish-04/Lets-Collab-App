@@ -13,7 +13,7 @@ if (typeof window !== "undefined") {
   };
 }
 export type AntiCheatEvent = {
-  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY" | "SYSTEM";
+  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY" | "SYSTEM" | "BLINK_ANOMALY";
   message: string;
   scorePenalty: number;
 };
@@ -25,13 +25,15 @@ export interface AntiCheatConfig {
   emotionSensitivity: number;
   audioVolumeThreshold: number;
   headPoseMargin: number;
+  baselineBlinkRate: number;
 }
 
 const DEFAULT_CONFIG: AntiCheatConfig = {
   eyeTrackingThreshold: 0.80,
   emotionSensitivity: 0.65,
   audioVolumeThreshold: 0.05, // 5% volume threshold
-  headPoseMargin: 0.50
+  headPoseMargin: 0.50,
+  baselineBlinkRate: 15 // average blinks per minute
 };
 
 export class AntiCheatEngine {
@@ -49,6 +51,14 @@ export class AntiCheatEngine {
   private missingFaceFrames: number = 0;
   public initStatus: InitStatus = "idle";
   private config: AntiCheatConfig = DEFAULT_CONFIG;
+  private blinkTimestamps: number[] = [];
+  private isBlinking: boolean = false;
+  private audioSpikeCount: number = 0;
+  private continuousAudioStartTime: number = 0;
+  private blinkBuckets: number[] = [];
+  private currentBucketBlinks: number = 0;
+  private lastBucketTime: number = 0;
+  private sessionStartTime: number = 0;
 
   public setConfig(newConfig: Partial<AntiCheatConfig>) {
     this.config = { ...this.config, ...newConfig };
@@ -148,6 +158,8 @@ export class AntiCheatEngine {
     let lowConfidenceCount = 0;
     const TOTAL_SAMPLES = 30; // Sample every 100ms for 3s
     let samplesCollected = 0;
+    let calibrationBlinkCount = 0;
+    let wasBlinking = false;
 
     return new Promise((resolve) => {
       const sampleInterval = setInterval(() => {
@@ -180,6 +192,18 @@ export class AntiCheatEngine {
               const expectedNose = (lEye + rEye) / 2;
               const offsetRatio = Math.abs(nose - expectedNose) / eyeW;
               poseVariances.push(offsetRatio);
+            }
+            
+            const blendshapes = result.faceBlendshapes;
+            if (blendshapes && blendshapes.length > 0) {
+              const categories = blendshapes[0].categories;
+              const blinkL = categories.find((c: any) => c.categoryName === "eyeBlinkLeft" || c.name === "eyeBlinkLeft")?.score || 0;
+              const blinkR = categories.find((c: any) => c.categoryName === "eyeBlinkRight" || c.name === "eyeBlinkRight")?.score || 0;
+              const currentlyBlinking = blinkL > 0.4 || blinkR > 0.4;
+              if (currentlyBlinking && !wasBlinking) {
+                calibrationBlinkCount++;
+              }
+              wasBlinking = currentlyBlinking;
             }
           } else {
             lowConfidenceCount++;
@@ -214,11 +238,16 @@ export class AntiCheatEngine {
             newEyeThreshold = 0.50; // heavily relax eye tracking to prevent false positives
             this.emitEvent("SYSTEM", "[ALERT] AI Sensitivity auto-relaxed due to low lighting/poor confidence during calibration.", 0);
           }
+          
+          // Let the baseline remain a sensible default (e.g. 15).
+          // We will refine it actively during the first 60 seconds of the live session.
+          let extrapolatedBPM = DEFAULT_CONFIG.baselineBlinkRate;
 
           this.setConfig({
             audioVolumeThreshold: newAudioThreshold,
             headPoseMargin: newHeadMargin,
-            eyeTrackingThreshold: newEyeThreshold
+            eyeTrackingThreshold: newEyeThreshold,
+            baselineBlinkRate: extrapolatedBPM
           });
 
           if (tempAudioCtx) tempAudioCtx.close().catch(() => {});
@@ -256,6 +285,10 @@ export class AntiCheatEngine {
 
     this.isRunning = true;
     this.lastTimestamp = 0;
+    this.sessionStartTime = performance.now();
+    this.lastBucketTime = this.sessionStartTime;
+    this.blinkBuckets = [];
+    this.currentBucketBlinks = 0;
     this.lastPredictions = null;
     console.log("[AntiCheat] Starting frame analysis on video element and audio stream");
 
@@ -389,6 +422,53 @@ export class AntiCheatEngine {
                 if (jawOpen || mouthPucker) {
                   this.emitEvent("TALKING_DETECTED", "Verbal check: Whispering or speaking movements", 12);
                 }
+
+                // 4. Blink Rate Anomaly Detection
+                const blinkL = getScore("eyeBlinkLeft");
+                const blinkR = getScore("eyeBlinkRight");
+                const currentlyBlinking = blinkL > 0.4 || blinkR > 0.4;
+                if (currentlyBlinking && !this.isBlinking) {
+                  this.isBlinking = true;
+                  const now = Date.now();
+                  const perfNow = performance.now();
+                  this.blinkTimestamps.push(now);
+                  
+                  // Keep only blinks from the last 60 seconds
+                  this.blinkTimestamps = this.blinkTimestamps.filter(t => now - t < 60000);
+                  
+                  // Add to 10-second median bucket for robust baseline calibration
+                  if (perfNow - this.lastBucketTime > 10000) {
+                      if (this.blinkBuckets.length < 6) { // Only calibrate during first 60s
+                          this.blinkBuckets.push(this.currentBucketBlinks);
+                      }
+                      this.currentBucketBlinks = 0;
+                      this.lastBucketTime = perfNow;
+                  }
+                  this.currentBucketBlinks++;
+                  
+                  const currentBPM = this.blinkTimestamps.length;
+                  const runningTimeMs = perfNow - this.sessionStartTime;
+                  
+                  // Dynamically refine the baseline using the MEDIAN of 10s buckets to discard spoofing bursts
+                  if (this.blinkBuckets.length > 1 && runningTimeMs < 60000) {
+                     const sortedBuckets = [...this.blinkBuckets].sort((a, b) => a - b);
+                     const medianBlinksPer10s = sortedBuckets[Math.floor(sortedBuckets.length / 2)];
+                     this.config.baselineBlinkRate = medianBlinksPer10s * 6;
+                     if (this.config.baselineBlinkRate < 10) this.config.baselineBlinkRate = 10;
+                     if (this.config.baselineBlinkRate > 30) this.config.baselineBlinkRate = 30;
+                  }
+                  
+                  // Only evaluate anomalous rates after an initial 30 second grace period
+                  if (runningTimeMs > 30000) {
+                    if (currentBPM > this.config.baselineBlinkRate * 2.5 && currentBPM > 25) {
+                      this.emitEvent("BLINK_ANOMALY", `Rapid blinking detected (${currentBPM} BPM, baseline: ${Math.round(this.config.baselineBlinkRate)})`, 5);
+                    } else if (currentBPM < this.config.baselineBlinkRate * 0.3 && currentBPM < 5) {
+                      this.emitEvent("BLINK_ANOMALY", `Abnormally low blink rate (${currentBPM} BPM), possible distraction or spoofing`, 5);
+                    }
+                  }
+                } else if (!currentlyBlinking) {
+                  this.isBlinking = false;
+                }
               }
 
               // Head pose: check if nose is between eyes with a natural threshold
@@ -521,7 +601,27 @@ export class AntiCheatEngine {
 
             // Sound threshold violation (e.g. speaking/loud whispering) based on calibrated threshold
             if (avgVolume > this.config.audioVolumeThreshold) {
-              this.emitEvent("VOICE_DETECTED", `Voice / audio anomaly detected (${Math.round(avgVolume)} dB, threshold: ${Math.round(this.config.audioVolumeThreshold)})`, 15);
+              if (this.continuousAudioStartTime === 0) {
+                 this.continuousAudioStartTime = performance.now();
+              } else if (performance.now() - this.continuousAudioStartTime > 1500) { // 1.5 seconds of sustained noise in real time
+                 this.emitEvent("TALKING_DETECTED", `Sustained voice/audio detected (${Math.round(avgVolume)} dB, threshold: ${Math.round(this.config.audioVolumeThreshold)})`, 15);
+                 this.continuousAudioStartTime = 0; // reset to avoid spamming
+              }
+            } else {
+              // If it spiked briefly but didn't last 1.5s, log it as a transient spike
+              if (this.continuousAudioStartTime > 0 && performance.now() - this.continuousAudioStartTime < 500) {
+                  this.audioSpikeCount++;
+              }
+              this.continuousAudioStartTime = 0;
+            }
+
+            // Decay the spike count slowly over time (sliding window)
+            if (this.frameCount % 30 === 0 && this.audioSpikeCount > 0) {
+                this.audioSpikeCount--; 
+            }
+            if (this.audioSpikeCount > 20) {
+               this.emitEvent("VOICE_DETECTED", "Frequent audio spikes detected (tapping/banging)", 5);
+               this.audioSpikeCount = 0;
             }
           }
 

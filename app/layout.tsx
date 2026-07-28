@@ -64,9 +64,6 @@ export default function RootLayout({
         ` }} />
       </head>
       <body suppressHydrationWarning className={`${exo2.variable} ${jetbrainsMono.variable} ${dmSans.variable} font-sans antialiased bg-[var(--bg)] text-[var(--text-primary)] transition-colors duration-200`}>
-        <Script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js" strategy="beforeInteractive" />
-        <Script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" strategy="beforeInteractive" />
-        <Script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" strategy="beforeInteractive" />
         {children}
         <ThemeCustomizer />
         <Analytics />
