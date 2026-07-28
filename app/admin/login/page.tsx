@@ -12,30 +12,21 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
-  const [otpRequired, setOtpRequired] = useState(false)
-  const [otp, setOtp] = useState("")
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
     setLoading(true)
     setErrorMsg("")
     try {
-      const endpoint = otpRequired ? '/api/auth/verify-otp' : '/api/auth/login'
+      const endpoint = '/api/auth/login'
       const response = await fetch(`${getBackendUrl()}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email: username, password, otp: otpRequired ? otp : undefined }),
+        body: JSON.stringify({ email: username, password }),
       })
       const data = await response.json()
       if (response.ok) {
-        if (data.otpRequired) {
-          setOtpRequired(true)
-          setErrorMsg("OTP sent to your email. Please enter it below.")
-          setLoading(false)
-          return
-        }
-
         const role = data.user?.role || data.role
         if (role === "admin") {
           const user = data.user || data
@@ -94,25 +85,13 @@ export default function AdminLoginPage() {
               <span className="mb-2 block text-xs text-[var(--text-secondary)]">Password</span>
               <span className="relative block">
                 <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-dim)]" />
-                <input required={!otpRequired} type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password"
-                  disabled={otpRequired}
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] py-3 pl-10 pr-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:opacity-50" />
+                <input required type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password"
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] py-3 pl-10 pr-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
               </span>
             </label>
             
-            {otpRequired && (
-              <label className="block animate-in fade-in slide-in-from-top-2 duration-300">
-                <span className="mb-2 block text-xs text-[var(--emerald)] font-bold tracking-widest uppercase">One-Time Passcode</span>
-                <span className="relative block">
-                  <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--emerald)]" />
-                  <input required autoFocus type="text" value={otp} onChange={event => setOtp(event.target.value)} placeholder="6-digit code"
-                    className="w-full rounded-lg border border-[var(--emerald)]/50 bg-[var(--emerald)]/5 py-3 pl-10 pr-4 text-sm text-[var(--emerald)] placeholder-[var(--emerald)]/30 outline-none focus:border-[var(--emerald)] font-mono tracking-widest" />
-                </span>
-              </label>
-            )}
-
             <GlowButton type="submit" size="full" loading={loading} className="mt-3">
-              {otpRequired ? "Verify & Enter Console" : "Enter Console"}
+              Enter Console
             </GlowButton>
           </form>
         </section>
