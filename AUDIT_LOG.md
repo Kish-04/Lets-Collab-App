@@ -3,7 +3,7 @@
 ## Phase 1 - File-by-File Audit
 
 - `server/index.js` - FIXED: gated REST chain-history behind `protectAdmin`, replaced raw handshake-header logging with a redacted summary, normalized room-code handling on join/approval/input paths, clamped alert penalties/risk scoring, and derived alert/audit participants from live room membership instead of trusting client-supplied identity.
-- `server/authRoutes.js` - FLAGGED: auth flow is functional, but verified/login responses still return JWTs in JSON for backward compatibility in addition to the httpOnly cookie.
+- `server/authRoutes.js` - FIXED: added `express-rate-limit` to OTP-send and `/verify-otp` endpoints to prevent brute-force abuse. Auth flow is functional, but verified/login responses still return JWTs in JSON for backward compatibility in addition to the httpOnly cookie.
 - `server/adminRoutes.js` - FIXED: admin endpoints after `router.use(protectAdmin)` are gated; evidence upload is intentionally before the admin middleware and has its own authenticated host/admin guard; exported `protectAdmin` so the session-history REST endpoint can reuse the same gate.
 - `server/User.js` - CLEAN: password hashing and role/banned/session fields match auth and admin usage.
 - `server/config.js` - CLEAN: JWT secret handling, CORS parsing, and production warnings are explicit; local desktop origins are allowed by design.
@@ -28,7 +28,7 @@
 - `server/test-sepolia.js` - CLEAN: uses production mode and env-backed blockchain logger for Sepolia smoke logging.
 - `server/verify-minio.js` - FIXED: now reads Mongo/S3 connection details from environment with local MinIO defaults instead of hardcoding every service endpoint/credential.
 - `server/verify-sepolia.js` - FIXED: now loads `server/.env`, uses env/argv transaction and contract inputs, and exits with usage guidance instead of verifying stale hardcoded Sepolia values.
-- `app/session/page.tsx` - FIXED: confirmed WebRTC routes host screen/camera by `mediaStreamIds` instead of arrival order and renders host-side controller camera streams by controller id; confirmed chat UI renders and emits `chat-message`; confirmed filter dropdowns use neutral avatar/background/voice values; removed stale duplicate focus-loss tracker that emitted to the wrong server event and leaked a visibility listener; added `controllerId` to permission-violation audit payloads; allowed `gamepad-state` under mouse/full permission to match the existing gamepad polling feature.
+- `app/session/page.tsx` - FIXED: centralized local media acquisition into a single `acquireLocalMedia` lock and properly stopped tracks on cleanup/unmount to resolve "Device in use" camera bugs. Confirmed WebRTC routes host screen/camera by `mediaStreamIds` instead of arrival order and renders host-side controller camera streams by controller id; confirmed chat UI renders and emits `chat-message`; confirmed filter dropdowns use neutral avatar/background/voice values; removed stale duplicate focus-loss tracker that emitted to the wrong server event and leaked a visibility listener; added `controllerId` to permission-violation audit payloads; allowed `gamepad-state` under mouse/full permission to match the existing gamepad polling feature.
 - `app/page.tsx` - FIXED: changed the landing comparison table from the inaccurate “End-to-End Encrypted P2P Chat Channels” claim to the implemented server-audited in-session chat.
 - `app/app/page.tsx` - CLEAN: real user registration/login/OTP/forgot/reset flow uses backend auth endpoints and stores local user display state after successful cookie/JWT issuance.
 - `app/admin/page.tsx` - CLEAN: overview data is loaded from protected admin reports endpoint with auth headers/cookies and redirects on 401/403.
@@ -38,7 +38,7 @@
 - `app/admin/sessions/page.tsx` - CLEAN: admin live-session view, visible observation workflow, and interventions map to existing authenticated socket handlers.
 - `app/admin/users/page.tsx` - CLEAN: user listing/ban/role changes use protected admin REST endpoints.
 - `app/login/page.tsx` - FIXED: replaced fake localStorage-only demo authentication with a redirect to `/app`, where the real backend auth flow lives.
-- `app/admin/login/page.tsx` - FIXED: admin login uses backend auth/verify endpoints, gates entry by returned admin role, and no longer forwards OTPs through browser-side EmailJS or hardcoded public EmailJS fallback IDs.
+- `app/admin/login/page.tsx` - FIXED: removed unreachable dead OTP UI logic, matching the actual backend which bypasses OTP for admin logins. Admin login uses backend auth/verify endpoints, gates entry by returned admin role, and no longer forwards OTPs through browser-side EmailJS or hardcoded public EmailJS fallback IDs.
 - `lib/AntiCheatEngine.ts` - FIXED: calibration now can actually adapt head-pose margin after at least half of the configured samples instead of waiting for an impossible `> 50` samples from a 30-sample calibration.
 - `hooks/useFederatedAI.ts` - FIXED: COCO-SSD detection loop now uses a ref-backed violation callback so parent rerenders do not restart the interval unnecessarily.
 - `components/ircp/supervisor/AiSupervisor.tsx` - CLEAN: imported by the live session page and correctly bridges `useFederatedAI` detections into supervised malpractice reporting.
