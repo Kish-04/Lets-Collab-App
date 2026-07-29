@@ -1524,7 +1524,8 @@ function SessionContent() {
         canvas.toBlob(async (blob) => {
             if (!blob) return
             const formData = new FormData()
-            if (roomCode) formData.append('room', roomCode)
+            const activeRoomCode = roomCodeRef.current || roomCode || joinInput
+            if (activeRoomCode) formData.append('room', activeRoomCode)
             formData.append('evidenceFile', blob, `evidence-${Date.now()}.png`)
             try {
                 const token = getStoredAuthToken()
