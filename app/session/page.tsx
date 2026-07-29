@@ -1217,10 +1217,18 @@ function SessionContent() {
             if (screenStreamRef.current) {
                 screenStreamRef.current.getTracks().forEach(t => t.stop());
             }
-            const screen = await navigator.mediaDevices.getDisplayMedia({ 
-                video: { frameRate: { ideal: 120, max: 144 } }, 
-                audio: true 
-            })
+            let screen;
+            try {
+                screen = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: { frameRate: { ideal: 60, max: 144 } }, 
+                    audio: true 
+                });
+            } catch (mediaErr) {
+                console.warn('[DEBUG] getDisplayMedia with audio/high-framerate failed, falling back to basic video only', mediaErr);
+                screen = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: true 
+                });
+            }
             console.log('[DEBUG] getDisplayMedia SUCCESS!');
             screenStreamRef.current = screen
             setIsStreaming(true)
