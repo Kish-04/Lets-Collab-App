@@ -1517,10 +1517,11 @@ function SessionContent() {
             return
         }
         const canvas = document.createElement('canvas')
-        canvas.height = mainVideoRef.current.videoHeight
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
         const ctx = canvas.getContext('2d')
         if (!ctx) return
-        ctx.drawImage(mainVideoRef.current, 0, 0, canvas.width, canvas.height)
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         
         canvas.toBlob(async (blob) => {
             if (!blob) return
