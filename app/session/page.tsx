@@ -1813,17 +1813,18 @@ function SessionContent() {
                                                     <span className="font-mono text-[10px] uppercase text-[var(--accent)]">{participant.permission}</span>
                                                 </div>
                                                 <p className="mt-1 truncate text-[10px] text-[var(--text-dim)] w-full">{participant.email || participant.socketId}</p>
-                                                {selectedParticipant?.id === participant.id && (
-                                                    <div 
-                                                        onClick={(e) => { e.stopPropagation(); socketRef.current?.emit('request-role-swap', { targetId: participant.id, roomId: roomCodeRef.current || joinInput }) }}
-                                                        className="mt-2 w-full text-center text-[10px] font-bold py-1 bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/40 rounded transition-colors"
-                                                    >
-                                                        Swap Roles
-                                                    </div>
-                                                )}
                                             </button>
                                         ))}
                                     </div>
+                                )}
+                                {participants.length > 0 && selectedParticipant && (
+                                    <button
+                                        onClick={() => socketRef.current?.emit('request-role-swap', { targetId: selectedParticipant.id, roomId: roomCodeRef.current || joinInput })}
+                                        className="w-full flex items-center justify-center gap-2 mt-3 px-3 py-2 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors"
+                                    >
+                                        <RefreshCw className="w-4 h-4" />
+                                        Swap Roles with {selectedParticipant.name}
+                                    </button>
                                 )}
                             </div>
                         )}
