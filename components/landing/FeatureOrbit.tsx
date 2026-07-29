@@ -151,7 +151,7 @@ export function FeatureOrbit() {
                 </div>
                 
                 {/* Orbital floating elements based on active index */}
-                {[...Array(3)].map((_, i) => (
+                {[{top:'20%',left:'25%'}, {top:'75%',left:'80%'}, {top:'80%',left:'15%'}].map((pos, i) => (
                   <motion.div
                     key={i}
                     animate={{ 
@@ -165,10 +165,7 @@ export function FeatureOrbit() {
                       y: { duration: 4 + i, repeat: Infinity, ease: "easeInOut", repeatType: "reverse" }
                     }}
                     className="absolute w-3 h-3 bg-white rounded-full mix-blend-overlay blur-[1px]"
-                    style={{
-                      top: `${Math.random() * 100}%`,
-                      left: `${Math.random() * 100}%`,
-                    }}
+                    style={pos}
                   />
                 ))}
               </motion.div>
