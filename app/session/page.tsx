@@ -1539,11 +1539,14 @@ function SessionContent() {
                 const data = await res.json()
                 if (data.success) {
                     addLog('recording', `Evidence captured and saved: ${data.url}`)
+                    alert('Evidence successfully captured and uploaded to server!')
                 } else {
                     addLog('system', 'Evidence capture failed: ' + data.message)
+                    alert('Evidence capture failed: ' + data.message)
                 }
-            } catch (err) {
+            } catch (err: any) {
                 console.error("Upload failed", err)
+                alert('Upload failed: ' + err.message)
             }
         }, 'image/png')
     }
