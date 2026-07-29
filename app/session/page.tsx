@@ -16,7 +16,7 @@ import { Suspense } from 'react'
 import { io, Socket } from "socket.io-client"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -1470,8 +1470,9 @@ function SessionContent() {
 
     const toggleRecording = () => {
         if (!isRecording) {
-            if (!mainVideoRef.current) {
-                addLog('system', 'Cannot start recording: No screen stream active')
+            if (!mainVideoRef.current || (!mainVideoRef.current.srcObject && !localCamRef.current?.srcObject && !remoteCamRef.current?.srcObject)) {
+                addLog('system', 'Cannot start recording: No active media streams to record.')
+                alert('Please start screen sharing or enable your camera before recording.')
                 return
             }
             if (!sessionRecorderRef.current) sessionRecorderRef.current = new SessionRecorder()
@@ -1504,7 +1505,15 @@ function SessionContent() {
     }
 
     const captureEvidence = async () => {
-        if (!mainVideoRef.current) return
+        if (!mainVideoRef.current || !mainVideoRef.current.srcObject) {
+            addLog('system', 'Cannot capture evidence: No active screen stream to capture.')
+            alert('Please start screen sharing before capturing evidence.')
+            return
+        }
+        if (mainVideoRef.current.videoWidth === 0 || mainVideoRef.current.videoHeight === 0) {
+            addLog('system', 'Cannot capture evidence: Stream is not ready yet.')
+            return
+        }
         const canvas = document.createElement('canvas')
         canvas.width = mainVideoRef.current.videoWidth
         canvas.height = mainVideoRef.current.videoHeight
@@ -1515,7 +1524,8 @@ function SessionContent() {
         canvas.toBlob(async (blob) => {
             if (!blob) return
             const formData = new FormData()
-            if (roomCode) formData.append('room', roomCode)
+            const activeRoomCode = roomCodeRef.current || roomCode || joinInput
+            if (activeRoomCode) formData.append('room', activeRoomCode)
             formData.append('evidenceFile', blob, `evidence-${Date.now()}.png`)
             try {
                 const token = getStoredAuthToken()
@@ -1530,11 +1540,14 @@ function SessionContent() {
                 const data = await res.json()
                 if (data.success) {
                     addLog('recording', `Evidence captured and saved: ${data.url}`)
+                    alert('Evidence successfully captured and uploaded to server!')
                 } else {
                     addLog('system', 'Evidence capture failed: ' + data.message)
+                    alert('Evidence capture failed: ' + data.message)
                 }
-            } catch (err) {
+            } catch (err: any) {
                 console.error("Upload failed", err)
+                alert('Upload failed: ' + err.message)
             }
         }, 'image/png')
     }
@@ -1801,23 +1814,24 @@ function SessionContent() {
                                                     <span className="font-mono text-[10px] uppercase text-[var(--accent)]">{participant.permission}</span>
                                                 </div>
                                                 <p className="mt-1 truncate text-[10px] text-[var(--text-dim)] w-full">{participant.email || participant.socketId}</p>
-                                                {selectedParticipant?.id === participant.id && (
-                                                    <div 
-                                                        onClick={(e) => { e.stopPropagation(); socketRef.current?.emit('request-role-swap', { targetId: participant.id, roomId: roomCodeRef.current || joinInput }) }}
-                                                        className="mt-2 w-full text-center text-[10px] font-bold py-1 bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/40 rounded transition-colors"
-                                                    >
-                                                        Swap Roles
-                                                    </div>
-                                                )}
                                             </button>
                                         ))}
                                     </div>
+                                )}
+                                {participants.length > 0 && selectedParticipant && (
+                                    <button
+                                        onClick={() => socketRef.current?.emit('request-role-swap', { targetId: selectedParticipant.id, roomId: roomCodeRef.current || joinInput })}
+                                        className="w-full flex items-center justify-center gap-2 mt-3 px-3 py-2 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors"
+                                    >
+                                        <RefreshCw className="w-4 h-4" />
+                                        Swap Roles with {selectedParticipant.name}
+                                    </button>
                                 )}
                             </div>
                         )}
                         {role === 'controller' && (
                             <button
-                                onClick={() => socketRef.current?.emit('request-role-swap', { targetId: participants.find(p => p.role === 'host')?.id || 'host' })}
+                                onClick={() => socketRef.current?.emit('request-role-swap', { roomId: roomCodeRef.current || joinInput })}
                                 className="w-full flex items-center justify-center gap-2 px-3 py-2 mb-4 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors"
                             >
                                 <RefreshCw className="w-4 h-4" />
