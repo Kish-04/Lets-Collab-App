@@ -7,9 +7,9 @@ const getFaceApi = () => {
     return null;
 };
 
-export type AvatarStyle = 'none' | 'cyberpunk' | 'neon' | 'pixel' | 'hologram' | 'sketch' | 'synthwave' | 'anime';
+export type AvatarStyle = 'none' | 'cyberpunk' | 'neon' | 'pixel' | 'hologram' | 'sketch' | 'synthwave' | 'anime' | 'custom';
 
-const avatarSources: Record<Exclude<AvatarStyle, 'none'>, string> = {
+const avatarSources: Record<Exclude<AvatarStyle, 'none' | 'custom'>, string> = {
     cyberpunk: '/avatars/cyberpunk-visor.svg',
     neon: '/avatars/neon-mask.svg',
     pixel: '/avatars/pixel-face.svg',
@@ -27,6 +27,8 @@ export class VirtualAvatar {
     private avatarImage: HTMLImageElement | null = null;
     private currentStyle: AvatarStyle = 'none';
     private modelsLoaded: boolean = false;
+    private instanceId: number = 0;
+    public onLoadError?: (err: unknown) => void;
 
     constructor() {
         this.canvas = document.createElement('canvas');
@@ -41,18 +43,23 @@ export class VirtualAvatar {
     private async loadModels() {
         if (this.modelsLoaded) return;
         
-        await loadExternalScript("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js");
-        const faceapi = getFaceApi();
-        if (!faceapi) return;
-        const modelUrl = 'https://justadudewhohacks.github.io/face-api.js/models';
-        await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
-            faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl)
-        ]);
-        this.modelsLoaded = true;
+        try {
+            await loadExternalScript("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js");
+            const faceapi = getFaceApi();
+            if (!faceapi) throw new Error('face-api failed to attach to window');
+            const modelUrl = '/models/face-api';
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
+                faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl)
+            ]);
+            this.modelsLoaded = true;
+        } catch (err) {
+            console.error('[VirtualAvatar] Failed to load face detection models:', err);
+            this.onLoadError?.(err);
+        }
     }
 
-    public setAvatarStyle(style: AvatarStyle) {
+    public setAvatarStyle(style: AvatarStyle, customImageUrl?: string) {
         this.currentStyle = style;
         if (style === 'none') {
             this.avatarImage = null;
@@ -60,22 +67,23 @@ export class VirtualAvatar {
         }
 
         this.avatarImage = new Image();
-        this.avatarImage.src = avatarSources[style];
+        this.avatarImage.src = style === 'custom' && customImageUrl ? customImageUrl : avatarSources[style as keyof typeof avatarSources];
         
         // Fall back cleanly if a packaged visual asset is missing.
         this.avatarImage.onerror = () => {
-            console.warn(`Avatar image not found: ${this.avatarImage?.src}.`);
+            console.error(`[VirtualAvatar] Failed to load avatar image: ${this.avatarImage?.src}.`);
+            this.avatarImage = null;
             this.currentStyle = 'none';
+            this.onLoadError?.(new Error('Avatar image failed to load'));
         };
     }
 
-    private mlLoopRunning: boolean = false;
     private lastDetection: any = null;
 
     public start(videoElement: HTMLVideoElement): MediaStream {
         this.stop(); // Stop any existing loop
         this.isRunning = true;
-        this.mlLoopRunning = true;
+        const myInstanceId = ++this.instanceId;
         
         // Wait for video to be ready
         if (videoElement.readyState >= 2) {
@@ -85,7 +93,7 @@ export class VirtualAvatar {
 
         // ML Loop (Runs as fast as CPU allows without blocking render)
         const mlLoop = async () => {
-            if (!this.mlLoopRunning) return;
+            if (!this.isRunning || myInstanceId !== this.instanceId) return; // bail if superseded
             if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete) {
                 try {
                     const faceapi = getFaceApi();
@@ -103,6 +111,12 @@ export class VirtualAvatar {
         // Fast Render Loop (Runs at monitor refresh rate)
         const renderLoop = () => {
             if (!this.isRunning || !this.ctx) return;
+
+            // Handle dynamic video resizing (fixes pipelining issues)
+            if (videoElement.videoWidth > 0 && this.canvas.width !== videoElement.videoWidth) {
+                this.canvas.width = videoElement.videoWidth;
+                this.canvas.height = videoElement.videoHeight;
+            }
 
             // Draw original video frame immediately
             this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
@@ -130,12 +144,28 @@ export class VirtualAvatar {
                         height
                     );
                 } else {
-                    const width = box.width * 1.4;
-                    const height = box.height * 1.4;
-                    const x = box.x - (width - box.width) / 2;
-                    const y = box.y - (height - box.height) / 2;
+                    const boxWidth = box.width * 1.4;
+                    const boxHeight = box.height * 1.4;
+                    
+                    // "contain" style fit logic
+                    const imgRatio = this.avatarImage.naturalWidth / this.avatarImage.naturalHeight;
+                    const boxRatio = boxWidth / boxHeight;
+                    
+                    let drawWidth = boxWidth;
+                    let drawHeight = boxHeight;
+                    
+                    if (imgRatio > boxRatio) {
+                        // Image is wider than box, fit width
+                        drawHeight = boxWidth / imgRatio;
+                    } else {
+                        // Image is taller than box, fit height
+                        drawWidth = boxHeight * imgRatio;
+                    }
 
-                    this.ctx.drawImage(this.avatarImage, x, y, width, height);
+                    const x = box.x - (boxWidth - box.width) / 2 + (boxWidth - drawWidth) / 2;
+                    const y = box.y - (boxHeight - box.height) / 2 + (boxHeight - drawHeight) / 2;
+
+                    this.ctx.drawImage(this.avatarImage, x, y, drawWidth, drawHeight);
                 }
             }
 
@@ -150,7 +180,7 @@ export class VirtualAvatar {
 
     public stop() {
         this.isRunning = false;
-        this.mlLoopRunning = false;
+        this.instanceId++; // invalidate any active mlLoop
         if (this.loopId) {
             cancelAnimationFrame(this.loopId);
         }

@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import url('https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
@@ -335,6 +336,10 @@ html[data-reduced-motion="true"] *::after {
 /* Font utility classes */
 .font-display {
   font-family: var(--font-display), 'Exo 2', system-ui, sans-serif;
+}
+
+.font-emoji {
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
 }
 
 /* Custom scrollbar */

@@ -105,7 +105,7 @@ const permissionLevels = [
     { id: "full" as const, label: "Full Control", icon: Zap },
 ]
 
-const quickChatEmojis = ['👍', '🙏', '✅', '🔥', '😂', '🎉']
+const quickChatEmojis = ['👍', '👎', '🙏', '✅', '❌', '🔥', '😂', '🎉', '💡', '🤔', '🚀', '❤️', '👀', '✨']
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
 
@@ -222,13 +222,21 @@ function SessionContent() {
     const [observationRequest, setObservationRequest] = useState<string | null>(null)
     const [voiceFilter, setVoiceFilter] = useState<VoiceFilter>('none')
     const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>('none')
+    const [avatarError, setAvatarError] = useState<string | null>(null)
+    const customAvatarObjectUrlRef = useRef<string | null>(null)
+    const prevAvatarStyleRef = useRef<AvatarStyle>('none')
+    
     const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyle>('none')
     const [customBackgroundUrl, setCustomBackgroundUrl] = useState<string | null>(null)
+    const [bgError, setBgError] = useState<string | null>(null)
+    const customBgObjectUrlRef = useRef<string | null>(null)
+    const prevBackgroundStyleRef = useRef<BackgroundStyle>('none')
     const [isCanvasMode, setIsCanvasMode] = useState(false)
     const logScrollRef = useRef<HTMLDivElement>(null)
     // ── Refs ──────────────────────────────────────────────────────────────────
     const mainVideoRef = useRef<HTMLVideoElement>(null)
     const backgroundInputRef = useRef<HTMLInputElement>(null)
+    const avatarInputRef = useRef<HTMLInputElement>(null)
     const lastViolationTimeRef = useRef<number>(0)  // screen share / remote screen
     const localCamRef = useRef<HTMLVideoElement>(null)  // your camera (PiP)
     const localPreviewRef = useRef<HTMLVideoElement>(null)
@@ -267,7 +275,12 @@ function SessionContent() {
         let currentVideoSource = localCamRef.current;
 
         if (backgroundStyle !== 'none') {
-            if (!virtualBackgroundRef.current) virtualBackgroundRef.current = new VirtualBackground();
+            if (!virtualBackgroundRef.current) {
+                virtualBackgroundRef.current = new VirtualBackground();
+                virtualBackgroundRef.current.onLoadError = (err) => {
+                    setBgError(err instanceof Error ? err.message : 'Background model failed to load');
+                };
+            }
             virtualBackgroundRef.current.setBackgroundStyle(backgroundStyle, backgroundStyle === 'custom' && customBackgroundUrl ? customBackgroundUrl : undefined);
             
             if (currentVideoSource && currentVideoSource.readyState >= 2) {
@@ -349,6 +362,26 @@ function SessionContent() {
     const participantsRef = useRef<Participant[]>([])
     const clipboardAllowedRef = useRef(false)
     const remoteMediaStreamIdsRef = useRef<{ screen?: string | null; camera?: string | null }>({})
+    // Virtual background resource cleanup
+    useEffect(() => {
+        return () => {
+            if (customBgObjectUrlRef.current) {
+                URL.revokeObjectURL(customBgObjectUrlRef.current);
+                customBgObjectUrlRef.current = null;
+            }
+        };
+    }, []);
+
+    // Virtual avatar resource cleanup
+    useEffect(() => {
+        return () => {
+            if (customAvatarObjectUrlRef.current) {
+                URL.revokeObjectURL(customAvatarObjectUrlRef.current);
+                customAvatarObjectUrlRef.current = null;
+            }
+        };
+    }, []);
+
     const latencyRef = useRef(0)
     const packetLossRef = useRef<number | null>(null)
     const streamFpsRef = useRef<number | null>(null)
@@ -553,6 +586,10 @@ function SessionContent() {
     }
 
     const toggleLocalCam = async () => {
+        if (sessionMode === 'supervised' && role === 'controller' && !localCamMuted) {
+            addLog('system', 'Camera cannot be disabled during a supervised session.');
+            return;
+        }
         if (localStreamRef.current) {
             const videoTrack = localStreamRef.current.getVideoTracks()[0]
             if (videoTrack) {
@@ -583,6 +620,14 @@ function SessionContent() {
             }
         }
     }
+
+    useEffect(() => {
+        const handleFullscreenChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    }, []);
 
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'host') {
@@ -1092,6 +1137,52 @@ function SessionContent() {
             alert('The session has ended.')
             window.location.href = '/app'
         })
+        socket.on('role-swap-requested', ({ fromId, fromName }: { fromId: string, fromName: string }) => {
+            if (window.confirm(`${fromName} has requested to swap roles with you. Do you accept?`)) {
+                socket.emit('accept-role-swap', { targetId: fromId, roomId: roomCodeRef.current || joinInput })
+            }
+        })
+        socket.on('role-swap-completed', ({ newHostId, oldHostId, roomState }: any) => {
+            addLog('system', 'Role swap completed, reconnecting streams...')
+            
+            // Tear down existing connections
+            if (pcRef.current) {
+                pcRef.current.close()
+                pcRef.current = null
+            }
+            hostPcRefs.current.forEach(pc => pc.close())
+            hostPcRefs.current.clear()
+            observerPcRefs.current.forEach(pc => pc.close())
+            observerPcRefs.current.clear()
+            hostInputChannelRefs.current.clear()
+            controllerInputChannelRef.current = null
+            dataChannelManager.clearAll()
+            
+            // Stop screen sharing if active
+            if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach(t => t.stop())
+                screenStreamRef.current = null
+                setIsStreaming(false)
+            }
+
+            // Flip role
+            const newRole = socket.id === newHostId ? 'host' : 'controller'
+            setRole(newRole)
+            currentRoleRef.current = newRole
+            setConnectionState('waiting')
+
+            // Update state from server
+            setRoomCode(roomState.roomCode)
+            setSessionMode(roomState.mode)
+            setPermission(roomState.permission)
+            setParticipants(roomState.participants || [])
+            
+            // If we became the controller, renegotiate
+            if (newRole === 'controller') {
+                setConnectionState('connecting')
+                socket.emit('join-room', roomState.roomCode, 'controller', { name: localStorage.getItem('ircp_name') || 'Controller' })
+            }
+        })
         socket.on('session-error', (err: any) => {
             alert('Session Error: ' + err.message);
         })
@@ -1107,6 +1198,9 @@ function SessionContent() {
         console.log('[DEBUG] startSharing CALLED!');
         try {
             console.log('[DEBUG] Calling getDisplayMedia...');
+            if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach(t => t.stop());
+            }
             const screen = await navigator.mediaDevices.getDisplayMedia({ 
                 video: { frameRate: { ideal: 120, max: 144 } }, 
                 audio: true 
@@ -1166,6 +1260,15 @@ function SessionContent() {
         }
     }
 
+    const stopSharing = () => {
+        if (screenStreamRef.current) {
+            screenStreamRef.current.getTracks().forEach(t => t.stop())
+            screenStreamRef.current = null
+            setIsStreaming(false)
+            addLog('system', 'Screen sharing stopped manually')
+        }
+    }
+
     const updatePermission = (nextPermission: PermissionLevel) => {
         setPermission(nextPermission)
         if (role === 'host' && roomCode) {
@@ -1199,15 +1302,23 @@ function SessionContent() {
         const rect = event.currentTarget.getBoundingClientRect()
         const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
         const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
+        const button = 'button' in event ? event.button : 0;
+        
+        if (type === 'mousedown') pressedMouseButtonsRef.current.add(button);
+        else if (type === 'mouseup') pressedMouseButtonsRef.current.delete(button);
+
         sendControlPayload({
             room: roomCodeRef.current,
             type,
             x,
             y,
-            button: 'button' in event ? event.button : 0,
+            button,
             deltaY: 'deltaY' in event ? event.deltaY : 0,
         })
     }
+
+    const pressedKeysRef = useRef<Set<string>>(new Set());
+    const pressedMouseButtonsRef = useRef<Set<number>>(new Set());
 
     useEffect(() => {
         if (role !== 'controller' || connectionState !== 'connected' || !keyboardEnabled) return
@@ -1225,6 +1336,10 @@ function SessionContent() {
                 return
             }
             event.preventDefault()
+            
+            if (type === 'keydown') pressedKeysRef.current.add(event.key);
+            else pressedKeysRef.current.delete(event.key);
+
             sendControlPayload({
                 room: roomCodeRef.current,
                 type,
@@ -1238,13 +1353,44 @@ function SessionContent() {
                 },
             })
         }
+        
+        const releaseAllInputs = () => {
+            pressedKeysRef.current.forEach(key => {
+                sendControlPayload({
+                    room: roomCodeRef.current,
+                    type: 'keyup',
+                    key,
+                    code: '', // fallback since we don't store code
+                    modifiers: { shift: false, ctrl: false, alt: false, meta: false },
+                });
+            });
+            pressedKeysRef.current.clear();
+
+            pressedMouseButtonsRef.current.forEach(button => {
+                sendControlPayload({
+                    room: roomCodeRef.current,
+                    type: 'mouseup',
+                    x: 0,
+                    y: 0,
+                    button,
+                    deltaY: 0,
+                });
+            });
+            pressedMouseButtonsRef.current.clear();
+        }
+
         const onKeyDown = (event: KeyboardEvent) => sendKey(event, 'keydown')
         const onKeyUp = (event: KeyboardEvent) => sendKey(event, 'keyup')
+        
         window.addEventListener('keydown', onKeyDown)
         window.addEventListener('keyup', onKeyUp)
+        window.addEventListener('blur', releaseAllInputs)
+        
         return () => {
             window.removeEventListener('keydown', onKeyDown)
             window.removeEventListener('keyup', onKeyUp)
+            window.removeEventListener('blur', releaseAllInputs)
+            releaseAllInputs()
         }
     }, [role, connectionState, keyboardEnabled, clipboardAllowed, addLog])
 
@@ -1490,13 +1636,32 @@ function SessionContent() {
                         )}
                     </button>
                     <button onClick={toggleLocalMic} className={cn("p-1.5 rounded-lg border", localMicMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>{localMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
-                    <button onClick={toggleLocalCam} aria-label="Toggle Camera" className={cn("p-1.5 rounded-lg border", localCamMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>{localCamMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}</button>
+                    <button 
+                        onClick={toggleLocalCam} 
+                        disabled={sessionMode === 'supervised' && role === 'controller' && !localCamMuted}
+                        aria-label="Toggle Camera" 
+                        className={cn("p-1.5 rounded-lg border", (sessionMode === 'supervised' && role === 'controller' && !localCamMuted) ? "opacity-50 cursor-not-allowed" : "", localCamMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}
+                    >
+                        {localCamMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                    </button>
                     <button onClick={toggleFullscreen} aria-label="Toggle Fullscreen" className="p-1.5 rounded-lg border text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                     </button>
                     <button onClick={() => setIsCanvasMode(!isCanvasMode)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", isCanvasMode ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle Canvas Mode">
                         <PenTool className="w-4 h-4" />
                     </button>
+                    {role === 'controller' && typeof window !== 'undefined' && (window as any).ipcRenderer && (
+                        <button 
+                            onClick={() => socketRef.current?.emit('request-role-swap', { roomId: roomCodeRef.current || joinInput })}
+                            className="h-9 px-4 rounded-full bg-[var(--accent)] text-black text-xs font-bold transition-transform active:scale-95"
+                        >SWAP ROLES</button>
+                    )}
+                    {role === 'host' && isStreaming && (
+                        <button 
+                            onClick={stopSharing}
+                            className="h-9 px-4 rounded-full bg-[var(--amber)] text-black text-xs font-bold transition-transform active:scale-95"
+                        >STOP SHARING</button>
+                    )}
                     {role === 'host' ? (
                         <button onClick={() => setShowKillConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-white text-xs font-bold">END SESSION</button>
                     ) : (
@@ -1578,17 +1743,25 @@ function SessionContent() {
                                                 key={participant.id}
                                                 onClick={() => setSelectedControllerId(participant.id)}
                                                 className={cn(
-                                                    "w-full rounded-lg border px-3 py-2 text-left transition-colors",
+                                                    "w-full rounded-lg border px-3 py-2 text-left transition-colors flex flex-col",
                                                     selectedParticipant?.id === participant.id
                                                         ? "border-[var(--accent)] bg-[var(--accent)]/10"
                                                         : "border-[var(--border)] bg-[var(--bg)] hover:border-[var(--accent)]/40"
                                                 )}
                                             >
-                                                <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center justify-between gap-2 w-full">
                                                     <span className="truncate text-xs font-semibold text-[var(--text-primary)]">{participant.name}</span>
                                                     <span className="font-mono text-[10px] uppercase text-[var(--accent)]">{participant.permission}</span>
                                                 </div>
-                                                <p className="mt-1 truncate text-[10px] text-[var(--text-dim)]">{participant.email || participant.socketId}</p>
+                                                <p className="mt-1 truncate text-[10px] text-[var(--text-dim)] w-full">{participant.email || participant.socketId}</p>
+                                                {typeof window !== 'undefined' && (window as any).ipcRenderer && selectedParticipant?.id === participant.id && (
+                                                    <div 
+                                                        onClick={(e) => { e.stopPropagation(); socketRef.current?.emit('request-role-swap', { targetId: participant.id, roomId: roomCodeRef.current || joinInput }) }}
+                                                        className="mt-2 w-full text-center text-[10px] font-bold py-1 bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/40 rounded transition-colors"
+                                                    >
+                                                        Swap Roles
+                                                    </div>
+                                                )}
                                             </button>
                                         ))}
                                     </div>
@@ -1679,10 +1852,22 @@ function SessionContent() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] text-[var(--text-secondary)] block mb-1">Virtual Avatar</label>
+                                        <div className="flex justify-between items-center mb-1">
+                                            <label className="text-[10px] text-[var(--text-secondary)] block">Virtual Avatar</label>
+                                            {avatarError && <span className="text-[9px] text-[var(--red)] truncate ml-2 max-w-[150px]">{avatarError}</span>}
+                                        </div>
                                         <select 
                                             value={avatarStyle}
-                                            onChange={(e) => setAvatarStyle(e.target.value as AvatarStyle)}
+                                            onChange={(e) => {
+                                                const val = e.target.value as AvatarStyle;
+                                                setAvatarError(null);
+                                                if (val === 'custom') {
+                                                    prevAvatarStyleRef.current = avatarStyle;
+                                                    avatarInputRef.current?.click();
+                                                } else {
+                                                    setAvatarStyle(val);
+                                                }
+                                            }}
                                             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
                                         >
                                             <option value="none">Normal Camera</option>
@@ -1693,15 +1878,61 @@ function SessionContent() {
                                             <option value="sketch">Sketch Outline</option>
                                             <option value="synthwave">Synthwave</option>
                                             <option value="anime">Anime</option>
+                                            <option value="custom">Custom...</option>
                                         </select>
+                                        <input 
+                                            type="file" 
+                                            ref={avatarInputRef} 
+                                            className="hidden" 
+                                            accept="image/*"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (!file) {
+                                                    if (avatarStyle !== 'custom') {
+                                                        setAvatarStyle(prevAvatarStyleRef.current);
+                                                    } else if (!customAvatarObjectUrlRef.current) {
+                                                        setAvatarStyle('none');
+                                                    }
+                                                    return;
+                                                }
+                                                
+                                                if (!file.type.startsWith('image/')) {
+                                                    setAvatarError('Please select a valid image file');
+                                                    setAvatarStyle(prevAvatarStyleRef.current);
+                                                    e.target.value = '';
+                                                    return;
+                                                }
+                                                
+                                                if (file.size > 10 * 1024 * 1024) {
+                                                    setAvatarError('Image too large (max 10MB)');
+                                                    setAvatarStyle(prevAvatarStyleRef.current);
+                                                    e.target.value = '';
+                                                    return;
+                                                }
+
+                                                if (customAvatarObjectUrlRef.current) {
+                                                    URL.revokeObjectURL(customAvatarObjectUrlRef.current);
+                                                }
+                                                const url = URL.createObjectURL(file);
+                                                customAvatarObjectUrlRef.current = url;
+                                                setAvatarStyle('custom');
+                                                setAvatarError(null);
+                                                e.target.value = '';
+                                            }} 
+                                        />
                                     </div>
                                     <div>
-                                        <label className="text-[10px] text-[var(--text-secondary)] block mb-1">Virtual Background</label>
+                                        <div className="flex justify-between items-center mb-1">
+                                            <label className="text-[10px] text-[var(--text-secondary)] block">Virtual Background</label>
+                                            {bgError && <span className="text-[9px] text-[var(--red)] truncate ml-2 max-w-[150px]">{bgError}</span>}
+                                        </div>
                                         <select 
                                             value={backgroundStyle}
                                             onChange={(e) => {
                                                 const val = e.target.value as BackgroundStyle;
+                                                setBgError(null);
                                                 if (val === 'custom') {
+                                                    prevBackgroundStyleRef.current = backgroundStyle;
                                                     backgroundInputRef.current?.click();
                                                 } else {
                                                     setBackgroundStyle(val);
@@ -1715,7 +1946,7 @@ function SessionContent() {
                                             <option value="beach">Tropical Beach</option>
                                             <option value="space">Outer Space</option>
                                             <option value="matrix">Matrix</option>
-                                            <option value="custom">Choose your own...</option>
+                                            <option value="custom">Custom...</option>
                                         </select>
                                         <input 
                                             type="file" 
@@ -1724,15 +1955,37 @@ function SessionContent() {
                                             accept="image/*"
                                             onChange={(e) => {
                                                 const file = e.target.files?.[0];
-                                                if (file) {
-                                                    const url = URL.createObjectURL(file);
-                                                    setCustomBackgroundUrl(url);
-                                                    setBackgroundStyle('custom');
-                                                } else {
-                                                    if (backgroundStyle === 'custom' && !customBackgroundUrl) {
+                                                if (!file) {
+                                                    if (backgroundStyle !== 'custom') {
+                                                        setBackgroundStyle(prevBackgroundStyleRef.current);
+                                                    } else if (!customBackgroundUrl) {
                                                         setBackgroundStyle('none');
                                                     }
+                                                    return;
                                                 }
+                                                
+                                                if (!file.type.startsWith('image/')) {
+                                                    setBgError('Please select a valid image file');
+                                                    setBackgroundStyle(prevBackgroundStyleRef.current);
+                                                    e.target.value = '';
+                                                    return;
+                                                }
+                                                
+                                                if (file.size > 10 * 1024 * 1024) {
+                                                    setBgError('Image too large (max 10MB)');
+                                                    setBackgroundStyle(prevBackgroundStyleRef.current);
+                                                    e.target.value = '';
+                                                    return;
+                                                }
+
+                                                if (customBgObjectUrlRef.current) {
+                                                    URL.revokeObjectURL(customBgObjectUrlRef.current);
+                                                }
+                                                const url = URL.createObjectURL(file);
+                                                customBgObjectUrlRef.current = url;
+                                                setCustomBackgroundUrl(url);
+                                                setBackgroundStyle('custom');
+                                                setBgError(null);
                                                 e.target.value = '';
                                             }} 
                                         />
@@ -1879,7 +2132,7 @@ function SessionContent() {
                                                 <span className="truncate text-[10px] font-bold uppercase text-[var(--text-secondary)]">{message.senderName}</span>
                                                 <span className="shrink-0 font-mono text-[9px] text-[var(--text-dim)]">{message.time}</span>
                                             </div>
-                                            <p className="break-words text-sm leading-relaxed text-[var(--text-primary)]">{message.text}</p>
+                                            <p className="break-words text-sm leading-relaxed text-[var(--text-primary)] font-emoji">{message.text}</p>
                                         </div>
                                     </div>
                                 )
@@ -1893,7 +2146,7 @@ function SessionContent() {
                                     key={emoji}
                                     type="button"
                                     onClick={() => setChatInput(value => `${value}${emoji}`)}
-                                    className="flex h-7 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] text-sm hover:border-[var(--accent)]"
+                                    className="flex h-7 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] text-sm hover:border-[var(--accent)] font-emoji"
                                 >
                                     {emoji}
                                 </button>
@@ -1904,7 +2157,7 @@ function SessionContent() {
                                 value={chatInput}
                                 onChange={event => setChatInput(event.target.value)}
                                 maxLength={1000}
-                                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] font-emoji"
                                 placeholder="Message everyone"
                             />
                             <button

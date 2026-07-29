@@ -844,6 +844,84 @@ io.on('connection', (socket) => {
     activateController(normalizedRoomId, controllerId, permission, options);
   });
 
+  socket.on('request-role-swap', ({ targetId, roomId }) => {
+    const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(normalizedRoomId);
+    if (!room) return;
+    
+    // Host requesting controller
+    if (socket.id === room.hostSocketId && room.controllers.has(targetId)) {
+      io.to(targetId).emit('role-swap-requested', { fromId: socket.id, fromName: room.hostName });
+      pushEvent(normalizedRoomId, 'system', `Host requested role swap with controller`);
+    } 
+    // Controller requesting host
+    else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId)) {
+      const controller = room.controllers.get(socket.id);
+      io.to(room.hostSocketId).emit('role-swap-requested', { fromId: socket.id, fromName: controller.name });
+      pushEvent(normalizedRoomId, 'system', `${controller.name} requested to become host`);
+    }
+  });
+
+  socket.on('accept-role-swap', ({ targetId, roomId }) => {
+    const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(normalizedRoomId);
+    if (!room) return;
+
+    let newHostId, oldHostId, newHostParticipant;
+
+    if (socket.id === room.hostSocketId && room.controllers.has(targetId)) {
+      // Host accepts controller's request
+      oldHostId = socket.id;
+      newHostId = targetId;
+      newHostParticipant = room.controllers.get(targetId);
+    } else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId)) {
+      // Controller accepts host's request
+      newHostId = socket.id;
+      oldHostId = room.hostSocketId;
+      newHostParticipant = room.controllers.get(socket.id);
+    } else {
+      return;
+    }
+
+    const oldHostName = room.hostName;
+    const oldHostEmail = room.hostEmail;
+
+    // Create participant entry for the old host
+    const oldHostParticipant = {
+      socketId: oldHostId,
+      name: oldHostName,
+      email: oldHostEmail,
+      joinedAt: Date.now(),
+      permission: 'full', // Give old host full permission by default
+      clipboardAllowed: true
+    };
+
+    // Update room
+    room.hostSocketId = newHostId;
+    room.hostName = newHostParticipant.name;
+    room.hostEmail = newHostParticipant.email;
+
+    room.controllers.delete(newHostId);
+    room.controllers.set(oldHostId, oldHostParticipant);
+
+    // Update socket roles
+    const newHostSocket = io.sockets.sockets.get(newHostId);
+    if (newHostSocket) newHostSocket.role = 'host';
+    const oldHostSocket = io.sockets.sockets.get(oldHostId);
+    if (oldHostSocket) oldHostSocket.role = 'controller';
+
+    pushEvent(normalizedRoomId, 'system', `Role swap completed: ${room.hostName} is now the host`);
+    
+    io.to(normalizedRoomId).emit('role-swap-completed', {
+      newHostId,
+      oldHostId,
+      roomState: roomState(normalizedRoomId, room)
+    });
+    
+    emitRoomState(normalizedRoomId);
+    broadcastSessions();
+  });
+
   socket.on('offer', (payload, maybeRoomId) => {
     const data = payload && payload.offer ? payload : { offer: payload, roomId: maybeRoomId };
     const room = rooms.get(data.roomId || socket.roomCode);

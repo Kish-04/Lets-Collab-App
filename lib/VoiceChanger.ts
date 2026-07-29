@@ -13,6 +13,7 @@ export class VoiceChanger {
     private delayNode: DelayNode;
     private feedbackGain: GainNode;
     private distortionNode: WaveShaperNode;
+    private highShelfFilter: BiquadFilterNode;
 
     constructor() {
         this.context = new window.AudioContext();
@@ -26,6 +27,7 @@ export class VoiceChanger {
         this.delayNode = this.context.createDelay();
         this.feedbackGain = this.context.createGain();
         this.distortionNode = this.context.createWaveShaper();
+        this.highShelfFilter = this.context.createBiquadFilter();
 
         // Start oscillator for ring mod (AM Synthesis)
         this.ringModulator.start();
@@ -53,11 +55,15 @@ export class VoiceChanger {
         this.delayNode.disconnect();
         this.feedbackGain.disconnect();
         this.distortionNode.disconnect();
+        this.highShelfFilter.disconnect();
         this.source.disconnect();
 
         if (filterType === 'none') {
             this.source.connect(this.destination);
-            return this.destination.stream;
+            const processedStream = new MediaStream();
+            this.destination.stream.getAudioTracks().forEach(track => processedStream.addTrack(track));
+            stream.getVideoTracks().forEach(track => processedStream.addTrack(track));
+            return processedStream;
         }
 
         if (filterType === 'robot') {
@@ -69,7 +75,7 @@ export class VoiceChanger {
             this.ringModulator.connect(this.ringModGain.gain);
             
             this.ringModGain.connect(this.outputGain);
-            this.outputGain.gain.value = 2.0; // Boost volume
+            this.outputGain.gain.value = 1.2; // Adjusted volume
             this.outputGain.connect(this.destination);
         } else if (filterType === 'alien') {
             this.ringModulator.type = 'sine';
@@ -78,7 +84,9 @@ export class VoiceChanger {
             this.source.connect(this.ringModGain);
             this.ringModulator.connect(this.ringModGain.gain);
             
-            this.ringModGain.connect(this.destination);
+            this.ringModGain.connect(this.outputGain);
+            this.outputGain.gain.value = 1.2;
+            this.outputGain.connect(this.destination);
         } else if (filterType === 'radio') {
             // Highpass and Lowpass to simulate a bad radio
             this.filter.type = 'bandpass';
@@ -86,14 +94,16 @@ export class VoiceChanger {
             this.filter.Q.value = 2.0;
 
             this.source.connect(this.filter);
-            this.filter.connect(this.destination);
+            this.filter.connect(this.outputGain);
+            this.outputGain.gain.value = 2.0;
+            this.outputGain.connect(this.destination);
         } else if (filterType === 'megaphone') {
             this.filter.type = 'bandpass';
             this.filter.frequency.value = 1800;
             this.filter.Q.value = 1.6;
             this.distortionNode.curve = this.createDistortionCurve(180);
             this.distortionNode.oversample = '2x';
-            this.outputGain.gain.value = 1.35;
+            this.outputGain.gain.value = 1.2;
 
             this.source.connect(this.filter);
             this.filter.connect(this.distortionNode);
@@ -112,7 +122,7 @@ export class VoiceChanger {
             this.ringModulator.connect(this.ringModGain.gain);
             
             this.ringModGain.connect(this.outputGain);
-            this.outputGain.gain.value = 1.5;
+            this.outputGain.gain.value = 1.3;
             this.outputGain.connect(this.destination);
         } else if (filterType === 'chipmunk') {
             // Highpass filter + high freq ring mod for squeaky effect
@@ -134,11 +144,14 @@ export class VoiceChanger {
             this.delayNode.delayTime.value = 0.3; // 300ms delay
             this.feedbackGain.gain.value = 0.4;   // 40% feedback
 
-            this.source.connect(this.destination); // Direct sound
+            this.source.connect(this.outputGain); // Direct sound
             this.source.connect(this.delayNode);   // Into delay
             this.delayNode.connect(this.feedbackGain);
             this.feedbackGain.connect(this.delayNode); // Feedback loop
-            this.delayNode.connect(this.destination);  // Delayed sound to output
+            this.delayNode.connect(this.outputGain);  // Delayed sound to output
+            
+            this.outputGain.gain.value = 1.1;
+            this.outputGain.connect(this.destination);
         } else if (filterType === 'male') {
             // Boost low frequencies (formants) to simulate a deeper male voice
             this.filter.type = 'lowshelf';
@@ -146,23 +159,24 @@ export class VoiceChanger {
             this.filter.gain.value = 10; // Boost bass
 
             this.source.connect(this.filter);
-            this.filter.connect(this.destination);
+            this.filter.connect(this.outputGain);
+            this.outputGain.gain.value = 1.0;
+            this.outputGain.connect(this.destination);
         } else if (filterType === 'female') {
             // Boost high frequencies and cut lows for a higher pitched simulation
             this.filter.type = 'highpass';
             this.filter.frequency.value = 300;
             
-            // We can chain another filter using the output gain as a bridge
-            this.ringModGain.disconnect();
-            
-            const highShelf = this.context.createBiquadFilter();
-            highShelf.type = 'highshelf';
-            highShelf.frequency.value = 2500;
-            highShelf.gain.value = 8; // Boost highs
+            this.highShelfFilter.type = 'highshelf';
+            this.highShelfFilter.frequency.value = 2500;
+            this.highShelfFilter.gain.value = 8; // Boost highs
 
             this.source.connect(this.filter);
-            this.filter.connect(highShelf);
-            highShelf.connect(this.destination);
+            this.filter.connect(this.highShelfFilter);
+            this.highShelfFilter.connect(this.outputGain);
+            
+            this.outputGain.gain.value = 1.0;
+            this.outputGain.connect(this.destination);
         }
 
         // Return the modified audio stream combined with the original video tracks

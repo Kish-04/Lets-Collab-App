@@ -62,6 +62,12 @@ export class DataChannelManager {
         }
     }
 
+    public clearAll() {
+        this.channels.forEach(channel => channel.close());
+        this.channels.clear();
+        this.listeners.clear();
+    }
+
     public getBufferedAmount(label: string, targetPeerId: string): number {
         const channel = this.channels.get(`${label}-${targetPeerId}`);
         return channel ? channel.bufferedAmount : 0;

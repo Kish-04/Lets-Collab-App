@@ -190,3 +190,18 @@
 - Vercel frontend `https://letscollab-pearl.vercel.app/` - PASS: HTTP 200 HTML on 2026-07-27.
 - Vercel frontend `https://letscollab-pearl.vercel.app/session?create=true&mode=collaboration` - PASS: HTTP 200 HTML on 2026-07-27.
 - Manual dashboard note: the pushed branch `codex/audit-real-feature-fixes` is on GitHub, but Render/Vercel production will only reflect these commits after the branch is merged or the dashboards are configured to deploy it.
+
+## Virtual Background Update (0.1.3)
+
+- `lib/VirtualBackground.ts` - FIXED: Cancelled `fallbackFrameId` correctly inside `checkReadyInterval` and cleared redundant restart logic (Bug 1). Added `.catch()` to `initSelfieSegmentation()` and `public onLoadError?: (err: unknown) => void` (Bug 2). Added `this.backgroundImage.onerror` to handle broken background images (Bug 3). Stored `readyIntervalId` and cleared it explicitly in `stop()` (Bug 4).
+- `app/session/page.tsx` - FIXED/NEW: Added "Custom..." to `<select>` and wired hidden `<input type="file" />`. Implemented client-side file validation (image type, max 10MB). Generated and applied `URL.createObjectURL(file)` with proper revocation in an unmount cleanup effect. Added non-blocking inline error UI for virtual background exceptions.
+
+## Virtual Avatar Update (0.1.4)
+
+- `lib/VirtualAvatar.ts` - FIXED: Added `.catch()` to `loadModels()` and exposed `public onLoadError?: (err: unknown) => void` (Bug 1). Eliminated third-party model dependency by downloading `tiny_face_detector` and `face_landmark_68` shards locally (Bug 2). Prevented ML loop race conditions by introducing an `instanceId` generation tracker (Bug 3). Fixed aspect ratio warping by computing a proportional "contain" box fit (Part 2). Added `custom` to `AvatarStyle` union and supported `customImageUrl`.
+- `app/session/page.tsx` - NEW: Replicated Virtual Background Custom Upload logic for the Virtual Avatar dropdown. Validates image inputs (< 10MB), manages object URL creation/revocation safely via `useRef`, handles dropdown cancellation gracefully, and surfaces `avatarError` warnings inline via the `onLoadError` binding.
+
+## Voice Changer Update (0.1.5)
+
+- `lib/VoiceChanger.ts` - FIXED: Reconstructed `MediaStream` containing video tracks within the `'none'` block to prevent unexpected video dropout (Bug 1). Promoted `highShelf` filter in the `'female'` path to a tracked instance property initialized in the constructor, preventing memory leaks by properly disconnecting it in the global reset block (Bug 2). Removed dead `ringModGain.disconnect()` code from the `'female'` path (Bug 3). Tuned `outputGain` across all filters to standardize perceived RMS loudness and prevent digital clipping on louder presets like `'robot'` (Bug 5).
+- `app/session/page.tsx` - ARCHITECTURE NOTE: Investigated VoiceChanger `stop()` closing the AudioContext (Bug 4). Confirmed that the `page.tsx` implementation immediately nulls `voiceChangerRef.current` upon calling `stop()`, guaranteeing that a fresh `VoiceChanger` (and fresh AudioContext) is spun up if the user re-enables it. Therefore, calling `context.close()` inside `stop()` is the correct, memory-safe design choice for this application's lifecycle, and remains untouched.

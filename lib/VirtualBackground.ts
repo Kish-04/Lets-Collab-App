@@ -34,6 +34,8 @@ export class VirtualBackground {
     private offscreenCanvas: HTMLCanvasElement;
     private offscreenCtx: CanvasRenderingContext2D | null;
     private fallbackFrameId: number = 0;
+    private readyIntervalId: NodeJS.Timeout | null = null;
+    public onLoadError?: (err: unknown) => void;
 
     constructor() {
         this.canvas = document.createElement('canvas');
@@ -50,22 +52,27 @@ export class VirtualBackground {
     private async initSelfieSegmentation() {
         if (this.selfieSegmentation) return;
 
-        await loadExternalScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
-        await loadExternalScript("https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js");
+        try {
+            await loadExternalScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
+            await loadExternalScript("https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js");
 
-        const SelfieSegmentationClass = getSelfieSegmentation();
-        if (typeof window !== 'undefined' && SelfieSegmentationClass) {
-            this.selfieSegmentation = new SelfieSegmentationClass({
-                locateFile: (file: string) => {
-                    return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
-                }
-            });
+            const SelfieSegmentationClass = getSelfieSegmentation();
+            if (typeof window !== 'undefined' && SelfieSegmentationClass) {
+                this.selfieSegmentation = new SelfieSegmentationClass({
+                    locateFile: (file: string) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+                    }
+                });
 
-            this.selfieSegmentation.setOptions({
-                modelSelection: 1, // 0 for general, 1 for landscape (faster)
-            });
+                this.selfieSegmentation.setOptions({
+                    modelSelection: 1, // 0 for general, 1 for landscape (faster)
+                });
 
-            this.selfieSegmentation.onResults(this.onResults.bind(this));
+                this.selfieSegmentation.onResults(this.onResults.bind(this));
+            }
+        } catch (err) {
+            console.error('[VirtualBackground] Failed to load segmentation model:', err);
+            this.onLoadError?.(err);
         }
     }
 
@@ -77,6 +84,12 @@ export class VirtualBackground {
         }
 
         this.backgroundImage = new Image();
+        this.backgroundImage.onerror = () => {
+            console.error('[VirtualBackground] Failed to load background image:', this.backgroundImage?.src);
+            this.backgroundImage = null;
+            this.onLoadError?.(new Error('Background image failed to load'));
+        };
+        
         if (style === 'custom' && customImageUrl) {
             this.backgroundImage.src = customImageUrl;
         } else if (style !== 'custom') {
@@ -124,51 +137,56 @@ export class VirtualBackground {
         this.isRunning = true;
         
         // Lazy load scripts in the background
-        this.initSelfieSegmentation();
+        this.initSelfieSegmentation().catch((err) => {
+            console.error('[VirtualBackground] initSelfieSegmentation failed:', err);
+        });
 
-        if (videoElement.readyState >= 2) {
-            this.canvas.width = videoElement.videoWidth || 640;
-            this.canvas.height = videoElement.videoHeight || 480;
-            this.offscreenCanvas.width = this.canvas.width;
-            this.offscreenCanvas.height = this.canvas.height;
-        }
-
-        const CameraClass = getCamera();
-        if (this.selfieSegmentation && CameraClass) {
-            this.camera = new CameraClass(videoElement, {
-                onFrame: async () => {
-                    if (this.isRunning && this.selfieSegmentation) {
-                        await this.selfieSegmentation.send({image: videoElement});
-                    }
-                },
-                width: this.canvas.width,
-                height: this.canvas.height
-            });
-            this.camera.start();
-        } else {
-            // Fallback while loading or if not supported
-            const drawFallbackFrame = () => {
-                if (!this.isRunning || !this.ctx) return;
-                this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
-                this.fallbackFrameId = requestAnimationFrame(drawFallbackFrame);
-            };
-            drawFallbackFrame();
-            
-            // Re-check once scripts load
-            if (!this.selfieSegmentation && typeof window !== 'undefined') {
-                const checkInterval = setInterval(() => {
-                    if (!this.isRunning) {
-                        clearInterval(checkInterval);
-                        return;
-                    }
-                    if (this.selfieSegmentation && getCamera()) {
-                        clearInterval(checkInterval);
-                        if (this.fallbackFrameId) cancelAnimationFrame(this.fallbackFrameId);
-                        this.start(videoElement); // restart with properly loaded models
-                    }
-                }, 500);
+        // Wait for video stream to actually be playing (solves pipelining when readyState is 0)
+        this.readyIntervalId = setInterval(() => {
+            if (!this.isRunning) {
+                if (this.readyIntervalId) clearInterval(this.readyIntervalId);
+                return;
             }
-        }
+            if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+                if (this.readyIntervalId) clearInterval(this.readyIntervalId);
+                
+                this.canvas.width = videoElement.videoWidth;
+                this.canvas.height = videoElement.videoHeight;
+                this.offscreenCanvas.width = this.canvas.width;
+                this.offscreenCanvas.height = this.canvas.height;
+                
+                const CameraClass = getCamera();
+                if (this.selfieSegmentation && CameraClass) {
+                    if (this.fallbackFrameId) {
+                        cancelAnimationFrame(this.fallbackFrameId);
+                        this.fallbackFrameId = 0;
+                    }
+                    this.camera = new CameraClass(videoElement, {
+                        onFrame: async () => {
+                            if (this.isRunning && this.selfieSegmentation) {
+                                await this.selfieSegmentation.send({image: videoElement});
+                            }
+                        },
+                        width: this.canvas.width,
+                        height: this.canvas.height
+                    });
+                    this.camera.start();
+                }
+            }
+        }, 100);
+
+        // Fallback while loading or if not supported
+        const drawFallbackFrame = () => {
+            if (!this.isRunning || !this.ctx) return;
+            if (videoElement.videoWidth > 0 && this.canvas.width !== videoElement.videoWidth) {
+                this.canvas.width = videoElement.videoWidth;
+                this.canvas.height = videoElement.videoHeight;
+            }
+            this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
+            this.fallbackFrameId = requestAnimationFrame(drawFallbackFrame);
+        };
+        drawFallbackFrame();
+            
         return this.canvas.captureStream(30);
     }
 
@@ -177,6 +195,10 @@ export class VirtualBackground {
         if (this.fallbackFrameId) {
             cancelAnimationFrame(this.fallbackFrameId);
             this.fallbackFrameId = 0;
+        }
+        if (this.readyIntervalId) {
+            clearInterval(this.readyIntervalId);
+            this.readyIntervalId = null;
         }
         if (this.camera) {
             this.camera.stop();
