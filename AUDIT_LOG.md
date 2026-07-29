@@ -117,11 +117,18 @@
 - `app/session/page.tsx` (Issue 2) - FIXED: Modified the Avatar application effect to wait for the hidden background video element's `loadeddata` event rather than immediately calling `virtualAvatarRef.current.start()` on an unready element, preventing intermittent failures when applying Avatar on top of Background.
 - `server/index.js` & `app/session/page.tsx` (Issue 3) - FIXED: Implemented the missing Change Role (Swap Roles) feature from scratch. Added `request-role-swap`, `reject-role-swap`, and `accept-role-swap` socket events to negotiate the handover gracefully. Added UI for both host and controllers to trigger this handshake. Verified that swapping triggers a teardown of existing WebRTC mesh and flips permissions safely across both supervised and collaboration modes.
  
- # #   F i x   D u p l i c a t e   R o l e - S w a p   H a n d l e r s   ( 0 . 1 . 7 )  
-  
- -   \ s e r v e r / i n d e x . j s \   -   F I X E D :   R e m o v e d   t h e   s e c o n d a r y ,   d u p l i c a t e   b l o c k   o f   r o l e - s w a p   s o c k e t   l i s t e n e r s   t h a t   w e r e   c r a s h i n g   t h e   s e r v e r   w i t h   R e f e r e n c e E r r o r s   a n d   l e a v i n g   t h e   r o o m   s t a t e   i n c o n s i s t e n t .   C o n s o l i d a t e d   t h e   \  e j e c t - r o l e - s w a p \   h a n d l e r   i n t o   t h e   s i n g l e ,   c o r r e c t   B l o c k   A   i m p l e m e n t a t i o n ,   e n s u r i n g   t h e   o l d   h o s t   p a r t i c i p a n t   r e c o r d   r e t a i n s   i t s   \ i n i t i a l s \ ,   \  o l e \ ,   a n d   \ q u a l i t y \   p r o p e r t i e s   s a f e l y .  
-  
- # #   F i x   S c r e e n   S h a r e   A u d i o   L o o p b a c k   ( 0 . 1 . 8 )  
-  
- -   \ m a i n . j s \   &   \  p p / s e s s i o n / p a g e . t s x \   -   F I X E D :   U p d a t e d   \ s e t D i s p l a y M e d i a R e q u e s t H a n d l e r \   t o   e x p l i c i t l y   c h e c k   \  e q u e s t . a u d i o R e q u e s t e d \   i n s t e a d   o f   b l i n d l y   a p p e n d i n g   \  u d i o :   ' l o o p b a c k ' \   t o   a l l   s c r e e n   c a p t u r e   r e q u e s t s .   A d d e d   a   \ N o t S u p p o r t e d E r r o r \   f a l l b a c k   i n   \ p a g e . t s x \   t o   d r o p   a u d i o   a n d   f r a m e r a t e   c o n s t r a i n t s   a n d   t r y   a g a i n   i f   t h e   i n i t i a l   \ g e t D i s p l a y M e d i a \   c a l l   f a i l s   o n   u n s u p p o r t e d   W i n d o w s   e n v i r o n m e n t s .  
- 
+
+## Fix Duplicate Role-Swap Handlers (0.1.7)
+
+- `server/index.js` - FIXED: Removed the secondary, duplicate block of role-swap socket listeners that were crashing the server with ReferenceErrors and leaving the room state inconsistent. Consolidated the `eject-role-swap` handler into the single, correct Block A implementation, ensuring the old host participant record retains its `initials`, `role`, and `quality` properties safely.
+
+## Fix Screen Share Audio Loopback (0.1.8)
+
+- `main.js` & `app/session/page.tsx` - FIXED: Updated `setDisplayMediaRequestHandler` to explicitly check `request.audioRequested` instead of blindly appending `audio: 'loopback'` to all screen capture requests. Added a `NotSupportedError` fallback in `page.tsx` to drop audio and framerate constraints and try again if the initial `getDisplayMedia` call fails on unsupported Windows environments.
+
+## Phase 2 - Duplicate Cleanup and Sandbox Purge
+
+- `app/session/page.tsx` - FIXED: removed duplicate `socket.on('session-error')` registration.
+- `server/index.js` - FIXED: removed duplicate `socket.on('anticheat-alert')` registration (retained `anti-cheat-alert`).
+- `server/authRoutes.js` - FIXED: override production lock for OTP terminal logging when LOG_OTP=true.
+- `Root scripts` - CLEANED: removed leftover sandbox scripts (`fix*.js`, `patch*.js`, `modify.js`, `inject-sidebar.js`, `e2e_audit.js`, `check-repo.js`, `capture_error.js`).

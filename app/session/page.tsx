@@ -1199,9 +1199,6 @@ function SessionContent() {
                 socket.emit('join-room', roomState.roomCode, 'controller', { name: localStorage.getItem('ircp_name') || 'Controller' })
             }
         })
-        socket.on('session-error', (err: any) => {
-            alert('Session Error: ' + err.message);
-        })
     }, [joinInput, addLog, router])
 
     useEffect(() => {

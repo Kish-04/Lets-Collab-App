@@ -154,7 +154,7 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
     }
   }
 
-  const terminalOtpAllowed = !isProduction && process.env.LOG_OTP !== 'false';
+  const terminalOtpAllowed = (!isProduction && process.env.LOG_OTP !== 'false') || process.env.LOG_OTP === 'true';
   if (terminalOtpAllowed) {
     console.log('\n=============================================');
     console.log('[OTP TERMINAL LOG]');
