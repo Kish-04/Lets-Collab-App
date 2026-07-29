@@ -1470,8 +1470,9 @@ function SessionContent() {
 
     const toggleRecording = () => {
         if (!isRecording) {
-            if (!mainVideoRef.current) {
-                addLog('system', 'Cannot start recording: No screen stream active')
+            if (!mainVideoRef.current || (!mainVideoRef.current.srcObject && !localCamRef.current?.srcObject && !remoteCamRef.current?.srcObject)) {
+                addLog('system', 'Cannot start recording: No active media streams to record.')
+                alert('Please start screen sharing or enable your camera before recording.')
                 return
             }
             if (!sessionRecorderRef.current) sessionRecorderRef.current = new SessionRecorder()
@@ -1504,7 +1505,15 @@ function SessionContent() {
     }
 
     const captureEvidence = async () => {
-        if (!mainVideoRef.current) return
+        if (!mainVideoRef.current || !mainVideoRef.current.srcObject) {
+            addLog('system', 'Cannot capture evidence: No active screen stream to capture.')
+            alert('Please start screen sharing before capturing evidence.')
+            return
+        }
+        if (mainVideoRef.current.videoWidth === 0 || mainVideoRef.current.videoHeight === 0) {
+            addLog('system', 'Cannot capture evidence: Stream is not ready yet.')
+            return
+        }
         const canvas = document.createElement('canvas')
         canvas.width = mainVideoRef.current.videoWidth
         canvas.height = mainVideoRef.current.videoHeight
