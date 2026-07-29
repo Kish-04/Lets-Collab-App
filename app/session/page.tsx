@@ -48,7 +48,7 @@ type Role = "host" | "controller"
 type PermissionLevel = "view" | "mouse" | "keyboard" | "full"
 type ConnectionState = "idle" | "waiting" | "connecting" | "connected"
 type LogEntry = {
-    time: string
+    time: string // ISO 8601 string
     type: "system" | "user" | "input" | "permission" | "anticheat" | "chain" | "chat" | "quality" | "recording"
     message: string
 }
@@ -82,7 +82,7 @@ type JoinRequest = {
 }
 type ChatMessage = {
     id: string
-    time: string
+    time: string // ISO 8601 string
     senderId: string
     senderName: string
     role: "host" | "controller" | "admin"
@@ -90,8 +90,8 @@ type ChatMessage = {
 }
 type EvidenceItem = {
     id?: string
-    time?: string
-    timestamp?: string
+    time?: string // ISO 8601 string
+    timestamp?: string // ISO 8601 string
     type: string
     by?: string
     label?: string
@@ -220,6 +220,7 @@ function SessionContent() {
     const [logFilter, setLogFilter] = useState<'all' | 'anticheat' | 'system'>('all')
     const [observerCount, setObserverCount] = useState(0)
     const [observationRequest, setObservationRequest] = useState<string | null>(null)
+    const [roleSwapRequest, setRoleSwapRequest] = useState<{ requesterId: string, requesterName: string } | null>(null)
     const [voiceFilter, setVoiceFilter] = useState<VoiceFilter>('none')
     const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>('none')
     const [avatarError, setAvatarError] = useState<string | null>(null)
@@ -305,42 +306,56 @@ function SessionContent() {
             virtualBackgroundRef.current = null;
         }
 
+        const updateSenders = (stream: MediaStream) => {
+            const pCs = currentRoleRef.current === 'host' ? Array.from(hostPcRefs.current.values()) : [pcRef.current];
+            pCs.forEach(pc => {
+                if (!pc || pc.signalingState === 'closed') return;
+                const senders = pc.getSenders();
+                
+                const audioTrack = stream.getAudioTracks()[0];
+                if (audioTrack) {
+                    const audioSender = senders.find(s => s.track?.kind === 'audio' && s.track !== screenStreamRef.current?.getAudioTracks()[0]);
+                    if (audioSender) audioSender.replaceTrack(audioTrack);
+                }
+                
+                const videoTrack = stream.getVideoTracks()[0];
+                if (videoTrack) {
+                    const videoSender = senders.find(s => s.track?.kind === 'video' && s.track !== screenStreamRef.current?.getVideoTracks()[0]);
+                    if (videoSender) videoSender.replaceTrack(videoTrack);
+                }
+            });
+            
+            if (localPreviewRef.current) {
+                localPreviewRef.current.srcObject = stream;
+            }
+        };
+
         if (avatarStyle !== 'none') {
             if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
             virtualAvatarRef.current.setAvatarStyle(avatarStyle);
             
-            if (currentVideoSource && (currentVideoSource.readyState >= 2 || currentVideoSource === hiddenBgVideoRef.current)) {
-                const avatarStream = virtualAvatarRef.current.start(currentVideoSource);
-                const finalStream = new MediaStream();
-                processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
-                avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
-                processedStream = finalStream;
-            }
+            const startAvatarWhenReady = () => {
+                if (!currentVideoSource) return;
+                if (currentVideoSource.readyState >= 2) {
+                    const avatarStream = virtualAvatarRef.current!.start(currentVideoSource);
+                    const finalStream = new MediaStream();
+                    processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
+                    avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
+                    updateSenders(finalStream);
+                } else {
+                    const onLoadedData = () => {
+                        currentVideoSource!.removeEventListener('loadeddata', onLoadedData);
+                        startAvatarWhenReady();
+                    };
+                    currentVideoSource.addEventListener('loadeddata', onLoadedData);
+                }
+            };
+            
+            startAvatarWhenReady();
         } else {
             virtualAvatarRef.current?.stop();
             virtualAvatarRef.current = null;
-        }
-
-        const pCs = currentRoleRef.current === 'host' ? Array.from(hostPcRefs.current.values()) : [pcRef.current];
-        pCs.forEach(pc => {
-            if (!pc || pc.signalingState === 'closed') return;
-            const senders = pc.getSenders();
-            
-            const audioTrack = processedStream.getAudioTracks()[0];
-            if (audioTrack) {
-                const audioSender = senders.find(s => s.track?.kind === 'audio' && s.track !== screenStreamRef.current?.getAudioTracks()[0]);
-                if (audioSender) audioSender.replaceTrack(audioTrack);
-            }
-            
-            const videoTrack = processedStream.getVideoTracks()[0];
-            if (videoTrack) {
-                const videoSender = senders.find(s => s.track?.kind === 'video' && s.track !== screenStreamRef.current?.getVideoTracks()[0]);
-                if (videoSender) videoSender.replaceTrack(videoTrack);
-            }
-        });
-        
-        if (localPreviewRef.current) {
-            localPreviewRef.current.srcObject = processedStream;
+            updateSenders(processedStream);
         }
         
         
@@ -462,7 +477,7 @@ function SessionContent() {
     }, [])
 
     const addLog = useCallback((type: LogEntry['type'], message: string) => {
-        setSessionLogs(prev => [...prev, { time: new Date().toLocaleTimeString('en-US', { hour12: false }), type, message }].slice(-100))
+        setSessionLogs(prev => [...prev, { time: new Date().toISOString(), type, message }].slice(-100))
     }, [])
 
     const ensureFederatedLearner = useCallback(() => {
@@ -747,7 +762,7 @@ function SessionContent() {
                         setSessionLogs(prev => {
                             const msg = `[ICE] Active Pair - Local: ${localCandidate.candidateType}, Remote: ${remoteCandidate.candidateType}`
                             if (prev.length > 0 && prev[prev.length-1].message === msg) return prev;
-                            return [...prev, { time: new Date().toLocaleTimeString('en-US', { hour12: false }), type: 'system' as const, message: msg }].slice(-100);
+                            return [...prev, { time: new Date().toISOString(), type: 'system' as const, message: msg }].slice(-100);
                         })
                         loggedCandidatePair = true;
                     }
@@ -1138,9 +1153,10 @@ function SessionContent() {
             window.location.href = '/app'
         })
         socket.on('role-swap-requested', ({ fromId, fromName }: { fromId: string, fromName: string }) => {
-            if (window.confirm(`${fromName} has requested to swap roles with you. Do you accept?`)) {
-                socket.emit('accept-role-swap', { targetId: fromId, roomId: roomCodeRef.current || joinInput })
-            }
+            setRoleSwapRequest({ requesterId: fromId, requesterName: fromName });
+        })
+        socket.on('role-swap-rejected', () => {
+            alert('Your role swap request was rejected.');
         })
         socket.on('role-swap-completed', ({ newHostId, oldHostId, roomState }: any) => {
             addLog('system', 'Role swap completed, reconnecting streams...')
@@ -1728,6 +1744,32 @@ function SessionContent() {
                                 </div>
                             </div>
                         )}
+                        {roleSwapRequest && (
+                            <div className="mb-4 rounded-xl border border-[var(--accent)] bg-[var(--accent)]/10 p-4 shadow-lg">
+                                <p className="mb-2 text-xs font-bold text-[var(--accent)]">Role Swap Request</p>
+                                <p className="mb-3 text-[11px] text-[var(--text-secondary)]">{roleSwapRequest.requesterName} has requested to swap roles with you.</p>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => {
+                                            socketRef.current?.emit('accept-role-swap', { targetId: roleSwapRequest.requesterId, roomId: roomCodeRef.current || joinInput })
+                                            setRoleSwapRequest(null)
+                                        }}
+                                        className="flex-1 rounded bg-[var(--success)]/20 py-1.5 text-xs font-bold text-[var(--success)]"
+                                    >
+                                        Accept
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            socketRef.current?.emit('reject-role-swap', { requesterId: roleSwapRequest.requesterId, roomId: roomCodeRef.current || joinInput })
+                                            setRoleSwapRequest(null)
+                                        }}
+                                        className="flex-1 rounded bg-[var(--danger)]/20 py-1.5 text-xs font-bold text-[var(--danger)]"
+                                    >
+                                        Reject
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         {role === 'host' && (
                             <div className="mb-4">
                                 <div className="mb-2 flex items-center justify-between">
@@ -1754,7 +1796,7 @@ function SessionContent() {
                                                     <span className="font-mono text-[10px] uppercase text-[var(--accent)]">{participant.permission}</span>
                                                 </div>
                                                 <p className="mt-1 truncate text-[10px] text-[var(--text-dim)] w-full">{participant.email || participant.socketId}</p>
-                                                {typeof window !== 'undefined' && (window as any).ipcRenderer && selectedParticipant?.id === participant.id && (
+                                                {selectedParticipant?.id === participant.id && (
                                                     <div 
                                                         onClick={(e) => { e.stopPropagation(); socketRef.current?.emit('request-role-swap', { targetId: participant.id, roomId: roomCodeRef.current || joinInput }) }}
                                                         className="mt-2 w-full text-center text-[10px] font-bold py-1 bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/40 rounded transition-colors"
@@ -1767,6 +1809,15 @@ function SessionContent() {
                                     </div>
                                 )}
                             </div>
+                        )}
+                        {role === 'controller' && (
+                            <button
+                                onClick={() => socketRef.current?.emit('request-role-swap', { targetId: participants.find(p => p.role === 'host')?.id || 'host' })}
+                                className="w-full flex items-center justify-center gap-2 px-3 py-2 mb-4 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors"
+                            >
+                                <RefreshCw className="w-4 h-4" />
+                                Request Role Swap
+                            </button>
                         )}
                         <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] font-bold block mb-3">Permission</span>
                         {role === 'host' && (
@@ -2130,7 +2181,7 @@ function SessionContent() {
                                         )}>
                                             <div className="mb-1 flex items-center justify-between gap-3">
                                                 <span className="truncate text-[10px] font-bold uppercase text-[var(--text-secondary)]">{message.senderName}</span>
-                                                <span className="shrink-0 font-mono text-[9px] text-[var(--text-dim)]">{message.time}</span>
+                                                <span className="shrink-0 font-mono text-[9px] text-[var(--text-dim)]">{isNaN(new Date(message.time).getTime()) ? message.time : new Date(message.time).toLocaleTimeString([], { hour12: false })}</span>
                                             </div>
                                             <p className="break-words text-sm leading-relaxed text-[var(--text-primary)] font-emoji">{message.text}</p>
                                         </div>
