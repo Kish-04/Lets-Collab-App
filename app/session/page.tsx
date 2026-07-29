@@ -1831,7 +1831,7 @@ function SessionContent() {
                         )}
                         {role === 'controller' && (
                             <button
-                                onClick={() => socketRef.current?.emit('request-role-swap', { targetId: participants.find(p => p.role === 'host')?.id || 'host' })}
+                                onClick={() => socketRef.current?.emit('request-role-swap', { roomId: roomCodeRef.current || joinInput })}
                                 className="w-full flex items-center justify-center gap-2 px-3 py-2 mb-4 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors"
                             >
                                 <RefreshCw className="w-4 h-4" />
