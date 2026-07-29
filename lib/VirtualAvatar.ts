@@ -112,14 +112,19 @@ export class VirtualAvatar {
         const renderLoop = () => {
             if (!this.isRunning || !this.ctx) return;
 
-            // Handle dynamic video resizing (fixes pipelining issues)
-            if (videoElement.videoWidth > 0 && this.canvas.width !== videoElement.videoWidth) {
-                this.canvas.width = videoElement.videoWidth;
-                this.canvas.height = videoElement.videoHeight;
+            try {
+                if (videoElement.readyState >= 2) {
+                    // Handle dynamic video resizing (fixes pipelining issues)
+                    if (videoElement.videoWidth > 0 && this.canvas.width !== videoElement.videoWidth) {
+                        this.canvas.width = videoElement.videoWidth;
+                        this.canvas.height = videoElement.videoHeight;
+                    }
+                    // Draw original video frame immediately
+                    this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
+                }
+            } catch (e) {
+                // Wait for video to actually have data
             }
-
-            // Draw original video frame immediately
-            this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
 
             // Draw the last known avatar position on top
             if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete && this.lastDetection) {

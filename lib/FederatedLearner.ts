@@ -6,6 +6,7 @@ export class FederatedLearner {
     private model: tf.Sequential;
     private xs: FederatedFeatures[] = [];
     private ys: number[][] = [];
+    private isTraining: boolean = false;
 
     constructor() {
         this.model = tf.sequential();
@@ -34,7 +35,8 @@ export class FederatedLearner {
     }
 
     public async trainLocalModel(epochs: number = 10) {
-        if (this.xs.length === 0) return null;
+        if (this.xs.length === 0 || this.isTraining) return null;
+        this.isTraining = true;
 
         const xsTensor = tf.tensor2d(this.xs);
         const ysTensor = tf.tensor2d(this.ys);
@@ -49,6 +51,7 @@ export class FederatedLearner {
         } finally {
             xsTensor.dispose();
             ysTensor.dispose();
+            this.isTraining = false;
         }
 
         // Clear local dataset after training to save memory
@@ -67,7 +70,8 @@ export class FederatedLearner {
             const data = await w.data<'float32'>();
             serialized.push(...Array.from(data));
         }
-        weights.forEach(weight => weight.dispose());
+        // DO NOT dispose model weights! It permanently destroys the model.
+        // weights.forEach(weight => weight.dispose());
         
         return serialized;
     }
@@ -88,7 +92,8 @@ export class FederatedLearner {
 
         this.model.setWeights(tensors);
         tensors.forEach(tensor => tensor.dispose());
-        currentWeights.forEach(tensor => tensor.dispose());
+        // DO NOT dispose currentWeights!
+        // currentWeights.forEach(tensor => tensor.dispose());
         return true;
     }
 
