@@ -298,23 +298,40 @@ router.post('/login', async (req, res) => {
       && email === normalizeEmail(process.env.ADMIN_EMAIL)
       && password === process.env.ADMIN_PASSWORD;
 
-    if (!user && configuredAdmin) {
-      user = global.dbConnected
-        ? await User.create({
-          name: 'System Administrator',
-          email,
-          password,
-          role: 'admin',
-          isVerified: true,
-        })
-        : mockStore.createUser({
-          _id: 'admin-id',
-          name: 'System Administrator',
-          email,
-          password: await hashPassword(password),
-          role: 'admin',
-          isVerified: true,
-        });
+    if (configuredAdmin) {
+      if (user && user.role !== 'admin') {
+        user.role = 'admin';
+        if (global.dbConnected) await user.save();
+        else mockStore.saveUser(user);
+      } else if (!user) {
+        user = global.dbConnected
+          ? await User.create({
+            name: 'System Administrator',
+            email,
+            password,
+            role: 'admin',
+            isVerified: true,
+          })
+          : mockStore.createUser({
+            _id: 'admin-id',
+            name: 'System Administrator',
+            email,
+            password: await hashPassword(password),
+            role: 'admin',
+            isVerified: true,
+          });
+      }
+      
+      const token = generateToken(user._id || 'admin-id', user.email);
+      setAuthCookie(res, token);
+      return res.json({
+        _id: user._id || 'admin-id',
+        name: user.name,
+        email: user.email,
+        role: 'admin',
+        token,
+        message: 'Administrator logged in successfully',
+      });
     }
 
     if (!user) return res.status(401).json({ message: 'Invalid email or password' });
