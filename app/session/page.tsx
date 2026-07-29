@@ -1505,17 +1505,18 @@ function SessionContent() {
     }
 
     const captureEvidence = async () => {
-        if (!mainVideoRef.current || !mainVideoRef.current.srcObject) {
+        const video = mainVideoRef.current
+        if (!video || !video.srcObject) {
             addLog('system', 'Cannot capture evidence: No active screen stream to capture.')
-            alert('Please start screen sharing before capturing evidence.')
+            alert('Cannot capture evidence: No active screen stream to capture. Please start screen sharing.')
             return
         }
-        if (mainVideoRef.current.videoWidth === 0 || mainVideoRef.current.videoHeight === 0) {
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
             addLog('system', 'Cannot capture evidence: Stream is not ready yet.')
+            alert('Cannot capture evidence: Stream is not ready yet. Please ensure the stream is active and visible.')
             return
         }
         const canvas = document.createElement('canvas')
-        canvas.width = mainVideoRef.current.videoWidth
         canvas.height = mainVideoRef.current.videoHeight
         const ctx = canvas.getContext('2d')
         if (!ctx) return
