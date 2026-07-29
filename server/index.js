@@ -1402,7 +1402,6 @@ io.on('connection', (socket) => {
   };
 
   socket.on('anti-cheat-alert', handleAntiCheatAlert);
-  socket.on('anticheat-alert', handleAntiCheatAlert);
 
   socket.on('permission-violation', (data) => {
     const { action } = data || {};
