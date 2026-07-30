@@ -249,6 +249,7 @@ function SessionContent() {
     const pcRef = useRef<RTCPeerConnection | null>(null)
     const hostPcRefs = useRef<Map<string, RTCPeerConnection>>(new Map())
     const localStreamRef = useRef<MediaStream | null>(null)
+    const activeLocalStreamRef = useRef<MediaStream | null>(null)
     const screenStreamRef = useRef<MediaStream | null>(null)
     const voiceChangerRef = useRef<VoiceChanger | null>(null)
     const virtualAvatarRef = useRef<VirtualAvatar | null>(null)
@@ -328,6 +329,7 @@ function SessionContent() {
             if (localPreviewRef.current) {
                 localPreviewRef.current.srcObject = stream;
             }
+            activeLocalStreamRef.current = stream;
         };
 
         if (avatarStyle !== 'none') {
@@ -514,7 +516,7 @@ function SessionContent() {
 
     const getLocalMediaStreamIds = useCallback(() => ({
         screen: screenStreamRef.current?.id || null,
-        camera: localStreamRef.current?.id || null,
+        camera: activeLocalStreamRef.current?.id || localStreamRef.current?.id || null,
     }), [])
 
     const assignVideoStream = useCallback((video: HTMLVideoElement | null, stream: MediaStream) => {
@@ -553,6 +555,9 @@ function SessionContent() {
             localStreamRef.current = stream
             setHasLocalMedia(true)
             return stream
+        } catch (err: any) {
+            addLog('system', `Camera/Mic blocked by OS/Hardware: ${err.name} - ${err.message}`);
+            throw err;
         } finally {
             mediaStreamPromiseRef.current = null
         }
@@ -562,6 +567,7 @@ function SessionContent() {
         if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach(t => t.stop())
             localStreamRef.current = null
+            activeLocalStreamRef.current = null
             setHasLocalMedia(false)
             setLocalCamMuted(true)
             setLocalMicMuted(true)
@@ -594,8 +600,7 @@ function SessionContent() {
                 setLocalMicMuted(false)
                 addLog('system', 'Microphone activated')
             } catch (err: any) {
-                alert(err.message)
-                addLog('system', 'Microphone access denied')
+                addLog('system', `Microphone access denied: ${err.message}`)
             }
         }
     }
@@ -627,11 +632,14 @@ function SessionContent() {
     }
 
     const toggleFullscreen = () => {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(err => console.log(err));
+        if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
+            (window as any).ipcRenderer.send('toggle-fullscreen');
+            setIsFullscreen(!isFullscreen);
         } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen().then(() => setIsFullscreen(false)).catch(err => console.log(err));
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(console.log);
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen().then(() => setIsFullscreen(false)).catch(console.log);
             }
         }
     }
@@ -793,7 +801,7 @@ function SessionContent() {
                 if (!alreadyAdded) pc.addTrack(track, screen)
             })
         }
-        const local = localStreamRef.current
+        const local = activeLocalStreamRef.current || localStreamRef.current
         if (local) {
             local.getTracks().forEach(track => {
                 const alreadyAdded = pc.getSenders().some(sender => sender.track === track)
@@ -1161,6 +1169,9 @@ function SessionContent() {
         socket.on('role-swap-completed', ({ newHostId, oldHostId, roomState }: any) => {
             addLog('system', 'Role swap completed, reconnecting streams...')
             
+            // Release hardware locks (camera/mic) before swapping
+            stopLocalMedia()
+            
             // Tear down existing connections
             if (pcRef.current) {
                 pcRef.current.close()
@@ -1508,12 +1519,10 @@ function SessionContent() {
         const video = mainVideoRef.current
         if (!video || !video.srcObject) {
             addLog('system', 'Cannot capture evidence: No active screen stream to capture.')
-            alert('Cannot capture evidence: No active screen stream to capture. Please start screen sharing.')
             return
         }
         if (video.videoWidth === 0 || video.videoHeight === 0) {
             addLog('system', 'Cannot capture evidence: Stream is not ready yet.')
-            alert('Cannot capture evidence: Stream is not ready yet. Please ensure the stream is active and visible.')
             return
         }
         const canvas = document.createElement('canvas')
@@ -1525,31 +1534,19 @@ function SessionContent() {
         
         canvas.toBlob(async (blob) => {
             if (!blob) return
-            const formData = new FormData()
-            const activeRoomCode = roomCodeRef.current || roomCode || joinInput
-            if (activeRoomCode) formData.append('room', activeRoomCode)
-            formData.append('evidenceFile', blob, `evidence-${Date.now()}.png`)
             try {
-                const token = getStoredAuthToken()
-                const res = await fetch(`${getBackendUrl()}/api/admin/upload-evidence`, {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {
-                        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                    },
-                    body: formData
-                })
-                const data = await res.json()
-                if (data.success) {
-                    addLog('recording', `Evidence captured and saved: ${data.url}`)
-                    alert('Evidence successfully captured and uploaded to server!')
-                } else {
-                    addLog('system', 'Evidence capture failed: ' + data.message)
-                    alert('Evidence capture failed: ' + data.message)
-                }
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `evidence-${Date.now()}.png`
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                setTimeout(() => URL.revokeObjectURL(url), 1000)
+                addLog('system', 'Evidence captured and downloaded to your computer.')
             } catch (err: any) {
                 console.error("Upload failed", err)
-                alert('Upload failed: ' + err.message)
+                addLog('system', `Evidence capture failed: ${err.message}`)
             }
         }, 'image/png')
     }

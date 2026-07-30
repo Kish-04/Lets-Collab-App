@@ -245,7 +245,11 @@ function createWindow() {
   // Handle getDisplayMedia requests for screen sharing
   win.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
     const requestUrl = request?.frame?.url || request?.webContents?.getURL?.() || '';
-    const requestOrigin = request?.securityOrigin || getUrlOrigin(requestUrl);
+    // request.securityOrigin can sometimes include a trailing slash (e.g. "http://127.0.0.1:41337/")
+    // We normalize it through getUrlOrigin to ensure it matches the format in our Trusted Origins Set.
+    const rawOrigin = request?.securityOrigin || requestUrl;
+    const requestOrigin = getUrlOrigin(rawOrigin);
+    
     if (!requestOrigin || !getTrustedRendererOrigins().has(requestOrigin)) {
       console.warn(`[SECURITY] Blocked display capture from untrusted renderer: ${requestOrigin || requestUrl || 'unknown'}`);
       callback();
@@ -253,6 +257,7 @@ function createWindow() {
     }
 
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      console.log('[DEBUG] desktopCapturer sources length:', sources ? sources.length : 0);
       // Automatically share the primary screen (first source)
       if (sources && sources.length > 0) {
         const captureParams = { video: sources[0] };
@@ -333,6 +338,14 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+// --- IPC HANDLERS FOR FULLSCREEN ---
+ipcMain.on('toggle-fullscreen', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) {
+    win.setFullScreen(!win.isFullScreen());
   }
 });
 

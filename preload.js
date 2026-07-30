@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('electronConfig', {
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels
-    const validChannels = ['execute-input', 'set-clipboard-guard'];
+    const validChannels = ['execute-input', 'set-clipboard-guard', 'toggle-fullscreen'];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
     }
@@ -21,5 +21,6 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
       // Deliberately strip event as it includes `sender` 
       ipcRenderer.on(channel, (event, ...args) => func(...args));
     }
-  }
+  },
+  getDeviceLogs: () => ipcRenderer.invoke('get-device-logs')
 });

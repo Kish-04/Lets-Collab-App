@@ -8,7 +8,7 @@ import { MagneticButton, TiltCard, VelocityMarquee, TextReveal } from '@/compone
 import { FeatureOrbit } from '@/components/landing/FeatureOrbit'
 import Link from 'next/link'
 
-const desktopDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.0.exe"
+const desktopDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.9.exe"
 
 export default function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -181,6 +181,10 @@ export default function LandingPage() {
 
       <main className="relative z-10">
         
+        {/* Header */}
+            <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white font-bold text-center py-2 text-2xl uppercase animate-pulse shadow-[0_0_20px_rgba(220,38,38,0.8)] border-b-4 border-yellow-400">
+                🚀 VERSION 0.1.9 - FRESH CLEAN BUILD CONFIRMED 🚀
+            </div>
         {/* Background Velocity Marquee */}
         <div className="absolute top-[30vh] left-0 right-0 pointer-events-none z-0">
           <VelocityMarquee baseVelocity={-2}>NO LIMITS NO SERVERS NO LATENCY</VelocityMarquee>

@@ -129,45 +129,48 @@ router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async 
     const bucket = process.env.S3_BUCKET_NAME || 'ircp-evidence-bucket';
 
     if (process.env.NODE_ENV === 'production' || process.env.USE_S3 === 'true') {
-      const command = new PutObjectCommand({
-        Bucket: bucket,
-        Key: fileName,
-        Body: req.file.buffer,
-        ContentType: req.file.mimetype,
-      });
-      await s3.send(command);
+      const hasRealAwsKey = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_ACCESS_KEY_ID !== 'mock-key';
+      if (hasRealAwsKey) {
+        const command = new PutObjectCommand({
+          Bucket: bucket,
+          Key: fileName,
+          Body: req.file.buffer,
+          ContentType: req.file.mimetype,
+        });
+        await s3.send(command);
 
-      let fileUrl;
-      if (process.env.S3_PUBLIC_ENDPOINT) {
-        fileUrl = `${process.env.S3_PUBLIC_ENDPOINT}/${bucket}/${fileName}`;
-      } else if (process.env.S3_ENDPOINT) {
-        fileUrl = `${process.env.S3_ENDPOINT}/${bucket}/${fileName}`;
-      } else {
-        fileUrl = `https://${bucket}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${fileName}`;
-      }
-
-      if (roomCode) {
-        if (global.dbConnected) {
-          await Alert.create({
-            room: roomCode,
-            hostEmail: liveRoom?.hostEmail || req.user.email,
-            type: 'evidence',
-            event: 'EVIDENCE_CAPTURED',
-            message: `Evidence saved at ${fileUrl}`,
-          }).catch(err => console.error('Failed to save alert in upload-evidence:', err));
+        let fileUrl;
+        if (process.env.S3_PUBLIC_ENDPOINT) {
+          fileUrl = `${process.env.S3_PUBLIC_ENDPOINT}/${bucket}/${fileName}`;
+        } else if (process.env.S3_ENDPOINT) {
+          fileUrl = `${process.env.S3_ENDPOINT}/${bucket}/${fileName}`;
         } else {
-          mockStore.addAlert({
-            room: roomCode,
-            hostEmail: liveRoom?.hostEmail || req.user.email,
-            type: 'evidence',
-            event: 'EVIDENCE_CAPTURED',
-            message: `Evidence saved at ${fileUrl}`,
-            penalty: 0,
-          });
+          fileUrl = `https://${bucket}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${fileName}`;
         }
-      }
 
-      return res.json({ success: true, url: fileUrl, room: roomCode || null });
+        if (roomCode) {
+          if (global.dbConnected) {
+            await Alert.create({
+              room: roomCode,
+              hostEmail: liveRoom?.hostEmail || req.user.email,
+              type: 'evidence',
+              event: 'EVIDENCE_CAPTURED',
+              message: `Evidence saved at ${fileUrl}`,
+            }).catch(err => console.error('Failed to save alert in upload-evidence:', err));
+          } else {
+            mockStore.addAlert({
+              room: roomCode,
+              hostEmail: liveRoom?.hostEmail || req.user.email,
+              type: 'evidence',
+              event: 'EVIDENCE_CAPTURED',
+              message: `Evidence saved at ${fileUrl}`,
+              penalty: 0,
+            });
+          }
+        }
+        
+        return res.json({ success: true, url: fileUrl, room: roomCode || null });
+      }
     }
 
     const uploadPath = path.join(__dirname, 'uploads', 'evidence');

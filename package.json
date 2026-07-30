@@ -1,6 +1,6 @@
 {
   "name": "lets-collab",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -12,9 +12,13 @@
     "check": "npm run typecheck && npm run build",
     "lint": "eslint app components hooks lib main.js preload.js \"server/*.js\" \"server/test/*.js\" \"test/*.js\" \"test/*.mjs\"",
     "electron:dev": "electron .",
+    "prebuild:electron": "npm run build",
     "build:electron": "electron-builder",
+    "prebuild:win": "npm run build",
     "build:win": "electron-builder --win nsis",
+    "prebuild:mac": "npm run build",
     "build:mac": "electron-builder --mac zip",
+    "prebuild:linux": "npm run build",
     "build:linux": "electron-builder --linux tar.gz deb",
     "postinstall": "electron-builder install-app-deps"
   },

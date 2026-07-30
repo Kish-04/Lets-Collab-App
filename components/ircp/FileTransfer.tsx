@@ -46,7 +46,7 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
                 a.href = url
                 a.download = currentFileNameRef.current
                 a.click()
-                URL.revokeObjectURL(url)
+                setTimeout(() => URL.revokeObjectURL(url), 1000)
                 setTimeout(() => {
                     setStatus('Idle')
                     setIncomingFile(null)

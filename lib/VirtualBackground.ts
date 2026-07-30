@@ -155,22 +155,23 @@ export class VirtualBackground {
                 this.offscreenCanvas.width = this.canvas.width;
                 this.offscreenCanvas.height = this.canvas.height;
                 
-                const CameraClass = getCamera();
-                if (this.selfieSegmentation && CameraClass) {
+                if (this.selfieSegmentation) {
                     if (this.fallbackFrameId) {
                         cancelAnimationFrame(this.fallbackFrameId);
                         this.fallbackFrameId = 0;
                     }
-                    this.camera = new CameraClass(videoElement, {
-                        onFrame: async () => {
-                            if (this.isRunning && this.selfieSegmentation) {
+                    const processFrame = async () => {
+                        if (!this.isRunning) return;
+                        if (this.selfieSegmentation && videoElement.readyState >= 2) {
+                            try {
                                 await this.selfieSegmentation.send({image: videoElement});
+                            } catch (e) {
+                                console.error("[VirtualBackground] Process frame error", e);
                             }
-                        },
-                        width: this.canvas.width,
-                        height: this.canvas.height
-                    });
-                    this.camera.start();
+                        }
+                        this.fallbackFrameId = requestAnimationFrame(processFrame);
+                    };
+                    processFrame();
                 }
             }
         }, 100);
