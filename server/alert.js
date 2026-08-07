@@ -6,6 +6,7 @@ const alertSchema = new mongoose.Schema({
     type: { type: String, default: 'anticheat' },
     event: { type: String },
     message: { type: String, required: true },
+    evidenceUrl: { type: String },
     penalty: { type: Number, default: 0 },
 }, { timestamps: true });
 

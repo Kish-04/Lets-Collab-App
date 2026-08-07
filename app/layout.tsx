@@ -3,7 +3,7 @@ import { Exo_2, JetBrains_Mono, DM_Sans } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import ThemeCustomizer from "@/components/ircp/ThemeCustomizer"
 import "./globals.css"
-import Script from "next/script"
+
 const exo2 = Exo_2({
   subsets: ["latin"],
   variable: "--font-display",
@@ -62,8 +62,48 @@ export default function RootLayout({
             } catch (e) {}
           })();
         ` }} />
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            if (typeof window === 'undefined') return;
+
+            // Centralized AI/Wasm error suppression for Next.js Turbopack
+            var originalError = console.error;
+            console.error = function() {
+              var msg = String(arguments[0] || '').toLowerCase();
+              var isWasmError = [
+                'index out of bounds', 'abort', 'wasm', 'memory',
+                'delegate', 'task failed', 'xnnpack'
+              ].some(function(term) { return msg.indexOf(term) !== -1; });
+
+              if (isWasmError) {
+                // Redirect to warn to prevent the Next.js "Red Screen of Death" overlay
+                // but still keep it in the developer console for debugging.
+                console.warn('[AI-Subsystem-Suppressed]', ...arguments);
+                return;
+              }
+              originalError.apply(console, arguments);
+            };
+
+            // Catch and suppress unhandled Wasm exceptions
+            window.addEventListener('error', function(e) {
+              var msg = String(e.message || e.error || '').toLowerCase();
+              if (msg.indexOf('index out of bounds') !== -1 || msg.indexOf('wasm') !== -1) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+              }
+            }, true);
+
+            window.addEventListener('unhandledrejection', function(e) {
+              var msg = String(e.reason || '').toLowerCase();
+              if (msg.indexOf('index out of bounds') !== -1 || msg.indexOf('wasm') !== -1) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+              }
+            }, true);
+          })();
+        ` }} />
       </head>
-      <body suppressHydrationWarning className={`${exo2.variable} ${jetbrainsMono.variable} ${dmSans.variable} font-sans antialiased bg-[var(--bg)] text-[var(--text-primary)] transition-colors duration-200`}>
+      <body suppressHydrationWarning className="${exo2.variable} ${jetbrainsMono.variable} ${dmSans.variable} font-sans antialiased bg-[var(--bg)] text-[var(--text-primary)] transition-colors duration-200">
         {children}
         <ThemeCustomizer />
         <Analytics />
@@ -71,10 +111,3 @@ export default function RootLayout({
     </html>
   )
 }
-
-
-
-
-
-
-

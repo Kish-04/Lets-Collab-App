@@ -7,6 +7,14 @@ contextBridge.exposeInMainWorld('electronConfig', {
   backendUrl
 });
 
+const existingApi = window.api || {};
+contextBridge.exposeInMainWorld('api', {
+  ...existingApi,
+  askGemini: (prompt) => ipcRenderer.invoke('gemini:ask', prompt),
+  getShareableSources: () => ipcRenderer.invoke('get-shareable-sources'),
+  setShareSource: (sourceId) => ipcRenderer.invoke('set-share-source', sourceId),
+});
+
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels

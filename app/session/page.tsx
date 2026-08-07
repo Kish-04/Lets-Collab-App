@@ -14,9 +14,10 @@ import type { FormEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheel
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense } from 'react'
 import { io, Socket } from "socket.io-client"
+import { motion } from "framer-motion"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -36,8 +37,15 @@ import { SessionRecorder } from "@/lib/SessionRecorder"
 import { FederatedFeatures, FederatedLearner } from "@/lib/FederatedLearner"
 
 import dynamic from 'next/dynamic'
+const PetCanvas = dynamic(() => import('@/components/ircp/pet/PetCanvas').then(m => m.PetCanvas), { ssr: false })
+
+import { ExamHostDashboard, ExamQuestion } from '@/components/ircp/exam/ExamHostDashboard'
+import { ExamControllerOverlay } from '@/components/ircp/exam/ExamControllerOverlay'
 
 import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
+import { useFaceProctoring } from "@/hooks/useFaceProctoring"
+import { useObjectProctoring } from "@/hooks/useObjectProctoring"
+import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
@@ -204,6 +212,11 @@ function SessionContent() {
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
     const [chatInput, setChatInput] = useState("")
     const [chatOpen, setChatOpen] = useState(false)
+    const [showPet, setShowPet] = useState(true)
+    const [showExamDashboard, setShowExamDashboard] = useState(true)
+    const [petState, setPetState] = useState<'Idle' | 'Thinking' | 'Warning'>('Idle')
+    const [petMessage, setPetMessage] = useState<string>('')
+    const petTimerRef = useRef<NodeJS.Timeout | null>(null)
     const [remoteCameraStreams, setRemoteCameraStreams] = useState<Record<string, MediaStream>>({})
     const [evidence, setEvidence] = useState<EvidenceItem[]>([])
     const [packetLoss, setPacketLoss] = useState<number | null>(null)
@@ -216,7 +229,6 @@ function SessionContent() {
     const [localCamMuted, setLocalCamMuted] = useState(true)
     const [hasLocalMedia, setHasLocalMedia] = useState(false)
     const [gaugeGlow, setGaugeGlow] = useState(false)
-    const [malpracticeWarnings, setMalpracticeWarnings] = useState<string[]>([])
     const [logFilter, setLogFilter] = useState<'all' | 'anticheat' | 'system'>('all')
     const [observerCount, setObserverCount] = useState(0)
     const [observationRequest, setObservationRequest] = useState<string | null>(null)
@@ -233,7 +245,49 @@ function SessionContent() {
     const customBgObjectUrlRef = useRef<string | null>(null)
     const prevBackgroundStyleRef = useRef<BackgroundStyle>('none')
     const [isCanvasMode, setIsCanvasMode] = useState(false)
+    const [messages, setMessages] = useState<any[]>([])
+
+    const captureScreenshotEvidence = async (video: HTMLVideoElement | null, label: string): Promise<string | undefined> => {
+        if (!video || video.videoWidth === 0 || video.videoHeight === 0) return undefined;
+        return new Promise((resolve) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve(undefined);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(async (blob) => {
+                if (!blob) return resolve(undefined);
+                try {
+                    const formData = new FormData();
+                    formData.append('evidenceFile', blob, `violation-${Date.now()}.png`);
+                    formData.append('roomCode', roomCodeRef.current || joinInput || '');
+                    formData.append('label', label);
+                    const token = getStoredAuthToken();
+                    const res = await fetch(`${getBackendUrl()}/api/admin/upload-violation-screenshot`, {
+                        method: 'POST',
+                        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.success && data.url) {
+                        resolve(data.url);
+                    } else {
+                        resolve(undefined);
+                    }
+                } catch (e) {
+                    console.error('Screenshot evidence upload failed', e);
+                    resolve(undefined);
+                }
+            }, 'image/png');
+        });
+    };
+
     const logScrollRef = useRef<HTMLDivElement>(null)
+
+    // Exam State
+    const [examQuestions, setExamQuestions] = useState<ExamQuestion[]>([])
+    const [examLiveAnswers, setExamLiveAnswers] = useState<Record<string, Record<string, any>>>({})
     // ── Refs ──────────────────────────────────────────────────────────────────
     const mainVideoRef = useRef<HTMLVideoElement>(null)
     const backgroundInputRef = useRef<HTMLInputElement>(null)
@@ -285,7 +339,7 @@ function SessionContent() {
             }
             virtualBackgroundRef.current.setBackgroundStyle(backgroundStyle, backgroundStyle === 'custom' && customBackgroundUrl ? customBackgroundUrl : undefined);
             
-            if (currentVideoSource && currentVideoSource.readyState >= 2) {
+            if (currentVideoSource) {
                 const bgStream = virtualBackgroundRef.current.start(currentVideoSource);
                 if (!hiddenBgVideoRef.current) {
                     hiddenBgVideoRef.current = document.createElement('video');
@@ -294,7 +348,9 @@ function SessionContent() {
                     hiddenBgVideoRef.current.muted = true;
                 }
                 hiddenBgVideoRef.current.srcObject = bgStream;
-                hiddenBgVideoRef.current.play().catch(e => console.error("Could not play hidden bg stream", e));
+                hiddenBgVideoRef.current.play().catch(e => {
+                    if (e.name !== 'AbortError') console.error("Could not play hidden bg stream", e);
+                });
                 currentVideoSource = hiddenBgVideoRef.current;
                 
                 const finalStream = new MediaStream();
@@ -304,25 +360,63 @@ function SessionContent() {
             }
         } else {
             virtualBackgroundRef.current?.stop();
-            virtualBackgroundRef.current = null;
         }
 
         const updateSenders = (stream: MediaStream) => {
-            const pCs = currentRoleRef.current === 'host' ? Array.from(hostPcRefs.current.values()) : [pcRef.current];
-            pCs.forEach(pc => {
-                if (!pc || pc.signalingState === 'closed') return;
-                const senders = pc.getSenders();
+            const pCs = currentRoleRef.current === 'host' ? Array.from(hostPcRefs.current.entries()) : [['host', pcRef.current]];
+            pCs.forEach(async ([targetId, pc]) => {
+                if (!pc || (pc as RTCPeerConnection).signalingState === 'closed') return;
+                const rtcPc = pc as RTCPeerConnection;
+                const senders = rtcPc.getSenders();
+                let needsRenegotiation = false;
                 
                 const audioTrack = stream.getAudioTracks()[0];
                 if (audioTrack) {
                     const audioSender = senders.find(s => s.track?.kind === 'audio' && s.track !== screenStreamRef.current?.getAudioTracks()[0]);
                     if (audioSender) audioSender.replaceTrack(audioTrack);
+                    else {
+                        rtcPc.addTrack(audioTrack, stream);
+                        needsRenegotiation = true;
+                    }
                 }
                 
                 const videoTrack = stream.getVideoTracks()[0];
                 if (videoTrack) {
                     const videoSender = senders.find(s => s.track?.kind === 'video' && s.track !== screenStreamRef.current?.getVideoTracks()[0]);
                     if (videoSender) videoSender.replaceTrack(videoTrack);
+                    else {
+                        rtcPc.addTrack(videoTrack, stream);
+                        needsRenegotiation = true;
+                    }
+                }
+
+                if (needsRenegotiation) {
+                    const negotiate = async () => {
+                        try {
+                            const offer = await rtcPc.createOffer();
+                            await rtcPc.setLocalDescription(offer);
+                            socketRef.current?.emit('offer', {
+                                offer,
+                                roomId: roomCodeRef.current || joinInput,
+                                targetId: targetId === 'host' ? undefined : targetId,
+                                mediaStreamIds: getLocalMediaStreamIds(),
+                            });
+                        } catch (err) {
+                            console.error('[DEBUG] Renegotiation failed:', err);
+                        }
+                    };
+
+                    if (rtcPc.signalingState === 'stable') {
+                        negotiate();
+                    } else {
+                        const onSignalingStateChange = () => {
+                            if (rtcPc.signalingState === 'stable') {
+                                rtcPc.removeEventListener('signalingstatechange', onSignalingStateChange);
+                                negotiate();
+                            }
+                        };
+                        rtcPc.addEventListener('signalingstatechange', onSignalingStateChange);
+                    }
                 }
             });
             
@@ -336,27 +430,15 @@ function SessionContent() {
             if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
             virtualAvatarRef.current.setAvatarStyle(avatarStyle);
             
-            const startAvatarWhenReady = () => {
-                if (!currentVideoSource) return;
-                if (currentVideoSource.readyState >= 2) {
-                    const avatarStream = virtualAvatarRef.current!.start(currentVideoSource);
-                    const finalStream = new MediaStream();
-                    processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
-                    avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
-                    updateSenders(finalStream);
-                } else {
-                    const onLoadedData = () => {
-                        currentVideoSource!.removeEventListener('loadeddata', onLoadedData);
-                        startAvatarWhenReady();
-                    };
-                    currentVideoSource.addEventListener('loadeddata', onLoadedData);
-                }
-            };
-            
-            startAvatarWhenReady();
+            if (currentVideoSource) {
+                const avatarStream = virtualAvatarRef.current!.start(currentVideoSource);
+                const finalStream = new MediaStream();
+                processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
+                avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
+                updateSenders(finalStream);
+            }
         } else {
             virtualAvatarRef.current?.stop();
-            virtualAvatarRef.current = null;
             updateSenders(processedStream);
         }
         
@@ -499,15 +581,11 @@ function SessionContent() {
     }, [])
 
     const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6]) => {
-        setMalpracticeWarnings(prev => [...prev, reason].slice(-3))
-        window.setTimeout(() => {
-            setMalpracticeWarnings(prev => prev.filter(warning => warning !== reason))
-        }, 5000)
-        socketRef.current?.emit('anticheat-alert', {
-            roomId: roomCodeRef.current,
-            controllerId: socketRef.current?.id,
+        socketRef.current?.emit('system-alert', {
+            room: roomCodeRef.current,
             type: 'anticheat_violation',
-            reason,
+            event: 'PROCTORING_ALERT',
+            message: reason,
             penalty,
         })
         recordFederatedSample(features, 1)
@@ -545,6 +623,7 @@ function SessionContent() {
             throw new Error("Media devices not available (requires HTTPS/localhost).")
         }
 
+        (window as any).isRequestingPermissions = true;
         mediaStreamPromiseRef.current = navigator.mediaDevices.getUserMedia({ 
             video: videoRequired, 
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
@@ -556,9 +635,26 @@ function SessionContent() {
             setHasLocalMedia(true)
             return stream
         } catch (err: any) {
-            addLog('system', `Camera/Mic blocked by OS/Hardware: ${err.name} - ${err.message}`);
-            throw err;
+            if (videoRequired && (err.name === 'NotReadableError' || err.name === 'TrackStartError' || err.message?.includes('Timeout'))) {
+                addLog('system', 'Camera is in use by another application or tab. Falling back to Audio-only...');
+                try {
+                    const fallbackStream = await navigator.mediaDevices.getUserMedia({ 
+                        video: false, 
+                        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+                    });
+                    localStreamRef.current = fallbackStream;
+                    setHasLocalMedia(true);
+                    return fallbackStream;
+                } catch (fallbackErr: any) {
+                    addLog('system', `Camera & Mic blocked by OS/Hardware: ${fallbackErr.name} - ${fallbackErr.message}`);
+                    throw fallbackErr;
+                }
+            } else {
+                addLog('system', `Camera/Mic blocked by OS/Hardware: ${err.name} - ${err.message}`);
+                throw err;
+            }
         } finally {
+            (window as any).isRequestingPermissions = false;
             mediaStreamPromiseRef.current = null
         }
     }, [])
@@ -653,7 +749,7 @@ function SessionContent() {
     }, []);
 
     useEffect(() => {
-        if (sessionMode !== 'supervised' || role !== 'host') {
+        if (sessionMode !== 'supervised' || role !== 'controller') {
             engineRef.current?.stop()
             engineRef.current = null
             setAntiCheatStatus('idle')
@@ -674,10 +770,13 @@ function SessionContent() {
             setRiskScore(s => Math.min(100, s + ev.scorePenalty))
             setGaugeGlow(true)
             setTimeout(() => setGaugeGlow(false), 800)
-            socketRef.current?.emit('system-alert', {
-                type: 'anticheat_violation', event: ev.type,
-                message: ev.message, penalty: ev.scorePenalty, room: roomCode,
-            })
+            captureScreenshotEvidence(localCamRef.current, ev.message).then(url => {
+                socketRef.current?.emit('system-alert', {
+                    type: 'anticheat_violation', event: ev.type,
+                    message: ev.message, penalty: ev.scorePenalty, room: roomCode,
+                    evidenceUrl: url
+                })
+            });
         })
         
         const runCalibration = async () => {
@@ -1043,6 +1142,7 @@ function SessionContent() {
             setPendingJoinRequests(state.pendingRequests || [])
             setChatMessages(state.messages || [])
             setObserverCount(state.observerCount || 0)
+            setExamQuestions(state.examQuestions || [])
         })
         socket.on('join-approved', ({ permission: approvedPermission, clipboardAllowed: approvedClipboard }: any) => {
             setPermission(approvedPermission)
@@ -1059,7 +1159,10 @@ function SessionContent() {
             console.log('[DEBUG] Received offer:', payload.offer.type);
             try {
                 remoteMediaStreamIdsRef.current = payload.mediaStreamIds || {}
-                const pc = pcRef.current && pcRef.current.signalingState !== 'closed' ? pcRef.current : await createPC()
+                let pc = currentRoleRef.current === 'host' ? hostPcRefs.current.get(payload.fromId) : pcRef.current;
+                if (!pc || pc.signalingState === 'closed') {
+                    pc = await createPC(payload.fromId);
+                }
                 await pc.setRemoteDescription(new RTCSessionDescription(payload.offer))
                 addMediaTracksToPeer(pc)
                 const answer = await pc.createAnswer()
@@ -1076,8 +1179,12 @@ function SessionContent() {
             }
         })
         socket.on('answer', async (payload: any) => {
-            const pc = payload?.fromId ? hostPcRefs.current.get(payload.fromId) : pcRef.current
-            await pc?.setRemoteDescription(new RTCSessionDescription(payload.answer))
+            try {
+                const pc = payload?.fromId ? hostPcRefs.current.get(payload.fromId) : pcRef.current
+                await pc?.setRemoteDescription(new RTCSessionDescription(payload.answer))
+            } catch (err) {
+                console.error('[DEBUG] Error setting remote answer:', err);
+            }
         })
         socket.on('ice-candidate', async (payload: any) => {
             const pc = currentRoleRef.current === 'host' && payload?.fromId ? hostPcRefs.current.get(payload.fromId) : pcRef.current
@@ -1160,6 +1267,24 @@ function SessionContent() {
             alert('The session has ended.')
             window.location.href = '/app'
         })
+        socket.on('stats-update', (data: any) => {
+            if (data) {
+                setPacketLoss(data.packetLoss);
+                setStreamFps(data.fps);
+            }
+        });
+        socket.on('new-exam-question', (question: ExamQuestion) => {
+            setExamQuestions(prev => [...prev, question]);
+        });
+        socket.on('host-live-answer-update', ({ questionId, controllerId, controllerName, answer }) => {
+            setExamLiveAnswers(prev => {
+                const newLive = { ...prev };
+                if (!newLive[questionId]) newLive[questionId] = {};
+                newLive[questionId][controllerId] = { ...answer, controllerName };
+                return newLive;
+            });
+        });
+            
         socket.on('role-swap-requested', ({ fromId, fromName }: { fromId: string, fromName: string }) => {
             setRoleSwapRequest({ requesterId: fromId, requesterName: fromName });
         })
@@ -1222,6 +1347,7 @@ function SessionContent() {
         console.log('[DEBUG] startSharing CALLED!');
         try {
             console.log('[DEBUG] Calling getDisplayMedia...');
+            (window as any).isRequestingPermissions = true;
             if (screenStreamRef.current) {
                 screenStreamRef.current.getTracks().forEach(t => t.stop());
             }
@@ -1238,6 +1364,26 @@ function SessionContent() {
                 });
             }
             console.log('[DEBUG] getDisplayMedia SUCCESS!');
+            
+            // Multi-Monitor Detection
+            if (sessionMode === 'supervised') {
+                const track = screen.getVideoTracks()[0];
+                const settings = track.getSettings();
+                if (settings.width && settings.height) {
+                    const aspectRatio = settings.width / settings.height;
+                    if (aspectRatio > 2.4) { // Typical dual monitor (e.g. 3840x1080)
+                        track.stop();
+                        const message = "Multi-monitor setup detected. Please disconnect extra monitors and share a single screen.";
+                        reportMalpractice(`Multi-Monitor: ${message}`, 30, [1, 0, 0]);
+                        setPetState('Warning');
+                        setPetMessage(message);
+                        if (petTimerRef.current) clearTimeout(petTimerRef.current);
+                        petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
+                        return; // Abort screen sharing
+                    }
+                }
+            }
+
             screenStreamRef.current = screen
             setIsStreaming(true)
             setTimeout(() => {
@@ -1289,6 +1435,8 @@ function SessionContent() {
         } catch (err: any) {
             console.error('[Host Console] startSharing Error:', err.name, err.message, err.stack)
             addLog('system', `Screen sharing failed: ${err.message}`)
+        } finally {
+            (window as any).isRequestingPermissions = false;
         }
     }
 
@@ -1463,10 +1611,34 @@ function SessionContent() {
     useEffect(() => {
         if (role !== 'controller' || sessionMode !== 'supervised' || connectionState !== 'connected') return;
 
-        const onBlur = () => reportMalpractice('Application lost focus (external app/click)', 15, [0.15, 1, 0.1]);
+        const handleTabSwitch = async (reason: string) => {
+            const url = await captureScreenshotEvidence(localCamRef.current, reason);
+            
+            socketRef.current?.emit('anti-cheat-alert', {
+                roomId: roomCodeRef.current,
+                type: 'anticheat_violation',
+                reason: 'tab-switch',
+                message: reason,
+                evidenceUrl: url,
+                penalty: 100
+            });
+            
+            // Allow socket emission to complete before blocking with alert
+            await new Promise(r => setTimeout(r, 100));
+            
+            alert(`Session Terminated: ${reason}`);
+            socketRef.current?.emit('leave-session');
+            window.location.href = '/app';
+        };
+
+        const onBlur = () => {
+            if ((window as any).isSelectingFile) return;
+            handleTabSwitch('Application lost focus (external app/click)');
+        };
         const onVisibilityChange = () => {
+            if ((window as any).isSelectingFile) return;
             if (document.visibilityState === 'hidden') {
-                reportMalpractice('Tab switch or minimized app detected', 15, [0.2, 1, 0.1]);
+                handleTabSwitch('Tab switch or minimized app detected');
             }
         };
 
@@ -1477,7 +1649,7 @@ function SessionContent() {
             window.removeEventListener('blur', onBlur);
             document.removeEventListener('visibilitychange', onVisibilityChange);
         };
-    }, [role, sessionMode, connectionState, reportMalpractice]);
+    }, [role, sessionMode, connectionState]);
 
     const toggleRecording = () => {
         if (!isRecording) {
@@ -1579,7 +1751,7 @@ function SessionContent() {
         addLog('system', `Submitted ${weights.length} model weights from ${sampleCount} telemetry sample(s) to the aggregator.`)
     }
 
-    const sendChatMessage = (event?: FormEvent) => {
+    const sendChatMessage = async (event?: FormEvent) => {
         event?.preventDefault()
         const text = chatInput.trim()
         const activeRoom = roomCodeRef.current
@@ -1587,7 +1759,154 @@ function SessionContent() {
         socketRef.current?.emit('chat-message', { roomId: activeRoom, text })
         setChatInput('')
         setChatOpen(true)
+
+        if (text.toLowerCase().startsWith('@pet')) {
+            setPetState('Thinking')
+            try {
+                const res = await fetch('/api/pet', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: text.replace(/^@pet/i, '').trim(), roomCode: activeRoom })
+                })
+                const data = await res.json()
+                if (data.reply) {
+                    setChatMessages(prev => [...prev, {
+                        id: Date.now().toString(),
+                        time: new Date().toISOString(),
+                        senderId: 'system',
+                        senderName: 'System',
+                        role: 'admin',
+                        text: `🐶 [Pet AI]: ${data.reply}`
+                    }])
+                }
+            } catch (err) {
+                console.error(err)
+            } finally {
+                setPetState('Idle')
+            }
+        }
     }
+
+    useFaceProctoring(
+        localCamRef,
+        sessionMode,
+        role,
+        (type, message) => {
+            reportMalpractice(`Proctoring [${type}]: ${message}`, 20, [0.8, 0, 0.2]);
+            setPetState('Warning');
+            setPetMessage(message);
+            if (petTimerRef.current) clearTimeout(petTimerRef.current);
+            petTimerRef.current = setTimeout(() => {
+                setPetState('Idle');
+                setPetMessage('');
+            }, 8000);
+            
+            setChatMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                time: new Date().toISOString(),
+                senderId: 'system',
+                senderName: 'System',
+                role: 'admin',
+                text: `⚠️ [System Warning]: ${message}`
+            }]);
+        }
+    );
+
+    const tabSwitchCountRef = useRef(0);
+
+    useObjectProctoring(
+        localCamRef,
+        sessionMode,
+        role,
+        (type, message) => {
+            reportMalpractice(`Proctoring [${type}]: ${message}`, 20, [0.8, 0, 0.2]);
+            setPetState('Warning');
+            setPetMessage(message);
+            if (petTimerRef.current) clearTimeout(petTimerRef.current);
+            petTimerRef.current = setTimeout(() => {
+                setPetState('Idle');
+                setPetMessage('');
+            }, 8000);
+            
+            setChatMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                time: new Date().toISOString(),
+                senderId: 'system',
+                senderName: 'System',
+                role: 'admin',
+                text: `⚠️ [System Warning]: ${message}`
+            }]);
+        }
+    );
+
+    useAudioProctoring(
+        localStreamRef,
+        sessionMode,
+        role,
+        (type, message) => {
+            reportMalpractice(`Proctoring [${type}]: ${message}`, 15, [0.8, 0, 0.2]);
+            setPetState('Warning');
+            setPetMessage(message);
+            if (petTimerRef.current) clearTimeout(petTimerRef.current);
+            petTimerRef.current = setTimeout(() => {
+                setPetState('Idle');
+                setPetMessage('');
+            }, 8000);
+            
+            setChatMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                time: new Date().toISOString(),
+                senderId: 'system',
+                senderName: 'System',
+                role: 'admin',
+                text: `⚠️ [System Warning]: ${message}`
+            }]);
+        }
+    );
+
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller') return;
+        
+        const handleBlur = () => {
+            if ((window as any).isRequestingPermissions) return;
+            tabSwitchCountRef.current += 1;
+            if (tabSwitchCountRef.current >= 2) {
+                reportMalpractice('App Focus Fatal: Multiple app switches detected. Session terminated.', 100, [1, 0, 0]);
+                window.location.href = '/app?terminated=tab_switch';
+            } else if (tabSwitchCountRef.current === 1) {
+                const message = 'App switch detected! Please keep this window active. A second violation will terminate your session.';
+                reportMalpractice(`App Switch: ${message}`, 50, [1, 0, 0]);
+                setPetState('Warning');
+                setPetMessage(message);
+                if (petTimerRef.current) clearTimeout(petTimerRef.current);
+                petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
+            }
+        };
+
+        window.addEventListener('blur', handleBlur);
+        return () => window.removeEventListener('blur', handleBlur);
+    }, [sessionMode, role, reportMalpractice]);
+
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller') return;
+        
+        const preventCopyPaste = (e: ClipboardEvent) => {
+            e.preventDefault();
+            const message = 'Copy/Paste is disabled during supervised sessions.';
+            reportMalpractice(`Clipboard: ${message}`, 10, [0.5, 0, 0]);
+            setPetState('Warning');
+            setPetMessage(message);
+            if (petTimerRef.current) clearTimeout(petTimerRef.current);
+            petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
+        };
+
+        document.addEventListener('copy', preventCopyPaste);
+        document.addEventListener('paste', preventCopyPaste);
+        return () => {
+            document.removeEventListener('copy', preventCopyPaste);
+            document.removeEventListener('paste', preventCopyPaste);
+        };
+    }, [sessionMode, role, reportMalpractice]);
 
     if (setupMode === "join") {
         return (
@@ -1683,6 +2002,16 @@ function SessionContent() {
                     <button onClick={() => setIsCanvasMode(!isCanvasMode)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", isCanvasMode ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle Canvas Mode">
                         <PenTool className="w-4 h-4" />
                     </button>
+                    {sessionMode !== 'supervised' && (
+                        <button onClick={() => setShowPet(!showPet)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", showPet ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle AI Pet">
+                            <Bot className="w-4 h-4" />
+                        </button>
+                    )}
+                    {role === 'host' && sessionMode === 'supervised' && (
+                        <button onClick={() => setShowExamDashboard(!showExamDashboard)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", showExamDashboard ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle Exam Dashboard">
+                            <Clipboard className="w-4 h-4" />
+                        </button>
+                    )}
                     {role === 'controller' && typeof window !== 'undefined' && (window as any).ipcRenderer && (
                         <button 
                             onClick={() => socketRef.current?.emit('request-role-swap', { roomId: roomCodeRef.current || joinInput })}
@@ -2148,20 +2477,50 @@ function SessionContent() {
                                     isActive={role === 'controller' && sessionMode === 'supervised' && hasLocalMedia && !localCamMuted}
                                     status={antiCheatStatus}
                                 />
-                                {riskScore > 0 && <div className="absolute top-0 left-0 right-0 bg-red-600/80 text-white text-xs font-bold text-center py-0.5">VIOLATION: {riskScore} PTS</div>}
                                 {localCamMuted && <div className="absolute inset-0 flex items-center justify-center text-[var(--text-dim)]"><VideoOff className="w-6 h-6" /></div>}
 
                         </div>
                         </div>
 
-                        {/* Malpractice Warnings (Bottom-Left) */}
-                        <div className="absolute bottom-4 left-56 z-50 flex flex-col gap-2 pointer-events-none">
-                            {malpracticeWarnings.map((warning, idx) => (
-                                <div key={idx} className="flex items-center gap-2 bg-red-900/90 border border-red-500 text-white px-4 py-2 rounded-lg shadow-lg font-bold text-sm animate-[slideIn_0.3s_ease-out]">
-                                    <AlertTriangle className="h-4 w-4 shrink-0" /> MALPRACTICE DETECTED: {warning}
-                                </div>
-                            ))}
+            {/* Exam Host Dashboard */}
+            {role === 'host' && sessionMode === 'supervised' && showExamDashboard && (
+                <motion.div 
+                    drag 
+                    dragMomentum={false}
+                    className="absolute right-4 top-20 z-40 transition-shadow duration-300 shadow-[0_0_20px_rgba(0,0,0,0.5)] rounded-2xl bg-[#111] border border-[#222] overflow-hidden flex flex-col"
+                    style={{ width: '24rem', height: 'calc(100vh - 100px)', resize: 'both', minWidth: '300px', minHeight: '400px' }}
+                >
+                    <div className="w-full h-full flex flex-col">
+                        <div className="cursor-move h-4 w-full flex items-center justify-center bg-white/5 border-b border-white/5 hover:bg-white/10 transition-colors">
+                            <div className="w-8 h-1 rounded-full bg-white/20"></div>
                         </div>
+                        <div className="flex-1 overflow-hidden flex flex-col">
+                            <ExamHostDashboard 
+                                onPushQuestion={(q) => socketRef.current?.emit('host-push-question', { ...q, roomId: roomCodeRef.current || joinInput })}
+                                liveAnswers={examLiveAnswers}
+                                localStream={localStreamRef.current}
+                            />
+                        </div>
+                    </div>
+                </motion.div>
+            )}
+
+            {role === 'controller' && sessionMode === 'supervised' && examQuestions.length > 0 && (
+                <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center">
+                    <div className="pointer-events-auto w-full h-full max-w-4xl">
+                        <ExamControllerOverlay 
+                            questions={examQuestions} 
+                            onDraftUpdate={(qId, answer) => socketRef.current?.emit('controller-draft-answer', { questionId: qId, answer, roomId: roomCodeRef.current || joinInput })}
+                            onSubmit={(qId, answer) => {
+                                socketRef.current?.emit('controller-submit-answer', { questionId: qId, answer, roomId: roomCodeRef.current || joinInput });
+                                setExamQuestions(prev => prev.filter(q => q.id !== qId));
+                            }}
+                        />
+                    </div>
+                </div>
+            )}
+
+                        {/* Malpractice Warnings Removed as per user request */}
                     </div>
                 </main>
             </div>
@@ -2365,6 +2724,8 @@ function SessionContent() {
                     }}
                 />
             )}
+
+            {(showPet || sessionMode === 'supervised') && <PetCanvas petState={petState} sessionMode={sessionMode} petMessage={petMessage} />}
         </div>
     )
 }

@@ -1,17 +1,19 @@
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import type * as cocoSsd from "@tensorflow-models/coco-ssd";
 
-// Next.js dev overlay catches console.error and blocks the UI.
-// TensorFlow Lite Wasm uses console.error for INFO logs by mistake.
+// Robust suppression of Next.js Turbopack dev overlay for AI Wasm errors
 if (typeof window !== "undefined") {
-  const originalConsoleError = console.error;
+  const originalError = console.error;
   console.error = (...args) => {
-    if (typeof args[0] === 'string' && args[0].includes('Created TensorFlow Lite XNNPACK delegate')) {
+    const msg = String(args[0] || '').toLowerCase();
+    const suppressedTerms = ['index out of bounds', 'abort', 'wasm', 'memory', 'delegate', 'task failed'];
+    if (suppressedTerms.some(term => msg.includes(term))) {
       return;
     }
-    originalConsoleError.apply(console, args);
+    originalError.apply(console, args);
   };
 }
+
 export type AntiCheatEvent = {
   type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY" | "SYSTEM" | "BLINK_ANOMALY";
   message: string;
@@ -31,9 +33,9 @@ export interface AntiCheatConfig {
 const DEFAULT_CONFIG: AntiCheatConfig = {
   eyeTrackingThreshold: 0.80,
   emotionSensitivity: 0.65,
-  audioVolumeThreshold: 0.05, // 5% volume threshold
+  audioVolumeThreshold: 0.05,
   headPoseMargin: 0.50,
-  baselineBlinkRate: 15 // average blinks per minute
+  baselineBlinkRate: 15
 };
 
 export class AntiCheatEngine {
@@ -48,7 +50,18 @@ export class AntiCheatEngine {
   private lastPredictions: any[] | null = null;
   private audioContext: AudioContext | null = null;
   private audioAnalyser: AnalyserNode | null = null;
+  private speechRecognition: any = null;
   private missingFaceFrames: number = 0;
+  
+  private isProcessingFace: boolean = false;
+  private isProcessingObject: boolean = false;
+
+  private lastKeyDownTime = 0;
+  private keyDwellTimes: number[] = [];
+  private keyFlightTimes: number[] = [];
+  private baselineDwellTime = 0;
+  private baselineFlightTime = 0;
+
   public initStatus: InitStatus = "idle";
   private config: AntiCheatConfig = DEFAULT_CONFIG;
   private blinkTimestamps: number[] = [];
@@ -62,7 +75,6 @@ export class AntiCheatEngine {
 
   public setConfig(newConfig: Partial<AntiCheatConfig>) {
     this.config = { ...this.config, ...newConfig };
-    console.log("[AntiCheat] Updated config:", this.config);
   }
   
   public getConfig() {
@@ -70,22 +82,17 @@ export class AntiCheatEngine {
   }
 
   async initialize() {
-    this.setStatus("loading", "Loading AI Models... (50MB)");
+    this.setStatus("loading", "Initializing AI Proctoring...");
     try {
-      // ── 1. TensorFlow backend first ──────────────────────────────────
-      this.setStatus("loading", "Initializing TensorFlow.js backend…");
       const tf = await import("@tensorflow/tfjs");
       const cocoSsd = await import("@tensorflow-models/coco-ssd");
       const { FaceLandmarker, FilesetResolver } = await import("@mediapipe/tasks-vision");
 
       await tf.setBackend("webgl");
       await tf.ready();
-      this.setStatus("loading", "TensorFlow.js ready ✓");
 
-      // ── 2. MediaPipe FaceLandmarker ──────────────────────────────────
-      this.setStatus("loading", "Loading face detection model…");
       const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm"
       );
       this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
         baseOptions: {
@@ -96,20 +103,15 @@ export class AntiCheatEngine {
         runningMode: "VIDEO",
         numFaces: 3,
       });
-      this.setStatus("loading", "Face detection model ready ✓");
 
-      // ── 3. COCO-SSD for phone/object detection ───────────────────────
-      this.setStatus("loading", "Loading object detection model…");
       this.objectModel = await cocoSsd.load({ base: "lite_mobilenet_v2" });
-      this.setStatus("loading", "Object detection model ready ✓");
 
       this.initStatus = "ready";
-      this.setStatus("ready", "AntiCheat engine fully initialized ✓");
-      console.log("[AntiCheat] Engine initialized successfully");
+      this.setStatus("ready", "AI Shield Active ✓");
     } catch (err: any) {
-      console.error("[AntiCheat] Initialization failed:", err);
+      console.error("[AntiCheat] Init Error:", err);
       this.initStatus = "error";
-      this.setStatus("error", `AntiCheat init failed: ${err.message}`);
+      this.setStatus("error", `Engine failed: ${err.message}`);
     }
   }
 
@@ -127,13 +129,8 @@ export class AntiCheatEngine {
   }
 
   async calibrate(videoElement: HTMLVideoElement, audioStream?: MediaStream): Promise<void> {
-    if (this.initStatus !== "ready") {
-      console.warn("[AntiCheat] Cannot calibrate before initialization is ready.");
-      return;
-    }
-    
-    this.setStatus("loading", "Calibrating AI thresholds... (3s)");
-    console.log("[AntiCheat] Starting 3-second ambient calibration phase...");
+    if (this.initStatus !== "ready") return;
+    this.setStatus("loading", "Calibrating Environment...");
 
     let tempAudioCtx: AudioContext | null = null;
     let tempAnalyser: AnalyserNode | null = null;
@@ -146,114 +143,51 @@ export class AntiCheatEngine {
         tempAnalyser = tempAudioCtx.createAnalyser();
         tempAnalyser.fftSize = 256;
         source.connect(tempAnalyser);
-      } catch (err) {
-        console.warn("[AntiCheat] Calibration: Audio context failed to start:", err);
-      }
-    } else {
-      console.warn("[AntiCheat] Calibration: Mic denied or missing. Falling back to default audio threshold.");
+      } catch (err) {}
     }
 
     let volumeSamples: number[] = [];
     let poseVariances: number[] = [];
-    let lowConfidenceCount = 0;
-    const TOTAL_SAMPLES = 30; // Sample every 100ms for 3s
+    const TOTAL_SAMPLES = 20;
     let samplesCollected = 0;
-    let calibrationBlinkCount = 0;
-    let wasBlinking = false;
 
     return new Promise((resolve) => {
       const sampleInterval = setInterval(() => {
         samplesCollected++;
 
-        // Sample Audio
         if (tempAnalyser) {
           const bufferLength = tempAnalyser.frequencyBinCount;
           const dataArray = new Uint8Array(bufferLength);
           tempAnalyser.getByteFrequencyData(dataArray);
           let sum = 0;
-          for (let i = 0; i < bufferLength; i++) {
-            sum += dataArray[i];
-          }
+          for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
           volumeSamples.push(sum / bufferLength);
         }
 
-        // Sample Video (Face)
         if (this.faceLandmarker && videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
-          const result = this.faceLandmarker.detectForVideo(videoElement, performance.now());
-          const faces = result.faceLandmarks;
-          if (faces.length === 1) {
-            const marks = faces[0];
-            if (marks && marks.length > 263) {
-              const nose = marks[1].x;
-              const lEye = marks[33].x;
-              const rEye = marks[263].x;
-              const eyeW = Math.abs(rEye - lEye);
-              
-              const expectedNose = (lEye + rEye) / 2;
-              const offsetRatio = Math.abs(nose - expectedNose) / eyeW;
-              poseVariances.push(offsetRatio);
+          try {
+            const result = this.faceLandmarker.detectForVideo(videoElement, performance.now());
+            const faces = result.faceLandmarks;
+            if (faces.length === 1) {
+              const marks = faces[0];
+              const eyeW = Math.abs(marks[263].x - marks[33].x);
+              poseVariances.push(Math.abs(marks[1].x - (marks[33].x + marks[263].x) / 2) / eyeW);
             }
-            
-            const blendshapes = result.faceBlendshapes;
-            if (blendshapes && blendshapes.length > 0) {
-              const categories = blendshapes[0].categories;
-              const blinkL = categories.find((c: any) => c.categoryName === "eyeBlinkLeft" || c.name === "eyeBlinkLeft")?.score || 0;
-              const blinkR = categories.find((c: any) => c.categoryName === "eyeBlinkRight" || c.name === "eyeBlinkRight")?.score || 0;
-              const currentlyBlinking = blinkL > 0.4 || blinkR > 0.4;
-              if (currentlyBlinking && !wasBlinking) {
-                calibrationBlinkCount++;
-              }
-              wasBlinking = currentlyBlinking;
-            }
-          } else {
-            lowConfidenceCount++;
-          }
+          } catch(e) {}
         }
 
         if (samplesCollected >= TOTAL_SAMPLES) {
           clearInterval(sampleInterval);
-          
-          let newAudioThreshold = DEFAULT_CONFIG.audioVolumeThreshold;
           if (volumeSamples.length > 0) {
             const avgNoise = volumeSamples.reduce((a, b) => a + b, 0) / volumeSamples.length;
-            // Calculate standard deviation for smarter, robust audio thresholding
-            const variance = volumeSamples.reduce((a, b) => a + Math.pow(b - avgNoise, 2), 0) / volumeSamples.length;
-            const stdDev = Math.sqrt(variance);
-            
-            // Set threshold to 3 standard deviations above the ambient noise floor (99.7% confidence)
-            newAudioThreshold = avgNoise + (stdDev * 3) + 5; 
-            if (newAudioThreshold < 15) newAudioThreshold = 20; // safe minimum threshold
+            this.config.audioVolumeThreshold = Math.max(20, avgNoise + 15);
           }
-
-          let newHeadMargin = DEFAULT_CONFIG.headPoseMargin;
-          if (poseVariances.length >= Math.ceil(TOTAL_SAMPLES / 2)) { // need at least half the samples to be valid
-            const sortedVariances = [...poseVariances].sort((a, b) => a - b);
-            const p95 = sortedVariances[Math.floor(sortedVariances.length * 0.95)];
-            newHeadMargin = Math.max(0.3, p95 + 0.15); // pad the natural variance by 0.15
+          if (poseVariances.length > 5) {
+            const avgVar = poseVariances.reduce((a,b)=>a+b,0)/poseVariances.length;
+            this.config.headPoseMargin = Math.max(0.35, avgVar + 0.2);
           }
-
-          let newEyeThreshold = DEFAULT_CONFIG.eyeTrackingThreshold;
-          if (lowConfidenceCount > TOTAL_SAMPLES * 0.4) {
-            // More than 40% of samples had low/no confidence tracking (bad lighting)
-            newEyeThreshold = 0.50; // heavily relax eye tracking to prevent false positives
-            this.emitEvent("SYSTEM", "[ALERT] AI Sensitivity auto-relaxed due to low lighting/poor confidence during calibration.", 0);
-          }
-          
-          // Let the baseline remain a sensible default (e.g. 15).
-          // We will refine it actively during the first 60 seconds of the live session.
-          let extrapolatedBPM = DEFAULT_CONFIG.baselineBlinkRate;
-
-          this.setConfig({
-            audioVolumeThreshold: newAudioThreshold,
-            headPoseMargin: newHeadMargin,
-            eyeTrackingThreshold: newEyeThreshold,
-            baselineBlinkRate: extrapolatedBPM
-          });
-
           if (tempAudioCtx) tempAudioCtx.close().catch(() => {});
-          
-          this.setStatus("ready", "Calibration complete ✓");
-          console.log("[AntiCheat] Calibration finished. Final config:", this.config);
+          this.setStatus("ready", "Proctoring Ready ✓");
           resolve();
         }
       }, 100);
@@ -261,38 +195,10 @@ export class AntiCheatEngine {
   }
 
   async start(videoElement: HTMLVideoElement, canvasElement?: HTMLCanvasElement, audioStream?: MediaStream) {
-    if (this.isRunning) {
-      console.log("[AntiCheat] Engine is already running — skipping new start");
-      return;
-    }
-
-    // Wait until ready — retry up to 30s
-    let waited = 0;
-    while (this.initStatus !== "ready" && waited < 30000) {
-      await new Promise(r => setTimeout(r, 500));
-      waited += 500;
-    }
-
-    if (this.initStatus !== "ready") {
-      console.warn("[AntiCheat] Engine not ready after 30s — skipping");
-      return;
-    }
-
-    if (!this.faceLandmarker) {
-      console.warn("[AntiCheat] FaceLandmarker not available");
-      return;
-    }
-
+    if (this.isRunning) return;
     this.isRunning = true;
-    this.lastTimestamp = 0;
     this.sessionStartTime = performance.now();
-    this.lastBucketTime = this.sessionStartTime;
-    this.blinkBuckets = [];
-    this.currentBucketBlinks = 0;
-    this.lastPredictions = null;
-    console.log("[AntiCheat] Starting frame analysis on video element and audio stream");
 
-    // Initialize Web Audio API Analyser Node if mic stream is present
     if (audioStream && audioStream.getAudioTracks().length > 0) {
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -301,421 +207,131 @@ export class AntiCheatEngine {
         this.audioAnalyser = this.audioContext.createAnalyser();
         this.audioAnalyser.fftSize = 256;
         source.connect(this.audioAnalyser);
-        console.log("[AntiCheat] Web Audio API context successfully attached");
-      } catch (audioErr) {
-        console.warn("[AntiCheat] Audio context failed to start:", audioErr);
-      }
+      } catch (err) {}
+
+      try {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (SpeechRecognition) {
+          this.speechRecognition = new SpeechRecognition();
+          this.speechRecognition.continuous = true;
+          this.speechRecognition.interimResults = true;
+          this.speechRecognition.onresult = () => {
+            this.emitEvent("VOICE_DETECTED" as any, "Human voice / talking detected", 5);
+          };
+          this.speechRecognition.onerror = () => {};
+          this.speechRecognition.start();
+        }
+      } catch (err) {}
     }
 
-    const ctx = canvasElement ? canvasElement.getContext("2d") : null;
+    const ctx = canvasElement?.getContext("2d");
 
     const processFrame = async () => {
       if (!this.isRunning) return;
-      this.frameCount++;
-
-      // Check track enabled states dynamically from audioStream/MediaStream
-      const videoTracks = audioStream ? audioStream.getVideoTracks() : [];
-      const isCamEnabled = videoTracks.length === 0 || videoTracks[0].enabled;
-
-      const audioTracks = audioStream ? audioStream.getAudioTracks() : [];
-      const isMicEnabled = audioTracks.length === 0 || audioTracks[0].enabled;
-
-      if (
-        videoElement.readyState >= 2 &&
-        videoElement.videoWidth > 0 &&
-        videoElement.videoHeight > 0
-      ) {
-        // Clear canvas context
+      if (videoElement.readyState >= 2 && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
         if (ctx && canvasElement) {
-          if (canvasElement.width !== videoElement.videoWidth || canvasElement.height !== videoElement.videoHeight) {
-            canvasElement.width = videoElement.videoWidth;
-            canvasElement.height = videoElement.videoHeight;
+          if (canvasElement.width !== videoElement.videoWidth) {
+              canvasElement.width = videoElement.videoWidth;
+              canvasElement.height = videoElement.videoHeight;
           }
           ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         }
 
-        // Monotonically increasing timestamp requirement
-        let startTimeMs = performance.now();
-        if (this.lastTimestamp && startTimeMs <= this.lastTimestamp) {
-          startTimeMs = this.lastTimestamp + 1;
-        }
-        this.lastTimestamp = startTimeMs;
-
-        let getScore = (name: string): number => 0;
-        let frown = false;
-        let surprise = false;
-        let happy = false;
-
-        // ── Face detection every frame ─────────────────────────────
-        if (!isCamEnabled) {
-          // Skip face proctoring if camera is muted by the user, render clean muted overlay
-          if (ctx && canvasElement) {
-            ctx.fillStyle = "rgba(10, 10, 15, 0.85)";
-            ctx.fillRect(0, 0, canvasElement.width, canvasElement.height);
-            ctx.strokeStyle = "rgba(255, 59, 92, 0.4)";
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(8, 8, canvasElement.width - 16, canvasElement.height - 16);
-
-            ctx.font = "bold 11px monospace";
-            ctx.fillStyle = "rgb(255, 59, 92)";
-            ctx.textAlign = "center";
-            ctx.fillText("● CAMERA MUTED BY USER", canvasElement.width / 2, canvasElement.height / 2 - 4);
-            ctx.font = "9px monospace";
-            ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-            ctx.fillText("AI Proctoring temporarily suspended", canvasElement.width / 2, canvasElement.height / 2 + 10);
-            ctx.textAlign = "left"; // Restore default
+        if (this.audioAnalyser && this.audioContext) {
+          if (this.audioContext.state === 'suspended') {
+              this.audioContext.resume().catch(() => {});
           }
-        } else if (this.faceLandmarker) {
-          try {
-            const result = this.faceLandmarker.detectForVideo(videoElement, startTimeMs);
-            const faces = result.faceLandmarks;
+          const dataArray = new Uint8Array(this.audioAnalyser.frequencyBinCount);
+          this.audioAnalyser.getByteFrequencyData(dataArray);
+          
+          // Filter for human speech frequencies (approx 344Hz to 3440Hz)
+          const speechBins = Array.from(dataArray).slice(2, 21);
+          // Use average volume of just the speech frequencies to prevent random noise spikes from triggering it
+          const avgSpeechVolume = speechBins.reduce((a, b) => a + b, 0) / speechBins.length;
+          const normalizedVolume = avgSpeechVolume / 255;
+          
+          if (normalizedVolume > this.config.audioVolumeThreshold) {
+              if (!this.speechRecognition) {
+                  this.emitEvent("VOICE_DETECTED" as any, "Loud noise detected (potential talking)", 5);
+              }
+          }
+        }
 
-            if (faces.length === 0) {
+        if (this.objectModel && !this.isProcessingObject) {
+          this.isProcessingObject = true;
+          this.objectModel.detect(videoElement).then(predictions => {
+              const forbidden = predictions.filter(p => p.class === "cell phone" || p.class === "book" || p.class === "laptop");
+              if (forbidden.length > 0) {
+                  this.emitEvent("FORBIDDEN_OBJECT", `Forbidden object (${forbidden[0].class}) detected`, 15);
+              }
+          }).catch(() => {}).finally(() => {
+              setTimeout(() => { this.isProcessingObject = false; }, 800);
+          });
+        }
+
+        if (this.faceLandmarker && !this.isProcessingFace) {
+          try {
+            this.isProcessingFace = true;
+            const result = this.faceLandmarker.detectForVideo(videoElement, performance.now());
+            if (result.faceLandmarks.length === 0) {
               this.missingFaceFrames++;
-              if (this.missingFaceFrames > 15) {
-                this.emitEvent("NO_FACE", "No face detected in camera", 10);
-                this.missingFaceFrames = 0; // reset to avoid spamming even after debounce
-              }
-            } else if (faces.length > 1) {
-              this.missingFaceFrames = 0;
-              this.emitEvent("MULTIPLE_FACES", `${faces.length} faces detected`, 20);
-            } else {
-              this.missingFaceFrames = 0;
-              // ── Facial Blendshapes and Micro-expressions ───────────────
-              const blendshapes = result.faceBlendshapes;
-              if (blendshapes && blendshapes.length > 0) {
-                const categories = blendshapes[0].categories;
-                getScore = (name: string): number => {
-                  const found = categories.find((c: any) => c.categoryName === name || c.name === name);
-                  return found ? found.score : 0;
-                };
-
-                // 1. Highly accurate Eye looking direction detection (realistic thresholds to avoid false positives)
-                const lookLeft = getScore("eyeLookOutLeft") > this.config.eyeTrackingThreshold && getScore("eyeLookInRight") > this.config.eyeTrackingThreshold;
-                const lookRight = getScore("eyeLookInLeft") > this.config.eyeTrackingThreshold && getScore("eyeLookOutRight") > this.config.eyeTrackingThreshold;
-                const lookDown = getScore("eyeLookDownLeft") > this.config.eyeTrackingThreshold && getScore("eyeLookDownRight") > this.config.eyeTrackingThreshold;
-                
-                if (lookLeft) {
-                  this.emitEvent("LOOKING_AWAY", "Eye tracking: Looking Left", 8);
-                } else if (lookRight) {
-                  this.emitEvent("LOOKING_AWAY", "Eye tracking: Looking Right", 8);
-                } else if (lookDown) {
-                  this.emitEvent("LOOKING_AWAY", "Eye tracking: Looking Down", 8);
-                }
-
-                // 2. Emotion / suspicious facial tension
-                frown = getScore("browDownLeft") > this.config.emotionSensitivity && getScore("browDownRight") > this.config.emotionSensitivity;
-                surprise = getScore("browOuterUpLeft") > (this.config.emotionSensitivity + 0.1) && getScore("browOuterUpRight") > (this.config.emotionSensitivity + 0.1);
-                happy = getScore("mouthSmileLeft") > (this.config.emotionSensitivity + 0.05) && getScore("mouthSmileRight") > (this.config.emotionSensitivity + 0.05);
-                
-                if (frown) {
-                  this.emitEvent("STRESS_DETECTED", "Facial expression: Stressed/Squinting", 5);
-                } else if (surprise) {
-                  this.emitEvent("EMOTION_ANOMALY", "Facial expression: Surprised", 5);
-                } else if (happy) {
-                  this.emitEvent("EMOTION_ANOMALY", "Facial expression: Smiling", 5);
-                }
-
-                // 3. Speaking / whispering jaw tracking
-                const jawOpen = getScore("jawOpen") > 0.45;
-                const mouthPucker = getScore("mouthPucker") > 0.55;
-                if (jawOpen || mouthPucker) {
-                  this.emitEvent("TALKING_DETECTED", "Verbal check: Whispering or speaking movements", 12);
-                }
-
-                // 4. Blink Rate Anomaly Detection
-                const blinkL = getScore("eyeBlinkLeft");
-                const blinkR = getScore("eyeBlinkRight");
-                const currentlyBlinking = blinkL > 0.4 || blinkR > 0.4;
-                if (currentlyBlinking && !this.isBlinking) {
-                  this.isBlinking = true;
-                  const now = Date.now();
-                  const perfNow = performance.now();
-                  this.blinkTimestamps.push(now);
-                  
-                  // Keep only blinks from the last 60 seconds
-                  this.blinkTimestamps = this.blinkTimestamps.filter(t => now - t < 60000);
-                  
-                  // Add to 10-second median bucket for robust baseline calibration
-                  if (perfNow - this.lastBucketTime > 10000) {
-                      if (this.blinkBuckets.length < 6) { // Only calibrate during first 60s
-                          this.blinkBuckets.push(this.currentBucketBlinks);
-                      }
-                      this.currentBucketBlinks = 0;
-                      this.lastBucketTime = perfNow;
-                  }
-                  this.currentBucketBlinks++;
-                  
-                  const currentBPM = this.blinkTimestamps.length;
-                  const runningTimeMs = perfNow - this.sessionStartTime;
-                  
-                  // Dynamically refine the baseline using the MEDIAN of 10s buckets to discard spoofing bursts
-                  if (this.blinkBuckets.length > 1 && runningTimeMs < 60000) {
-                     const sortedBuckets = [...this.blinkBuckets].sort((a, b) => a - b);
-                     const medianBlinksPer10s = sortedBuckets[Math.floor(sortedBuckets.length / 2)];
-                     this.config.baselineBlinkRate = medianBlinksPer10s * 6;
-                     if (this.config.baselineBlinkRate < 10) this.config.baselineBlinkRate = 10;
-                     if (this.config.baselineBlinkRate > 30) this.config.baselineBlinkRate = 30;
-                  }
-                  
-                  // Only evaluate anomalous rates after an initial 30 second grace period
-                  if (runningTimeMs > 30000) {
-                    if (currentBPM > this.config.baselineBlinkRate * 2.5 && currentBPM > 25) {
-                      this.emitEvent("BLINK_ANOMALY", `Rapid blinking detected (${currentBPM} BPM, baseline: ${Math.round(this.config.baselineBlinkRate)})`, 5);
-                    } else if (currentBPM < this.config.baselineBlinkRate * 0.3 && currentBPM < 5) {
-                      this.emitEvent("BLINK_ANOMALY", `Abnormally low blink rate (${currentBPM} BPM), possible distraction or spoofing`, 5);
-                    }
-                  }
-                } else if (!currentlyBlinking) {
-                  this.isBlinking = false;
-                }
-              }
-
-              // Head pose: check if nose is between eyes with a natural threshold
-              const marks = faces[0];
-              if (marks && marks.length > 263) {
-                const nose = marks[1].x;
-                const lEye = marks[33].x;
-                const rEye = marks[263].x;
-                const eyeW = Math.abs(rEye - lEye);
-                const margin = eyeW * this.config.headPoseMargin; // Configurable margin to prevent false head pose alerts
-                if (nose < lEye - margin || nose > rEye + margin) {
-                  this.emitEvent("LOOKING_AWAY", "Head pose: User looking away from screen", 5);
-                }
-
-                // Draw face tracking elements on canvas overlay
-                if (ctx && canvasElement) {
-                  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-                  for (const lm of marks) {
-                    if (lm.x < minX) minX = lm.x;
-                    if (lm.x > maxX) maxX = lm.x;
-                    if (lm.y < minY) minY = lm.y;
-                    if (lm.y > maxY) maxY = lm.y;
-                  }
-
-                  const boxX = minX * canvasElement.width;
-                  const boxY = minY * canvasElement.height;
-                  const boxW = (maxX - minX) * canvasElement.width;
-                  const boxH = (maxY - minY) * canvasElement.height;
-
-                  // 1. Draw glowing outer frame
-                  ctx.strokeStyle = "rgba(0, 255, 127, 0.75)";
-                  ctx.lineWidth = 1.5;
-                  ctx.shadowColor = "rgba(0, 255, 127, 0.4)";
-                  ctx.shadowBlur = 6;
-                  ctx.strokeRect(boxX, boxY, boxW, boxH);
-                  ctx.shadowBlur = 0;
-
-                  // 2. Draw thick sci-fi tracking corners
-                  const len = Math.min(boxW, boxH) * 0.15;
-                  ctx.fillStyle = "rgb(0, 255, 127)";
-                  ctx.fillRect(boxX - 2, boxY - 2, len, 3);
-                  ctx.fillRect(boxX - 2, boxY - 2, 3, len);
-
-                  ctx.fillRect(boxX + boxW - len + 2, boxY - 2, len, 3);
-                  ctx.fillRect(boxX + boxW - 1, boxY - 2, 3, len);
-
-                  ctx.fillRect(boxX - 2, boxY + boxH - 1, len, 3);
-                  ctx.fillRect(boxX - 2, boxY + boxH - len + 2, 3, len);
-
-                  ctx.fillRect(boxX + boxW - len + 2, boxY + boxH - 1, len, 3);
-                  ctx.fillRect(boxX + boxW - 1, boxY + boxH - len + 2, 3, len);
-
-                  // 3. Draw keypoints for eyes, nose, and mouth
-                  ctx.fillStyle = "rgba(0, 255, 127, 0.7)";
-                  const keyPoints = [33, 263, 1, 61, 291];
-                  for (const pt of keyPoints) {
-                    if (marks[pt]) {
-                      const px = marks[pt].x * canvasElement.width;
-                      const py = marks[pt].y * canvasElement.height;
-                      ctx.beginPath();
-                      ctx.arc(px, py, 2.5, 0, 2 * Math.PI);
-                      ctx.fill();
-                    }
-                  }
-
-                  // 4. Label the face active tracking status
-                  ctx.font = "bold 9px monospace";
-                  ctx.fillStyle = "rgb(0, 255, 127)";
-                  ctx.fillText("AI FACIAL TRACKING ACTIVE", boxX, boxY - 6);
-
-                  // 5. Draw active proctoring HUD metrics panel
-                  ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
-                  ctx.fillRect(10, 10, 140, 75);
-                  ctx.strokeStyle = "rgba(0, 255, 127, 0.4)";
-                  ctx.lineWidth = 1;
-                  ctx.strokeRect(10, 10, 140, 75);
-
-                  ctx.font = "bold 8px monospace";
-                  ctx.fillStyle = "rgb(0, 255, 127)";
-                  ctx.fillText("PROCTORING TELEMETRY", 15, 22);
-
-                  const lOut = getScore("eyeLookOutLeft");
-                  const rIn = getScore("eyeLookInRight");
-                  const isLeft = lOut > 0.80 && rIn > 0.80;
-                  const lIn = getScore("eyeLookInLeft");
-                  const rOut = getScore("eyeLookOutRight");
-                  const isRight = lIn > 0.80 && rOut > 0.80;
-                  const isDown = getScore("eyeLookDownLeft") > 0.80 && getScore("eyeLookDownRight") > 0.80;
-                  
-                  let eyeDirection = "CENTER";
-                  if (isLeft) eyeDirection = "LEFT [ALERT]";
-                  if (isRight) eyeDirection = "RIGHT [ALERT]";
-                  if (isDown) eyeDirection = "DOWN [ALERT]";
-
-                  ctx.fillStyle = "rgb(255, 255, 255)";
-                  ctx.fillText(`Eye Dir: ${eyeDirection}`, 15, 34);
-
-                  const isTalking = getScore("jawOpen") > 0.45;
-                  ctx.fillText(`Speaking: ${isTalking ? "YES [ALERT]" : "NO"}`, 15, 46);
-
-                  let emotion = "Neutral";
-                  if (frown) emotion = "Stressed/Frowning";
-                  if (surprise) emotion = "Surprised";
-                  if (happy) emotion = "Smiling";
-                  ctx.fillText(`Emotion: ${emotion}`, 15, 58);
-
-                  ctx.fillText(`Audio Lvl: ${isMicEnabled ? "Active" : "Disabled/Muted"}`, 15, 70);
-                }
-              }
-            }
-          } catch (faceErr) {
-            // Silently ignore per-frame errors
-          }
-        }
-
-        // ── Audio frequency and loudness analysis ───────────────────
-        if (this.audioAnalyser) {
-          let avgVolume = 0;
-
-          if (isMicEnabled) {
-            const bufferLength = this.audioAnalyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            this.audioAnalyser.getByteFrequencyData(dataArray);
-
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-              sum += dataArray[i];
-            }
-            avgVolume = sum / bufferLength;
-
-            // Sound threshold violation (e.g. speaking/loud whispering) based on calibrated threshold
-            if (avgVolume > this.config.audioVolumeThreshold) {
-              if (this.continuousAudioStartTime === 0) {
-                 this.continuousAudioStartTime = performance.now();
-              } else if (performance.now() - this.continuousAudioStartTime > 1500) { // 1.5 seconds of sustained noise in real time
-                 this.emitEvent("TALKING_DETECTED", `Sustained voice/audio detected (${Math.round(avgVolume)} dB, threshold: ${Math.round(this.config.audioVolumeThreshold)})`, 15);
-                 this.continuousAudioStartTime = 0; // reset to avoid spamming
+              if (this.missingFaceFrames > 30) {
+                  this.emitEvent("NO_FACE", "Please face the camera", 10);
+                  this.missingFaceFrames = 0;
               }
             } else {
-              // If it spiked briefly but didn't last 1.5s, log it as a transient spike
-              if (this.continuousAudioStartTime > 0 && performance.now() - this.continuousAudioStartTime < 500) {
-                  this.audioSpikeCount++;
+              this.missingFaceFrames = 0;
+              if (result.faceLandmarks.length > 1) {
+                  this.emitEvent("MULTIPLE_FACES", "Multiple people detected in frame", 15);
               }
-              this.continuousAudioStartTime = 0;
-            }
-
-            // Decay the spike count slowly over time (sliding window)
-            if (this.frameCount % 30 === 0 && this.audioSpikeCount > 0) {
-                this.audioSpikeCount--; 
-            }
-            if (this.audioSpikeCount > 20) {
-               this.emitEvent("VOICE_DETECTED", "Frequent audio spikes detected (tapping/banging)", 5);
-               this.audioSpikeCount = 0;
-            }
-          }
-
-          // Draw real-time voice amplitude waveform
-          if (ctx && canvasElement) {
-            const bufferLength = this.audioAnalyser.frequencyBinCount;
-            const timeDomainArray = new Uint8Array(bufferLength);
-            this.audioAnalyser.getByteTimeDomainData(timeDomainArray);
-
-            ctx.beginPath();
-            ctx.strokeStyle = isMicEnabled ? "rgba(0, 255, 127, 0.65)" : "rgba(255, 59, 92, 0.3)";
-            ctx.lineWidth = 1.5;
-
-            const sliceWidth = canvasElement.width / bufferLength;
-            let x = 0;
-
-            for (let i = 0; i < bufferLength; i++) {
-              const v = isMicEnabled ? timeDomainArray[i] / 128.0 : 1.0;
-              const y = (v * (canvasElement.height * 0.15)) + (canvasElement.height * 0.82);
-
-              if (i === 0) {
-                ctx.moveTo(x, y);
-              } else {
-                ctx.lineTo(x, y);
+              const marks = result.faceLandmarks[0];
+              const eyeW = Math.abs(marks[263].x - marks[33].x);
+              if (Math.abs(marks[1].x - (marks[33].x + marks[263].x)/2) / eyeW > this.config.headPoseMargin) {
+                  this.emitEvent("LOOKING_AWAY", "Direct gaze lost", 5);
               }
-
-              x += sliceWidth;
+              if (ctx && canvasElement) {
+                  ctx.strokeStyle = "rgba(0, 255, 127, 0.7)";
+                  ctx.lineWidth = 2;
+                  ctx.strokeRect(marks[1].x * canvasElement.width - 50, marks[1].y * canvasElement.height - 50, 100, 100);
+              }
             }
-
-            ctx.lineTo(canvasElement.width, canvasElement.height * 0.82);
-            ctx.stroke();
-
-            ctx.font = "bold 8px monospace";
-            ctx.fillStyle = isMicEnabled ? "rgb(0, 255, 127)" : "rgb(255, 59, 92)";
-            ctx.fillText(isMicEnabled ? "MIC VOICE ACTIVITY MONITOR" : "MIC MUTED / NO AUDIO FEED", 10, canvasElement.height * 0.80);
-          }
-        }
-
-        // ── Object detection every ~20 frames ─────────────────────
-        if (this.objectModel && this.frameCount % 20 === 0) {
-          try {
-            const predictions = await this.objectModel.detect(videoElement);
-            this.lastPredictions = predictions;
-            const hasPhone = predictions.some(p => p.class === "cell phone" && p.score > 0.5);
-            if (hasPhone) {
-              this.emitEvent("PHONE_DETECTED", "Unauthorized device (phone) detected", 30);
-            }
-          } catch (objErr) {
-            // Silently ignore
-          }
-        }
-
-        // Draw cached object predictions (like cell phone)
-        if (ctx && canvasElement && this.lastPredictions) {
-          for (const pred of this.lastPredictions) {
-            if (pred.class === "cell phone" && pred.score > 0.5) {
-              const [x, y, w, h] = pred.bbox;
-              const scaleX = canvasElement.width / videoElement.videoWidth;
-              const scaleY = canvasElement.height / videoElement.videoHeight;
-              
-              ctx.strokeStyle = "rgba(255, 0, 0, 0.8)";
-              ctx.lineWidth = 2;
-              ctx.shadowColor = "rgba(255, 0, 0, 0.5)";
-              ctx.shadowBlur = 8;
-              ctx.strokeRect(x * scaleX, y * scaleY, w * scaleX, h * scaleY);
-              ctx.shadowBlur = 0;
-
-              ctx.font = "bold 10px monospace";
-              ctx.fillStyle = "rgb(255, 0, 0)";
-              ctx.fillText(`WARNING: PHONE DETECTED (${Math.round(pred.score * 100)}%)`, x * scaleX, (y * scaleY) - 6);
-            }
+          } catch (e) {} finally {
+            this.isProcessingFace = false;
           }
         }
       }
-
       requestAnimationFrame(processFrame);
     };
-
     requestAnimationFrame(processFrame);
   }
 
   stop() {
     this.isRunning = false;
-    if (this.audioContext) {
-      this.audioContext.close().catch(() => { });
-      this.audioContext = null;
-    }
-    this.audioAnalyser = null;
-    console.log("[AntiCheat] Stopped");
+    if (this.audioContext) this.audioContext.close().catch(() => {});
+    this.speechRecognition?.stop();
+    this.speechRecognition = null;
+  }
+
+  public handleKeyEvent(type: 'keydown' | 'keyup', key: string) {
+      if (this.initStatus !== 'ready') return;
+      const now = performance.now();
+      if (type === 'keydown') this.lastKeyDownTime = now;
+      else if (type === 'keyup' && this.lastKeyDownTime > 0) {
+          const dwell = now - this.lastKeyDownTime;
+          if (this.baselineDwellTime > 0 && dwell > this.baselineDwellTime * 3) {
+              this.emitEvent("SYSTEM", "Typing pattern anomaly", 2);
+          } else if (this.keyDwellTimes.length < 50) {
+              this.keyDwellTimes.push(dwell);
+              if (this.keyDwellTimes.length === 50) {
+                  this.baselineDwellTime = this.keyDwellTimes.reduce((a,b)=>a+b,0)/50;
+              }
+          }
+      }
   }
 
   private emitEvent(type: AntiCheatEvent["type"], message: string, scorePenalty: number) {
     const now = Date.now();
-    if (!this.lastEventTimes[type] || now - this.lastEventTimes[type] > 3000) {
+    if (!this.lastEventTimes[type] || now - this.lastEventTimes[type] > 5000) {
       this.lastEventTimes[type] = now;
       this.eventCallback?.({ type, message, scorePenalty });
     }

@@ -28,6 +28,7 @@ export class VirtualAvatar {
     private currentStyle: AvatarStyle = 'none';
     private modelsLoaded: boolean = false;
     private instanceId: number = 0;
+    private isProcessing: boolean = false;
     public onLoadError?: (err: unknown) => void;
 
     constructor() {
@@ -36,7 +37,6 @@ export class VirtualAvatar {
         this.canvas.height = 480;
         this.ctx = this.canvas.getContext('2d');
         
-        // Ensure models are loaded
         this.loadModels();
     }
 
@@ -69,9 +69,7 @@ export class VirtualAvatar {
         this.avatarImage = new Image();
         this.avatarImage.src = style === 'custom' && customImageUrl ? customImageUrl : avatarSources[style as keyof typeof avatarSources];
         
-        // Fall back cleanly if a packaged visual asset is missing.
         this.avatarImage.onerror = () => {
-            console.error(`[VirtualAvatar] Failed to load avatar image: ${this.avatarImage?.src}.`);
             this.avatarImage = null;
             this.currentStyle = 'none';
             this.onLoadError?.(new Error('Avatar image failed to load'));
@@ -81,52 +79,65 @@ export class VirtualAvatar {
     private lastDetection: any = null;
 
     public start(videoElement: HTMLVideoElement): MediaStream {
-        this.stop(); // Stop any existing loop
+        this.stop();
         this.isRunning = true;
         const myInstanceId = ++this.instanceId;
         
-        // Wait for video to be ready
-        if (videoElement.readyState >= 2) {
-            this.canvas.width = videoElement.videoWidth || 640;
-            this.canvas.height = videoElement.videoHeight || 480;
-        }
-
-        // ML Loop (Runs as fast as CPU allows without blocking render)
+        let lastDetectionTime = 0;
+        
         const mlLoop = async () => {
-            if (!this.isRunning || myInstanceId !== this.instanceId) return; // bail if superseded
+            if (!this.isRunning || myInstanceId !== this.instanceId) return;
+            if (this.isProcessing) {
+                setTimeout(mlLoop, 30);
+                return;
+            }
+
             if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete) {
-                try {
-                    const faceapi = getFaceApi();
-                    if (faceapi) {
-                        this.lastDetection = await faceapi.detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
+                const faceapi = getFaceApi();
+                if (faceapi && videoElement.readyState >= 2 && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+                    const originalError = console.error;
+                    console.error = (...args: any[]) => {
+                        const msg = String(args[0] || '').toLowerCase();
+                        if (msg.includes('index out of bounds') || msg.includes('abort') || msg.includes('wasm')) return;
+                        originalError.apply(console, args);
+                    };
+
+                    try {
+                        this.isProcessing = true;
+                        if (this.modelsLoaded && this.canvas.width > 0) {
+                            const detection = await faceapi.detectSingleFace(this.canvas, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
+                            if (detection) {
+                                this.lastDetection = detection;
+                                lastDetectionTime = Date.now();
+                            } else if (Date.now() - lastDetectionTime > 1000) {
+                                this.lastDetection = undefined;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("[VirtualAvatar] Face tracking error:", e);
+                    } finally {
+                        this.isProcessing = false;
+                        console.error = originalError;
                     }
-                } catch (e) {
-                    // Ignore ML errors
                 }
             }
-            setTimeout(mlLoop, 50); // Small delay to prevent 100% CPU lock
+            setTimeout(mlLoop, 60);
         };
         mlLoop();
 
-        // Fast Render Loop (Runs at monitor refresh rate)
         const renderLoop = () => {
             if (!this.isRunning || !this.ctx) return;
 
             try {
-                if (videoElement.readyState >= 2) {
-                    // Handle dynamic video resizing (fixes pipelining issues)
-                    if (videoElement.videoWidth > 0 && this.canvas.width !== videoElement.videoWidth) {
+                if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+                    if (this.canvas.width !== videoElement.videoWidth) {
                         this.canvas.width = videoElement.videoWidth;
                         this.canvas.height = videoElement.videoHeight;
                     }
-                    // Draw original video frame immediately
                     this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
                 }
-            } catch (e) {
-                // Wait for video to actually have data
-            }
+            } catch (e) {}
 
-            // Draw the last known avatar position on top
             if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete && this.lastDetection) {
                 const detection = this.lastDetection;
                 const landmarks = detection.landmarks;
@@ -135,59 +146,37 @@ export class VirtualAvatar {
                 if (this.currentStyle === 'cyberpunk') {
                     const leftEye = landmarks.getLeftEye();
                     const rightEye = landmarks.getRightEye();
-                    
                     const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
                     const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
                     const width = (rightEye[3].x - leftEye[0].x) * 2;
                     const height = width * 0.4;
-
-                    this.ctx.drawImage(
-                        this.avatarImage, 
-                        eyeCenterX - width / 2, 
-                        eyeCenterY - height / 2, 
-                        width, 
-                        height
-                    );
+                    this.ctx.drawImage(this.avatarImage, eyeCenterX - width / 2, eyeCenterY - height / 2, width, height);
                 } else {
                     const boxWidth = box.width * 1.4;
                     const boxHeight = box.height * 1.4;
-                    
-                    // "contain" style fit logic
-                    const imgRatio = this.avatarImage.naturalWidth / this.avatarImage.naturalHeight;
+                    const nW = this.avatarImage.naturalWidth || 512;
+                    const nH = this.avatarImage.naturalHeight || 512;
+                    const imgRatio = nW / nH;
                     const boxRatio = boxWidth / boxHeight;
-                    
+
                     let drawWidth = boxWidth;
                     let drawHeight = boxHeight;
-                    
-                    if (imgRatio > boxRatio) {
-                        // Image is wider than box, fit width
-                        drawHeight = boxWidth / imgRatio;
-                    } else {
-                        // Image is taller than box, fit height
-                        drawWidth = boxHeight * imgRatio;
-                    }
-
+                    if (imgRatio > boxRatio) drawHeight = boxWidth / imgRatio;
+                    else drawWidth = boxHeight * imgRatio;
                     const x = box.x - (boxWidth - box.width) / 2 + (boxWidth - drawWidth) / 2;
                     const y = box.y - (boxHeight - box.height) / 2 + (boxHeight - drawHeight) / 2;
-
                     this.ctx.drawImage(this.avatarImage, x, y, drawWidth, drawHeight);
                 }
             }
-
             this.loopId = requestAnimationFrame(renderLoop);
         };
-
         renderLoop();
-        
-        // Return 30 FPS stream from the augmented canvas
         return this.canvas.captureStream(30);
     }
 
     public stop() {
         this.isRunning = false;
-        this.instanceId++; // invalidate any active mlLoop
-        if (this.loopId) {
-            cancelAnimationFrame(this.loopId);
-        }
+        this.instanceId++;
+        if (this.loopId) cancelAnimationFrame(this.loopId);
     }
 }

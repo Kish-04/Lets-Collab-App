@@ -73,6 +73,19 @@ export class DataChannelManager {
         return channel ? channel.bufferedAmount : 0;
     }
 
+    public isOpen(label: string, targetPeerId?: string): boolean {
+        if (targetPeerId) {
+            const channel = this.channels.get(`${label}-${targetPeerId}`);
+            return Boolean(channel && channel.readyState === 'open');
+        }
+        for (const [id, channel] of this.channels.entries()) {
+            if (id.startsWith(`${label}-`) && channel.readyState === 'open') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public async waitForBuffer(label: string, targetPeerId?: string, threshold: number = 65535): Promise<void> {
         if (!targetPeerId) {
             // Wait for all channels of this label to drain

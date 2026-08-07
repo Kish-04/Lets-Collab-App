@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, clipboard, desktopCapturer, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { generateReply } = require('./gemini-service');
 
 const getLogPath = (filename) => {
   try {
@@ -24,6 +25,9 @@ let robot;
 let clipboardGuardEnabled = false;
 let screenCaptureActive = false;
 let globalStream = null;
+
+// Source selected in the Share Source picker (set via IPC before getDisplayMedia)
+let pendingShareSourceId = null;
 
 let vigemClient = null;
 let virtualGamepad = null;
@@ -256,11 +260,21 @@ function createWindow() {
       return;
     }
 
-    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } }).then((sources) => {
       console.log('[DEBUG] desktopCapturer sources length:', sources ? sources.length : 0);
-      // Automatically share the primary screen (first source)
-      if (sources && sources.length > 0) {
-        const captureParams = { video: sources[0] };
+      sources = sources || [];
+      let chosen = null;
+      // If the user picked a specific source in the Share Source picker, use it.
+      if (pendingShareSourceId) {
+        chosen = sources.find(s => s.id === pendingShareSourceId) || null;
+        pendingShareSourceId = null; // consume once
+      }
+      // Default: prefer a real screen source, else the first available.
+      if (!chosen && sources.length > 0) {
+        chosen = sources.find(s => s.id.startsWith('screen:')) || sources[0];
+      }
+      if (chosen) {
+        const captureParams = { video: chosen };
         if (request.audioRequested) {
           captureParams.audio = 'loopback';
         }
@@ -339,6 +353,91 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+ipcMain.handle('gemini:ask', async (event, prompt) => {
+  return generateReply(prompt);
+});
+
+// --- IPC HANDLERS FOR SCREEN-SOURCE PICKER ---
+ipcMain.handle('get-shareable-sources', async () => {
+  try {
+    // Best-effort: prompt for screen-recording permission on macOS (dev)
+    if (process.platform === 'darwin' && !app.isPackaged) {
+      try {
+        const { systemPreferences } = require('electron');
+        await systemPreferences.askForScreenPanelAccess();
+      } catch (e) { /* non-fatal */ }
+    }
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 300, height: 200 },
+      fetchWindowIcons: true,
+    });
+    let screenIndex = 0;
+    return (sources || []).map((source, index) => {
+      const isScreen = String(source.id).startsWith('screen:');
+      let name;
+      if (isScreen) {
+        screenIndex += 1;
+        name = `Screen ${screenIndex}`;
+      } else {
+        name = (source.name && String(source.name).trim())
+          ? String(source.name).trim()
+          : `Window ${index + 1}`;
+      }
+      return {
+        id: source.id,
+        name,
+        display_id: source.display_id || null,
+        thumbnail: source.thumbnail && typeof source.thumbnail.toDataURL === 'function'
+          ? source.thumbnail.toDataURL()
+          : null,
+        isScreen,
+      };
+    });
+  } catch (err) {
+    console.error('[SHARE] get-shareable-sources error:', err.message || err);
+    return [];
+  }
+});
+
+  ipcMain.on('enable-kiosk-mode', (event, enable) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) {
+          win.setKiosk(enable);
+          win.setAlwaysOnTop(enable, 'screen-saver');
+      }
+      
+      if (enable) {
+          // VM Check heuristics
+          const os = require('os');
+          if (os.cpus().length < 2 || os.totalmem() < 4 * 1024 * 1024 * 1024) {
+              event.sender.send('anticheat-alert', { type: 'VM_DETECTED', message: 'Virtual Machine detected', penalty: 50 });
+          }
+
+          // Process Scanning
+          const exec = require('child_process').exec;
+          const badProcesses = ['obs64.exe', 'TeamViewer.exe', 'AnyDesk.exe', 'Discord.exe'];
+          processScanInterval = setInterval(() => {
+              exec('tasklist', (err, stdout) => {
+                  if (!err && stdout) {
+                      badProcesses.forEach(proc => {
+                          if (stdout.toLowerCase().includes(proc.toLowerCase())) {
+                              event.sender.send('anticheat-alert', { type: 'BANNED_PROCESS', message: `Banned process running: ${proc}`, penalty: 30 });
+                          }
+                      });
+                  }
+              });
+          }, 10000);
+      } else {
+          if (processScanInterval) clearInterval(processScanInterval);
+      }
+  });
+
+ipcMain.handle('set-share-source', (_event, sourceId) => {
+  pendingShareSourceId = typeof sourceId === 'string' ? sourceId : null;
+  return true;
 });
 
 // --- IPC HANDLERS FOR FULLSCREEN ---

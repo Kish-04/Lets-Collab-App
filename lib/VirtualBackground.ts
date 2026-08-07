@@ -7,13 +7,6 @@ const getSelfieSegmentation = () => {
     return null;
 };
 
-const getCamera = () => {
-    if (typeof window !== 'undefined' && (window as any).Camera) {
-        return (window as any).Camera;
-    }
-    return null;
-};
-
 export type BackgroundStyle = 'none' | 'blur' | 'office' | 'beach' | 'space' | 'matrix' | 'custom';
 
 const backgroundSources: Record<Exclude<BackgroundStyle, 'none' | 'blur' | 'custom'>, string> = {
@@ -27,14 +20,15 @@ export class VirtualBackground {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D | null;
     private selfieSegmentation: any;
-    private camera: any;
     private isRunning: boolean = false;
     private currentStyle: BackgroundStyle = 'none';
     private backgroundImage: HTMLImageElement | null = null;
     private offscreenCanvas: HTMLCanvasElement;
     private offscreenCtx: CanvasRenderingContext2D | null;
-    private fallbackFrameId: number = 0;
     private readyIntervalId: NodeJS.Timeout | null = null;
+    private instanceId: number = 0;
+    private isProcessing: boolean = false;
+    private fallbackFrameId: number = 0;
     public onLoadError?: (err: unknown) => void;
 
     constructor() {
@@ -65,7 +59,7 @@ export class VirtualBackground {
                 });
 
                 this.selfieSegmentation.setOptions({
-                    modelSelection: 1, // 0 for general, 1 for landscape (faster)
+                    modelSelection: 0, // 0 for general (most stable), 1 for landscape
                 });
 
                 this.selfieSegmentation.onResults(this.onResults.bind(this));
@@ -85,7 +79,6 @@ export class VirtualBackground {
 
         this.backgroundImage = new Image();
         this.backgroundImage.onerror = () => {
-            console.error('[VirtualBackground] Failed to load background image:', this.backgroundImage?.src);
             this.backgroundImage = null;
             this.onLoadError?.(new Error('Background image failed to load'));
         };
@@ -100,50 +93,67 @@ export class VirtualBackground {
     private onResults(results: any) {
         if (!this.ctx || !this.isRunning) return;
 
-        this.ctx.save();
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        try {
+            this.ctx.save();
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Draw the segmentation mask
-        this.ctx.drawImage(results.segmentationMask, 0, 0, this.canvas.width, this.canvas.height);
+            // Draw the segmentation mask
+            this.ctx.drawImage(results.segmentationMask, 0, 0, this.canvas.width, this.canvas.height);
 
-        // Draw the person on top of the mask
-        this.ctx.globalCompositeOperation = 'source-in';
-        this.ctx.drawImage(results.image, 0, 0, this.canvas.width, this.canvas.height);
+            // Draw the person on top of the mask
+            this.ctx.globalCompositeOperation = 'source-in';
+            this.ctx.drawImage(results.image, 0, 0, this.canvas.width, this.canvas.height);
 
-        // Draw the background behind the person
-        this.ctx.globalCompositeOperation = 'destination-over';
+            // Draw the background behind the person
+            this.ctx.globalCompositeOperation = 'destination-over';
 
-        if (this.currentStyle === 'blur') {
-            if (this.offscreenCtx) {
-                // Blur original image using offscreen canvas
-                this.offscreenCtx.filter = 'blur(10px)';
-                this.offscreenCtx.drawImage(results.image, 0, 0, this.canvas.width, this.canvas.height);
-                this.offscreenCtx.filter = 'none';
-                this.ctx.drawImage(this.offscreenCanvas, 0, 0, this.canvas.width, this.canvas.height);
+            if (this.currentStyle === 'blur') {
+                if (this.offscreenCtx) {
+                    this.offscreenCtx.filter = 'blur(10px)';
+                    this.offscreenCtx.drawImage(results.image, 0, 0, this.canvas.width, this.canvas.height);
+                    this.offscreenCtx.filter = 'none';
+                    this.ctx.drawImage(this.offscreenCanvas, 0, 0, this.canvas.width, this.canvas.height);
+                }
+            } else if (this.backgroundImage && this.backgroundImage.complete) {
+                const imgWidth = this.backgroundImage.width || this.canvas.width;
+                const imgHeight = this.backgroundImage.height || this.canvas.height;
+                const imgRatio = imgWidth / imgHeight;
+                const canvasRatio = this.canvas.width / this.canvas.height;
+                
+                let drawWidth = this.canvas.width;
+                let drawHeight = this.canvas.height;
+                let offsetX = 0;
+                let offsetY = 0;
+                
+                if (imgRatio > canvasRatio) {
+                    drawWidth = this.canvas.height * imgRatio;
+                    offsetX = (this.canvas.width - drawWidth) / 2;
+                } else {
+                    drawHeight = this.canvas.width / imgRatio;
+                    offsetY = (this.canvas.height - drawHeight) / 2;
+                }
+                
+                this.ctx.drawImage(this.backgroundImage, offsetX, offsetY, drawWidth, drawHeight);
+            } else {
+                this.ctx.fillStyle = '#000000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             }
-        } else if (this.backgroundImage && this.backgroundImage.complete) {
-            this.ctx.drawImage(this.backgroundImage, 0, 0, this.canvas.width, this.canvas.height);
-        } else {
-            // Fallback to green screen if image isn't loaded
-            this.ctx.fillStyle = '#00FF00';
-            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        } catch (err) {
+            // Suppress render errors
+        } finally {
+            this.ctx.restore();
         }
-
-        this.ctx.restore();
     }
 
     public start(videoElement: HTMLVideoElement): MediaStream {
-        this.stop(); // Stop any existing loop
+        this.stop();
         this.isRunning = true;
+        const myInstanceId = ++this.instanceId;
         
-        // Lazy load scripts in the background
-        this.initSelfieSegmentation().catch((err) => {
-            console.error('[VirtualBackground] initSelfieSegmentation failed:', err);
-        });
+        this.initSelfieSegmentation().catch(() => {});
 
-        // Wait for video stream to actually be playing (solves pipelining when readyState is 0)
         this.readyIntervalId = setInterval(() => {
-            if (!this.isRunning) {
+            if (!this.isRunning || myInstanceId !== this.instanceId) {
                 if (this.readyIntervalId) clearInterval(this.readyIntervalId);
                 return;
             }
@@ -155,18 +165,40 @@ export class VirtualBackground {
                 this.offscreenCanvas.width = this.canvas.width;
                 this.offscreenCanvas.height = this.canvas.height;
                 
+                const captureCanvas = document.createElement('canvas');
+                captureCanvas.width = this.canvas.width;
+                captureCanvas.height = this.canvas.height;
+                const captureCtx = captureCanvas.getContext('2d');
+                
                 if (this.selfieSegmentation) {
-                    if (this.fallbackFrameId) {
-                        cancelAnimationFrame(this.fallbackFrameId);
-                        this.fallbackFrameId = 0;
-                    }
                     const processFrame = async () => {
-                        if (!this.isRunning) return;
-                        if (this.selfieSegmentation && videoElement.readyState >= 2) {
+                        if (!this.isRunning || myInstanceId !== this.instanceId) return;
+                        if (this.isProcessing) {
+                            this.fallbackFrameId = requestAnimationFrame(processFrame);
+                            return;
+                        }
+                        if (this.selfieSegmentation && videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+                            if (this.canvas.width !== videoElement.videoWidth) {
+                                this.canvas.width = videoElement.videoWidth;
+                                this.canvas.height = videoElement.videoHeight;
+                                this.offscreenCanvas.width = this.canvas.width;
+                                this.offscreenCanvas.height = this.canvas.height;
+                                captureCanvas.width = this.canvas.width;
+                                captureCanvas.height = this.canvas.height;
+                            }
+                            
+                            this.isProcessing = true;
                             try {
-                                await this.selfieSegmentation.send({image: videoElement});
+                                if (captureCtx) {
+                                    captureCtx.drawImage(videoElement, 0, 0, captureCanvas.width, captureCanvas.height);
+                                    await this.selfieSegmentation.send({image: captureCanvas});
+                                } else {
+                                    await this.selfieSegmentation.send({image: videoElement});
+                                }
                             } catch (e) {
-                                console.error("[VirtualBackground] Process frame error", e);
+                                console.warn("[VirtualBackground] Frame process error", e);
+                            } finally {
+                                this.isProcessing = false;
                             }
                         }
                         this.fallbackFrameId = requestAnimationFrame(processFrame);
@@ -176,14 +208,16 @@ export class VirtualBackground {
             }
         }, 100);
 
-        // Fallback while loading or if not supported
         const drawFallbackFrame = () => {
-            if (!this.isRunning || !this.ctx) return;
+            if (!this.isRunning || !this.ctx || myInstanceId !== this.instanceId) return;
+            if (this.selfieSegmentation) return; // Stop fallback loop once engine is active
             if (videoElement.videoWidth > 0 && this.canvas.width !== videoElement.videoWidth) {
                 this.canvas.width = videoElement.videoWidth;
                 this.canvas.height = videoElement.videoHeight;
             }
-            this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
+            if (!this.isProcessing) {
+                this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
+            }
             this.fallbackFrameId = requestAnimationFrame(drawFallbackFrame);
         };
         drawFallbackFrame();
@@ -193,6 +227,7 @@ export class VirtualBackground {
 
     public stop() {
         this.isRunning = false;
+        this.instanceId++;
         if (this.fallbackFrameId) {
             cancelAnimationFrame(this.fallbackFrameId);
             this.fallbackFrameId = 0;
@@ -200,10 +235,6 @@ export class VirtualBackground {
         if (this.readyIntervalId) {
             clearInterval(this.readyIntervalId);
             this.readyIntervalId = null;
-        }
-        if (this.camera) {
-            this.camera.stop();
-            this.camera = null;
         }
     }
 }

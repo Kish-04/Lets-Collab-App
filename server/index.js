@@ -10,7 +10,8 @@ const cookieParser = require('cookie-parser');
 const cookie = require('cookie');
 const connectDB = require('./db');
 const authRoutes = require('./authRoutes');
-const { router: adminRoutes, onlineEmails, setRoomLookup, protectAdmin } = require('./adminRoutes');
+const bcrypt = require('bcrypt');
+const { router: adminRoutes, onlineEmails, setRoomLookup, protectAdmin, protectAuthenticated } = require('./adminRoutes');
 const User = require('./User');
 const Alert = require('./alert');
 const SessionLog = require('./sessionLog');
@@ -57,6 +58,156 @@ initBlockchain();
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+
+app.post('/api/profile', protectAuthenticated, async (req, res) => {
+  try {
+    const { name, newPassword } = req.body;
+    const userEmail = req.user.email;
+    if (!userEmail) return res.status(401).json({ success: false, message: 'Not authorized' });
+
+    let updated = false;
+    let user = null;
+
+    if (global.dbConnected) {
+      user = await User.findOne({ email: userEmail });
+      if (user) {
+        if (name) user.name = name;
+        if (newPassword) user.password = newPassword; // Pre-save hook hashes it
+        await user.save();
+        updated = true;
+      }
+    } else {
+      const mockStore = require('./mockStore');
+      user = mockStore.findUserByEmail(userEmail);
+      if (user) {
+        if (name) user.name = name;
+        if (newPassword) {
+          const salt = await bcrypt.genSalt(10);
+          user.password = await bcrypt.hash(newPassword, salt);
+        }
+        mockStore.saveUser(user);
+        updated = true;
+      }
+    }
+
+    if (updated && user) {
+      // Notify administrators
+      const alertMsg = `User ${user.email} updated their profile information.`;
+      
+      // Save to Alert History
+      if (global.dbConnected) {
+        await Alert.create({
+          room: 'SYSTEM',
+          hostEmail: user.email,
+          type: 'system',
+          event: 'PROFILE_UPDATED',
+          message: alertMsg,
+          penalty: 0
+        }).catch(err => console.error('Failed to log profile alert', err));
+      } else {
+        const mockStore = require('./mockStore');
+        mockStore.addAlert({
+          room: 'SYSTEM',
+          hostEmail: user.email,
+          type: 'system',
+          event: 'PROFILE_UPDATED',
+          message: alertMsg,
+          penalty: 0
+        });
+      }
+
+      // Live socket emit
+      const socketIo = req.app.get('io');
+      if (socketIo) {
+        socketIo.to('admins').emit('system-alert', {
+          room: 'SYSTEM',
+          participant: user.name,
+          type: 'system',
+          event: 'PROFILE_UPDATED',
+          message: alertMsg,
+          time: new Date()
+        });
+      }
+    }
+
+    res.json({ success: true, message: 'Profile updated' });
+  } catch (error) {
+    console.error('Profile update error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update profile' });
+  }
+});
+
+app.get('/api/sessions/recent', protectAuthenticated, async (req, res) => {
+  try {
+    const userEmail = req.user.email;
+    if (!userEmail) {
+      return res.json({ success: true, sessions: [] });
+    }
+
+    // 1. Get Live Sessions where user is host or controller
+    const liveSessions = [];
+    for (const [code, room] of rooms.entries()) {
+      let isHost = (room.hostEmail === userEmail);
+      let isParticipant = false;
+      for (const ctrl of room.controllers.values()) {
+        if (ctrl.email === userEmail) isParticipant = true;
+      }
+      
+      if (isHost || isParticipant) {
+        liveSessions.push({
+          roomCode: code,
+          mode: room.mode,
+          hostName: room.hostName,
+          hostEmail: room.hostEmail,
+          status: 'active',
+          startedAt: new Date(room.createdAt).toISOString(),
+          endedAt: null,
+          riskScore: room.riskScore,
+          alertCount: room.alertCount,
+          latestTxHash: room.latestTxHash,
+          isHost
+        });
+      }
+    }
+
+    // 2. Get Ended Sessions
+    let pastDocs = [];
+    if (global.dbConnected) {
+      pastDocs = await SessionLog.find({
+        $or: [
+          { hostEmail: userEmail },
+          { "participants.email": userEmail }
+        ]
+      }).sort({ endedAt: -1 }).limit(20).lean().catch(() => []);
+    } else {
+      pastDocs = mockStore.listSessionLogs(100).filter(s => 
+        s.hostEmail === userEmail || 
+        (s.participants && s.participants.some(p => p.email === userEmail))
+      ).slice(0, 20);
+    }
+
+    const pastSessions = pastDocs.map(s => ({
+      roomCode: s.roomCode,
+      mode: s.mode,
+      hostName: s.hostName,
+      hostEmail: s.hostEmail,
+      status: 'ended',
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+      durationSeconds: s.durationSeconds,
+      riskScore: s.riskScore,
+      alertCount: s.alertCount,
+      latestTxHash: s.latestTxHash,
+      isHost: (s.hostEmail === userEmail)
+    }));
+
+    const allSessions = [...liveSessions, ...pastSessions];
+    res.json({ success: true, sessions: allSessions });
+  } catch (error) {
+    console.error('Recent Sessions Error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch recent sessions' });
+  }
+});
 
 app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
   try {
@@ -129,6 +280,8 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+
+app.set('io', io);
 
 const PORT = process.env.PORT || 3001;
 const rooms = new Map();
@@ -223,7 +376,6 @@ function sanitizeWeights(weights) {
   const sanitized = weights.map(Number);
   return sanitized.every(Number.isFinite) ? sanitized : null;
 }
-
 function roomFederatedMembers(room) {
   return [room.hostSocketId, ...Array.from(room.controllers.keys())].filter(Boolean);
 }
@@ -366,6 +518,7 @@ function roomState(code, room, socket) {
     participants: Array.from(room.controllers.values()).map(participantPayload),
     pendingRequests: Array.from(room.pendingControllers.values()).map(pendingPayload),
     messages: room.messages.slice(-80),
+    examQuestions: room.examQuestions || [],
     evidence: room.evidence.slice(-80),
     federated: federatedSummary(room),
   };
@@ -410,6 +563,7 @@ function serializeSessions() {
     evidence: room.evidence.slice(-20),
     messageCount: room.messages.length,
     federated: federatedSummary(room),
+    examData: room.exam,
   }));
 }
 
@@ -718,6 +872,7 @@ io.on('connection', (socket) => {
       messages: [],
       evidence: [],
       federated: createFederatedState(),
+      exam: { questions: [], answers: {} },
       archived: false,
     };
     rooms.set(code, room);
@@ -932,28 +1087,50 @@ io.on('connection', (socket) => {
   socket.on('offer', (payload, maybeRoomId) => {
     const data = payload && payload.offer ? payload : { offer: payload, roomId: maybeRoomId };
     const room = rooms.get(data.roomId || socket.roomCode);
-    if (!room || socket.id !== room.hostSocketId || !data.offer) return;
-    const targets = data.targetId ? [data.targetId] : Array.from(room.controllers.keys());
-    targets.forEach((targetId) => {
-      if (room.controllers.has(targetId)) io.to(targetId).emit('offer', {
+    if (!room || !data.offer) return;
+    
+    if (socket.id === room.hostSocketId) {
+      const targets = data.targetId ? [data.targetId] : Array.from(room.controllers.keys());
+      targets.forEach((targetId) => {
+        if (room.controllers.has(targetId)) io.to(targetId).emit('offer', {
+          offer: data.offer,
+          fromId: socket.id,
+          roomId: data.roomId || socket.roomCode,
+          mediaStreamIds: data.mediaStreamIds || null,
+        });
+      });
+    } else if (room.controllers.has(socket.id)) {
+      io.to(room.hostSocketId).emit('offer', {
         offer: data.offer,
         fromId: socket.id,
         roomId: data.roomId || socket.roomCode,
         mediaStreamIds: data.mediaStreamIds || null,
       });
-    });
+    }
   });
 
   socket.on('answer', (payload, maybeRoomId) => {
     const data = payload && payload.answer ? payload : { answer: payload, roomId: maybeRoomId };
     const room = rooms.get(data.roomId || socket.roomCode);
-    if (!room || !room.controllers.has(socket.id) || !data.answer) return;
-    io.to(room.hostSocketId).emit('answer', {
-      answer: data.answer,
-      fromId: socket.id,
-      roomId: data.roomId || socket.roomCode,
-      mediaStreamIds: data.mediaStreamIds || null,
-    });
+    if (!room || !data.answer) return;
+    
+    if (socket.id === room.hostSocketId) {
+      if (data.targetId && room.controllers.has(data.targetId)) {
+        io.to(data.targetId).emit('answer', {
+          answer: data.answer,
+          fromId: socket.id,
+          roomId: data.roomId || socket.roomCode,
+          mediaStreamIds: data.mediaStreamIds || null,
+        });
+      }
+    } else if (room.controllers.has(socket.id)) {
+      io.to(room.hostSocketId).emit('answer', {
+        answer: data.answer,
+        fromId: socket.id,
+        roomId: data.roomId || socket.roomCode,
+        mediaStreamIds: data.mediaStreamIds || null,
+      });
+    }
   });
 
   socket.on('ice-candidate', (payload, maybeRoomId) => {
@@ -1306,6 +1483,18 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('host-push-question', (payload) => {
+    const roomId = normalizeRoomCode(payload.roomId || socket.roomCode);
+    const room = rooms.get(roomId);
+    if (!room) return;
+    
+    // Store question so late-joiners can receive it
+    if (!room.examQuestions) room.examQuestions = [];
+    room.examQuestions.push(payload);
+    
+    io.to(roomId).emit('new-exam-question', payload);
+  });
+
   socket.on('system-alert', (payload = {}) => {
     const roomId = normalizeRoomCode(payload.room || socket.roomCode);
     const room = rooms.get(roomId);
@@ -1323,6 +1512,7 @@ io.on('connection', (socket) => {
         type: payload.type || 'activity',
         event: payload.event || undefined,
         message: `${participantName}: ${payload.message || 'Activity detected'}`,
+        evidenceUrl: payload.evidenceUrl || undefined,
         penalty,
       }).catch((err) => console.error('Alert save error:', err));
     } else {
@@ -1332,6 +1522,7 @@ io.on('connection', (socket) => {
         type: payload.type || 'activity',
         event: payload.event || undefined,
         message: `${participantName}: ${payload.message || 'Activity detected'}`,
+        evidenceUrl: payload.evidenceUrl || undefined,
         penalty,
       });
     }
@@ -1347,7 +1538,7 @@ io.on('connection', (socket) => {
       );
     }
 
-    io.to('admins').emit('system-alert', { ...payload, room: roomId, participant: participantName, penalty });
+    io.to('admins').emit('system-alert', { ...payload, room: roomId, participant: participantName, evidenceUrl: payload.evidenceUrl || undefined, penalty });
     emitRoomState(roomId);
     broadcastSessions();
   });
@@ -1374,6 +1565,7 @@ io.on('connection', (socket) => {
       type: data.type || 'anticheat_violation',
       event: data.event || data.reason || undefined,
       message: `${participant.name}: ${message}`,
+      evidenceUrl: data.evidenceUrl || undefined,
       penalty,
     };
     if (global.dbConnected) {
@@ -1395,6 +1587,7 @@ io.on('connection', (socket) => {
       type: alertDoc.type,
       event: alertDoc.event,
       message,
+      evidenceUrl: alertDoc.evidenceUrl,
       penalty,
     });
     emitRoomState(roomCode);
@@ -1426,6 +1619,66 @@ io.on('connection', (socket) => {
       participant.email || ''
     );
     emitRoomState(roomCode);
+  });
+
+  // --- Exam Content ---
+  socket.on('host-push-question', (question) => {
+    const roomId = normalizeRoomCode(question.roomId || socket.roomCode);
+    const room = rooms.get(roomId);
+    if (!room || room.mode !== 'supervised' || socket.role !== 'host') return;
+    
+    room.exam.questions.push(question);
+    room.controllers.forEach(controller => {
+      io.to(controller.socketId).emit('new-exam-question', question);
+    });
+    pushEvent(roomId, 'exam', `New ${question.type} question pushed to controllers`);
+    emitRoomState(roomId);
+  });
+
+  socket.on('controller-draft-answer', ({ questionId, answer, roomId }) => {
+    const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(normalizedRoomId);
+    if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
+    
+    if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
+    
+    room.exam.answers[questionId][socket.id] = {
+      text: answer.text,
+      output: answer.output || null,
+      status: answer.status || null,
+      isFinal: false,
+      timestamp: Date.now()
+    };
+    
+    io.to(room.hostSocketId).emit('host-live-answer-update', {
+      questionId,
+      controllerId: socket.id,
+      controllerName: room.controllers.get(socket.id)?.name || 'Unknown',
+      answer: room.exam.answers[questionId][socket.id]
+    });
+  });
+
+  socket.on('controller-submit-answer', ({ questionId, answer }) => {
+    const roomId = socket.roomCode;
+    const room = rooms.get(roomId);
+    if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
+    
+    if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
+    
+    room.exam.answers[questionId][socket.id] = {
+      text: answer.text,
+      output: answer.output || null,
+      status: answer.status || null,
+      isFinal: true,
+      timestamp: Date.now()
+    };
+    
+    io.to(room.hostSocketId).emit('host-live-answer-update', {
+      questionId,
+      controllerId: socket.id,
+      controllerName: room.controllers.get(socket.id)?.name || 'Unknown',
+      answer: room.exam.answers[questionId][socket.id]
+    });
   });
 
   socket.on('leave-session', () => {

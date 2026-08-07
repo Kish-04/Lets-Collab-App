@@ -39,6 +39,15 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
                 currentSenderRef.current = senderId
             } else if (data.type === 'file-end') {
                 if (!currentSenderRef.current || currentSenderRef.current !== senderId) return
+                if (receivedSizeRef.current < currentFileSizeRef.current) {
+                    setStatus('Download failed — incomplete data')
+                    setProgress(0)
+                    fileChunksRef.current = []
+                    receivedSizeRef.current = 0
+                    currentSenderRef.current = ''
+                    setTimeout(() => { setStatus('Idle'); setIncomingFile(null) }, 3000)
+                    return
+                }
                 setStatus('Download complete!')
                 const blob = new Blob(fileChunksRef.current)
                 const url = URL.createObjectURL(blob)
@@ -74,6 +83,13 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
     }
 
     const sendFile = async (file: File) => {
+        if (!dataChannelManager.isOpen('ircp-file', peerId)) {
+            setStatus('No active peer connection — file not sent')
+            setProgress(0)
+            setTimeout(() => setStatus('Idle'), 3000)
+            return
+        }
+
         setStatus(`Sending ${file.name}...`)
         setProgress(0)
         
@@ -88,6 +104,12 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
         let offset = 0
 
         while (offset < buffer.byteLength) {
+            if (!dataChannelManager.isOpen('ircp-file', peerId)) {
+                setStatus('Transfer failed — connection lost')
+                setProgress(0)
+                setTimeout(() => setStatus('Idle'), 3000)
+                return
+            }
             const chunk = buffer.slice(offset, offset + chunkSize)
             dataChannelManager.send('ircp-file', chunk, peerId)
             offset += chunk.byteLength
@@ -95,6 +117,13 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
             
             // Native WebRTC backpressure handling: Wait if buffer exceeds 1MB
             await dataChannelManager.waitForBuffer('ircp-file', peerId, 1024 * 1024)
+        }
+
+        if (!dataChannelManager.isOpen('ircp-file', peerId)) {
+            setStatus('Transfer failed — connection lost')
+            setProgress(0)
+            setTimeout(() => setStatus('Idle'), 3000)
+            return
         }
 
         dataChannelManager.send('ircp-file', { type: 'file-end' }, peerId)
@@ -112,7 +141,15 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
                 onDrop={handleFileDrop}
                 onDragOver={(e) => e.preventDefault()}
                 className="border-2 border-dashed border-[#333] hover:border-[var(--accent)] hover:bg-[#1a1a1a] transition-all rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer relative"
-                onClick={() => document.getElementById('file-upload')?.click()}
+                onClick={() => {
+                    (window as any).isSelectingFile = true;
+                    document.getElementById('file-upload')?.click();
+                    const onFocus = () => {
+                        setTimeout(() => { (window as any).isSelectingFile = false; }, 500);
+                        window.removeEventListener('focus', onFocus);
+                    };
+                    window.addEventListener('focus', onFocus);
+                }}
             >
                 <input 
                     type="file" 

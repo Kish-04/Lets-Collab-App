@@ -180,16 +180,16 @@ const otpSendLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   message: { message: 'Too many OTP requests. Please try again after 15 minutes.' },
-  validate: { ip: false },
-  keyGenerator: (req) => req.ip + '_' + normalizeEmail(req.body.email)
+  validate: { default: false },
+  keyGenerator: (req) => normalizeEmail(req.body.email) || 'unknown'
 });
 
 const otpVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   message: { message: 'Too many verification attempts. Please request a new OTP.' },
-  validate: { ip: false },
-  keyGenerator: (req) => req.ip + '_' + normalizeEmail(req.body.email)
+  validate: { default: false },
+  keyGenerator: (req) => normalizeEmail(req.body.email) || 'unknown'
 });
 
 router.post('/register', otpSendLimiter, async (req, res) => {

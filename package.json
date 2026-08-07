@@ -173,11 +173,20 @@
     "email": "admin@letscollab.com"
   },
   "dependencies": {
+    "@google/genai": "^2.15.0",
+    "@google/generative-ai": "^0.24.1",
     "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/selfie_segmentation": "^0.1.1675465747",
+    "@mediapipe/tasks-audio": "^1.0.1",
+    "@monaco-editor/react": "^4.7.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@react-three/postprocessing": "^3.0.4",
     "@vladmandic/face-api": "^1.7.15",
     "express": "^5.2.1",
-    "framer-motion": "^12.42.2"
+    "framer-motion": "^12.42.2",
+    "three": "^0.185.1",
+    "zustand": "^5.0.14"
   },
   "optionalDependencies": {
     "robotjs": "^0.7.1",

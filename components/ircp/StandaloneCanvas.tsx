@@ -95,20 +95,27 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         return () => dataChannelManager.off('ircp-draw', handleDraw)
     }, [bgColor])
 
-    const getCoordinates = (e: React.MouseEvent | React.TouchEvent): Point | null => {
+    const getCoordinates = (e: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent): Point | null => {
         if (!canvasRef.current) return null
         const rect = canvasRef.current.getBoundingClientRect()
-        const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX
-        const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY
+        let clientX = 0
+        let clientY = 0
+        if ('touches' in e && e.touches.length > 0) {
+            clientX = e.touches[0].clientX
+            clientY = e.touches[0].clientY
+        } else {
+            clientX = (e as React.MouseEvent | MouseEvent).clientX
+            clientY = (e as React.MouseEvent | MouseEvent).clientY
+        }
         return {
             x: (clientX - rect.left) / rect.width,
             y: (clientY - rect.top) / rect.height
         }
     }
 
-    const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    const startDrawing = (e: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent) => {
         if (!isDrawingMode) return
-        e.preventDefault()
+        if (e.cancelable) e.preventDefault()
         const point = getCoordinates(e)
         if (!point || !ctxRef.current) return
 
@@ -123,11 +130,17 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         ctxRef.current.moveTo(x, y)
 
         dataChannelManager.send('ircp-draw', { type: 'start', point, color: activeColor, width: penWidth }, peerId)
+        
+        // Add global listeners so drawing continues even if mouse goes over floating UI
+        window.addEventListener('mousemove', draw, { passive: false })
+        window.addEventListener('mouseup', stopDrawing)
+        window.addEventListener('touchmove', draw, { passive: false })
+        window.addEventListener('touchend', stopDrawing)
     }
 
-    const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    const draw = (e: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent) => {
         if (!isDrawingMode || !isDrawingRef.current) return
-        e.preventDefault()
+        if (e.cancelable) e.preventDefault()
         const point = getCoordinates(e)
         if (!point || !ctxRef.current) return
 
@@ -142,6 +155,10 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
     const stopDrawing = () => {
         isDrawingRef.current = false
+        window.removeEventListener('mousemove', draw)
+        window.removeEventListener('mouseup', stopDrawing)
+        window.removeEventListener('touchmove', draw)
+        window.removeEventListener('touchend', stopDrawing)
     }
 
     const clearCanvas = () => {
@@ -210,12 +227,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 <canvas
                     ref={canvasRef}
                     onMouseDown={startDrawing}
-                    onMouseMove={draw}
-                    onMouseUp={stopDrawing}
-                    onMouseLeave={stopDrawing}
                     onTouchStart={startDrawing}
-                    onTouchMove={draw}
-                    onTouchEnd={stopDrawing}
                     className="absolute inset-0 w-full h-full object-contain cursor-crosshair touch-none"
                 />
             </div>

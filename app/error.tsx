@@ -1,7 +1,21 @@
 "use client"
-import React from 'react'
+import React, { useEffect } from 'react'
 
 export default function ErrorBoundary({ error, reset }: { error: Error, reset: () => void }) {
+  const isWasmError = error.message.toLowerCase().includes('index out of bounds') ||
+                      error.message.toLowerCase().includes('wasm') ||
+                      error.message.toLowerCase().includes('memory access');
+
+  useEffect(() => {
+    // If it's a known AI/Wasm glitch, try to auto-recover immediately
+    if (isWasmError) {
+      console.warn('[ErrorBoundary] Auto-recovering from Wasm glitch:', error.message);
+      reset();
+    }
+  }, [error, isWasmError, reset]);
+
+  if (isWasmError) return null; // Don't show the error UI for suppressed errors
+
   const showDetails = process.env.NODE_ENV !== 'production'
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: '24px', background: '#080810', color: '#e8eaf2', fontFamily: 'system-ui, sans-serif' }}>

@@ -51,7 +51,7 @@ export function getBackendUrl() {
   const configured = normalizeUrl(process.env.NEXT_PUBLIC_BACKEND_URL)
   if (configured) return configured
 
-  const backendPort = process.env.NEXT_PUBLIC_BACKEND_PORT || '3001'
+  const backendPort = process.env.NEXT_PUBLIC_BACKEND_PORT || '8081'
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
     if (isLocalOrPrivateHost(hostname)) {

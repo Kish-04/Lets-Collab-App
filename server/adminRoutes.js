@@ -182,6 +182,60 @@ router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async 
   }
 });
 
+router.post('/upload-violation-screenshot', protectAuthenticated, uploadEvidenceFile, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+    const roomCode = String(req.body.roomCode || '').trim().toUpperCase();
+    const label = req.body.label || 'Violation Detected';
+    const liveRoom = roomCode ? findLiveRoom(roomCode) : null;
+    
+    // Allow if they are in the active room (either as host, controller, or observer)
+    if (!liveRoom) {
+      return res.status(404).json({ success: false, message: 'Room not found or no longer active' });
+    }
+
+    const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const fileName = `evidence/${Date.now()}-${safeName}`;
+
+    const uploadPath = path.join(__dirname, 'uploads', 'evidence');
+    fs.mkdirSync(uploadPath, { recursive: true });
+    fs.writeFileSync(path.join(uploadPath, fileName.split('/').pop()), req.file.buffer);
+    
+    const fileUrl = `/uploads/evidence/${fileName.split('/').pop()}`;
+
+    // Update the SessionLog evidence array
+    const SessionLog = require('./sessionLog');
+    const newEvidence = {
+      id: Date.now().toString(),
+      time: new Date().toLocaleTimeString(),
+      type: 'snapshot',
+      label: label,
+      by: req.user.email,
+      url: fileUrl
+    };
+
+    if (global.dbConnected) {
+      await SessionLog.findOneAndUpdate(
+        { roomCode },
+        {
+          $push: { evidence: newEvidence }
+        }
+      ).catch(err => console.error('Failed to append evidence to session log', err));
+    }
+    
+    // Also push to the live room in memory so dashboard sees it instantly
+    if (liveRoom) {
+      if (!liveRoom.evidence) liveRoom.evidence = [];
+      liveRoom.evidence.push(newEvidence);
+    }
+
+    res.json({ success: true, url: fileUrl });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 router.use(protectAdmin);
 
 router.get('/users', async (req, res) => {
@@ -342,4 +396,4 @@ router.get('/reports', async (req, res) => {
   }
 });
 
-module.exports = { router, onlineEmails, setRoomLookup, protectAdmin };
+module.exports = { router, onlineEmails, setRoomLookup, protectAuthenticated, protectAdmin };

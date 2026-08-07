@@ -36,7 +36,7 @@ type LiveSession = {
   observerCount: number
   controllers?: LiveController[]
   pendingCount?: number
-  evidence?: Array<{ id: string; time: string; type: string; label: string }>
+  evidence?: Array<{ id: string; time: string; type: string; label: string; url?: string }>
   messageCount?: number
 }
 
@@ -190,6 +190,29 @@ function SessionDrawer({
                 </div>
               ))}
             </div>
+          )}
+        </div>
+
+        <div className="border-b border-[var(--border)] p-6">
+          <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Evidence Gallery</p>
+          {session.evidence && session.evidence.length > 0 ? (
+            <div className="grid grid-cols-2 gap-3">
+              {[...session.evidence].reverse().map(ev => (
+                <a key={ev.id} href={getBackendUrl() + ev.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--accent)]">
+                  {ev.url ? (
+                    <img src={getBackendUrl() + ev.url} alt="Evidence" className="aspect-video w-full object-cover" />
+                  ) : (
+                    <div className="flex aspect-video w-full items-center justify-center bg-black/50 text-[10px] text-[var(--text-dim)]">No Image</div>
+                  )}
+                  <div className="bg-[var(--bg)] p-2 font-mono text-[10px] text-[var(--text-secondary)]">
+                    <p className="truncate text-[var(--red)]">{ev.label || 'Violation Detected'}</p>
+                    <p>{ev.time}</p>
+                  </div>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--text-dim)]">No visual evidence captured.</p>
           )}
         </div>
 
