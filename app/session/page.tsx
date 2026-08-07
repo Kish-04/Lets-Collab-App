@@ -1100,8 +1100,10 @@ function SessionContent() {
 
     const setupSocket = useCallback((asRole: Role, code?: string) => {
         const token = getStoredAuthToken() || undefined
+        const backendUrl = getBackendUrl()
+        console.log('[DEBUG] setupSocket called, role:', asRole, 'backendUrl:', backendUrl)
 
-        const socket = io(getBackendUrl(), { 
+        const socket = io(backendUrl, { 
             withCredentials: true,
             auth: token ? { token } : undefined
         })

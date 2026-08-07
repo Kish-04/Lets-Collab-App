@@ -102,9 +102,7 @@ function readJsonConfig(filePath) {
 
 function getConfiguredBackendUrl() {
   const envUrl = normalizeUrl(
-    process.env.LETSCOLLAB_BACKEND_URL ||
-    process.env.NEXT_PUBLIC_BACKEND_URL ||
-    process.env.BACKEND_URL
+    process.env.LETSCOLLAB_BACKEND_URL
   );
   if (envUrl) return envUrl;
 
@@ -369,6 +367,7 @@ app.whenReady().then(() => {
   
   const startServer = (port) => {
       const server = uiServer.listen(port, () => {
+          if (!server.address()) return;
           actualUiPort = server.address().port;
           console.log(`Let's Collab! UI server running on port ${actualUiPort}`);
           createWindow();
