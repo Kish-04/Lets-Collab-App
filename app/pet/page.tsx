@@ -20,7 +20,14 @@ export default function PetWidgetPage() {
     return (
         <>
             <style dangerouslySetInnerHTML={{ __html: `body { background: transparent !important; }` }} />
-            <div className="w-screen h-screen overflow-hidden bg-transparent select-none cursor-default" style={{ WebkitAppRegion: 'drag' } as any}>
+            <div className="w-screen h-screen overflow-hidden bg-transparent select-none cursor-default">
+                {/* Native Electron Drag Handle over the robot's head area */}
+                <div 
+                  className="absolute top-[80px] left-1/2 -translate-x-1/2 w-16 h-16 z-[9999] rounded-full cursor-move" 
+                  style={{ WebkitAppRegion: 'drag' } as any}
+                  title="Drag to move"
+                />
+                
                 <div style={{ WebkitAppRegion: 'no-drag' } as any} className="w-full h-full pointer-events-auto">
                     <PetCanvas petState={petState} sessionMode="collaboration" petMessage={petMessage} isStandalone={true} />
                 </div>

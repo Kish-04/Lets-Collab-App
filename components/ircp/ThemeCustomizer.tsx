@@ -36,8 +36,10 @@ const editableColors: Array<{ key: keyof AppearanceConfig; label: string }> = [
   { key: "warning", label: "Warning" },
   { key: "danger", label: "Danger" },
 ]
+import { usePathname } from "next/navigation"
 
 export default function ThemeCustomizer() {
+  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [config, setConfig] = useState<AppearanceConfig>(APPEARANCE_PRESETS.professional)
   const [advanced, setAdvanced] = useState(false)
@@ -86,6 +88,8 @@ export default function ThemeCustomizer() {
   }
 
   const selectPreset = (preset: AppearancePreset) => commit({ ...APPEARANCE_PRESETS[preset] })
+
+  if (pathname === '/pet') return null;
 
   return (
     <div className="fixed bottom-5 right-5 z-[90] font-sans">

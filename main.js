@@ -258,13 +258,6 @@ function createWindow() {
     }
   });
 
-  ipcMain.on('start-drag', (event) => {
-    if (petWindow && !petWindow.isDestroyed()) {
-      const bw = BrowserWindow.fromWebContents(event.sender);
-      if (bw) bw.startWindowDrag();
-    }
-  });
-
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isTrustedRendererUrl(url)) return { action: 'allow' };
     if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});

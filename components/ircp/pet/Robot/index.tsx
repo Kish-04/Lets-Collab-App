@@ -288,11 +288,6 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         dragMomentum={!isStandalone}
         dragElastic={isStandalone ? 0 : 0.15}
         dragConstraints={isStandalone ? { left: 0, right: 0, top: 0, bottom: 0 } : bounds}
-        onDragStart={() => {
-          if (isStandalone && (window as any).ipcRenderer) {
-            (window as any).ipcRenderer.send('start-drag')
-          }
-        }}
         onDragEnd={handleDragEnd}
         onDrag={handleDrag}
         style={{ width: 165, height: 320, x, y, rotate }}
