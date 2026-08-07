@@ -21,7 +21,9 @@ export default function PetWidgetPage() {
         <>
             <style dangerouslySetInnerHTML={{ __html: `body { background: transparent !important; }` }} />
             <div className="w-screen h-screen overflow-hidden bg-transparent select-none cursor-default" style={{ WebkitAppRegion: 'drag' } as any}>
-                <PetCanvas petState={petState} sessionMode="collaboration" petMessage={petMessage} isStandalone={true} />
+                <div style={{ WebkitAppRegion: 'no-drag' } as any} className="w-full h-full pointer-events-auto">
+                    <PetCanvas petState={petState} sessionMode="collaboration" petMessage={petMessage} isStandalone={true} />
+                </div>
             </div>
         </>
     )

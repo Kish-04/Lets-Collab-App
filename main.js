@@ -251,6 +251,20 @@ function createWindow() {
     }
   });
 
+  ipcMain.on('move-pet-window', (event, { x, y }) => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      const [currentX, currentY] = petWindow.getPosition();
+      petWindow.setPosition(Math.round(currentX + x), Math.round(currentY + y));
+    }
+  });
+
+  ipcMain.on('start-drag', (event) => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      const bw = BrowserWindow.fromWebContents(event.sender);
+      if (bw) bw.startWindowDrag();
+    }
+  });
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isTrustedRendererUrl(url)) return { action: 'allow' };
     if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});

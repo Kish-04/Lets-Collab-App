@@ -250,12 +250,14 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
   const setDragVelocity = useRobotStore(state => state.setDragVelocity)
 
   const handleDrag = useCallback(
-    (_: unknown, info: { velocity: { x: number; y: number } }) => {
-      // Feed 2D drag velocity into the 3D physics store
-      // We scale it down slightly so the 3D physics aren't completely chaotic
-      setDragVelocity(info.velocity.x * 0.005, -info.velocity.y * 0.005)
+    (_: unknown, info: { velocity: { x: number; y: number }, delta: { x: number; y: number } }) => {
+      if (!isStandalone) {
+        // Feed 2D drag velocity into the 3D physics store
+        // We scale it down slightly so the 3D physics aren't completely chaotic
+        setDragVelocity(info.velocity.x * 0.005, -info.velocity.y * 0.005)
+      }
     },
-    [setDragVelocity]
+    [setDragVelocity, isStandalone]
   )
 
   const handleDragEnd = useCallback(
@@ -283,9 +285,14 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         drag
         dragControls={dragControls}
         dragListener={false} // Disable default DOM listener so we can trigger it from R3F
-        dragMomentum={true}
-        dragElastic={0.15}
-        dragConstraints={bounds}
+        dragMomentum={!isStandalone}
+        dragElastic={isStandalone ? 0 : 0.15}
+        dragConstraints={isStandalone ? { left: 0, right: 0, top: 0, bottom: 0 } : bounds}
+        onDragStart={() => {
+          if (isStandalone && (window as any).ipcRenderer) {
+            (window as any).ipcRenderer.send('start-drag')
+          }
+        }}
         onDragEnd={handleDragEnd}
         onDrag={handleDrag}
         style={{ width: 165, height: 320, x, y, rotate }}
