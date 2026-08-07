@@ -18,8 +18,11 @@ export default function PetWidgetPage() {
     }, [])
 
     return (
-        <div className="w-screen h-screen overflow-hidden bg-transparent select-none cursor-default" style={{ WebkitAppRegion: 'drag' } as any}>
-            <PetCanvas petState={petState} sessionMode="collaboration" petMessage={petMessage} isStandalone={true} />
-        </div>
+        <>
+            <style dangerouslySetInnerHTML={{ __html: `body { background: transparent !important; }` }} />
+            <div className="w-screen h-screen overflow-hidden bg-transparent select-none cursor-default" style={{ WebkitAppRegion: 'drag' } as any}>
+                <PetCanvas petState={petState} sessionMode="collaboration" petMessage={petMessage} isStandalone={true} />
+            </div>
+        </>
     )
 }

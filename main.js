@@ -208,7 +208,7 @@ function createWindow() {
   };
 
   const appStartUrl = process.env.APP_URL || `http://127.0.0.1:${actualUiPort}/app`;
-  loadWithRetry(appStartUrl);
+  loadWithRetry(`${appStartUrl}?backendUrl=${encodeURIComponent(backendUrl)}`);
 
   // Initialize pet window
   let petWindow = null;
@@ -229,8 +229,8 @@ function createWindow() {
         additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
       }
     });
-    const petUrl = process.env.APP_URL ? process.env.APP_URL.replace('/app', '/pet') : `http://127.0.0.1:${actualUiPort}/pet`;
-    petWindow.loadURL(petUrl);
+    const basePetUrl = process.env.APP_URL ? process.env.APP_URL.replace('/app', '/pet') : `http://127.0.0.1:${actualUiPort}/pet`;
+    petWindow.loadURL(`${basePetUrl}?backendUrl=${encodeURIComponent(backendUrl)}`);
     petWindow.hide();
   };
   createPetWindow();
