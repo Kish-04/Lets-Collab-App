@@ -215,6 +215,12 @@ function SessionContent() {
     const [chatInput, setChatInput] = useState("")
     const [chatOpen, setChatOpen] = useState(false)
     const [showPet, setShowPet] = useState(true)
+
+    useEffect(() => {
+        if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
+            (window as any).ipcRenderer.send('set-pet-enabled', showPet)
+        }
+    }, [showPet])
     const [showExamDashboard, setShowExamDashboard] = useState(true)
     const [petState, setPetState] = useState<'Idle' | 'Thinking' | 'Warning'>('Idle')
     const [petMessage, setPetMessage] = useState<string>('')

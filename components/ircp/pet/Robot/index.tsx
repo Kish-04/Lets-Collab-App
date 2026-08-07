@@ -313,7 +313,10 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
             initial={{ opacity: 0, scale: 0.8, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8, y: 10 }}
-            className="fixed bottom-[340px] right-24 z-50 max-w-[250px] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-white p-3 rounded-2xl rounded-br-sm shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
+            className={isStandalone
+              ? "absolute bottom-8 left-4 right-4 z-[60] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-white p-3 rounded-2xl shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
+              : "fixed bottom-[340px] right-24 z-[60] max-w-[250px] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-white p-3 rounded-2xl rounded-br-sm shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
+            }
           >
             <button
               onClick={closeChat}
@@ -331,7 +334,10 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
             initial={{ opacity: 0, y: 12, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.96 }}
-            className="fixed bottom-72 right-6 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-neutral-900 text-white shadow-2xl p-3"
+            className={isStandalone
+              ? "absolute bottom-4 left-4 right-4 z-[60] rounded-xl bg-neutral-900 text-white shadow-2xl p-3 border border-neutral-700"
+              : "fixed bottom-72 right-6 z-[60] w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-neutral-900 text-white shadow-2xl p-3"
+            }
           >
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs text-neutral-400 uppercase tracking-wider font-semibold">AI Pet</div>

@@ -89,7 +89,7 @@ export default function ThemeCustomizer() {
 
   const selectPreset = (preset: AppearancePreset) => commit({ ...APPEARANCE_PRESETS[preset] })
 
-  if (pathname === '/pet') return null;
+  if (pathname?.startsWith('/pet')) return null;
 
   return (
     <div className="fixed bottom-5 right-5 z-[90] font-sans">

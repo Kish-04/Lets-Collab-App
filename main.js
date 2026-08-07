@@ -207,8 +207,10 @@ function createWindow() {
 
   const appStartUrl = process.env.APP_URL || `http://127.0.0.1:${actualUiPort}/app`;
   loadWithRetry(`${appStartUrl}?backendUrl=${encodeURIComponent(backendUrl)}`);
+  let appClosing = false;
+  let petEnabled = true;
 
-  // Initialize pet window
+  // Window references
   let petWindow = null;
   const createPetWindow = () => {
     petWindow = new BrowserWindow({
@@ -233,8 +235,9 @@ function createWindow() {
   };
   createPetWindow();
 
+  // IPC and Window Events
   win.on('minimize', () => {
-    if (petWindow) petWindow.show();
+    if (petWindow && petEnabled) petWindow.show();
   });
   
   win.on('restore', () => {
@@ -248,6 +251,17 @@ function createWindow() {
   ipcMain.on('pet-state-update', (event, data) => {
     if (petWindow && !petWindow.isDestroyed()) {
       petWindow.webContents.send('pet-sync-state', data);
+    }
+  });
+
+  ipcMain.on('set-pet-enabled', (event, enabled) => {
+    petEnabled = enabled;
+    if (petWindow && !petWindow.isDestroyed()) {
+      if (!enabled) {
+        petWindow.hide();
+      } else if (win && win.isMinimized()) {
+        petWindow.show();
+      }
     }
   });
 
