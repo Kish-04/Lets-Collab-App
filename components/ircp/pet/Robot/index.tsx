@@ -38,7 +38,7 @@ function InteractionCatcher({
   )
 }
 
-export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage }: { petState?: EmotionState, sessionMode?: string, petMessage?: string }) {
+export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isStandalone }: { petState?: EmotionState, sessionMode?: string, petMessage?: string, isStandalone?: boolean }) {
   useDOMObserver()
   const [hovered, setHovered] = useState(false)
   const [pokeTrigger, setPokeTrigger] = useState(0)

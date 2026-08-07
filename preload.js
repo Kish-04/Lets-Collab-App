@@ -18,13 +18,13 @@ contextBridge.exposeInMainWorld('api', {
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels
-    const validChannels = ['execute-input', 'set-clipboard-guard', 'toggle-fullscreen'];
+    const validChannels = ['execute-input', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update'];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
     }
   },
   on: (channel, func) => {
-    const validChannels = ['system-event'];
+    const validChannels = ['system-event', 'pet-sync-state'];
     if (validChannels.includes(channel)) {
       // Deliberately strip event as it includes `sender` 
       ipcRenderer.on(channel, (event, ...args) => func(...args));

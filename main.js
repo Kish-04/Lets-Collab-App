@@ -124,7 +124,7 @@ function getConfiguredBackendUrl() {
     if (backendUrl) return backendUrl;
   }
 
-  return '';
+  return 'https://let-s-collab-tjwc.onrender.com';
 }
 
 // Log all requests to trace Next.js hydration issues
@@ -156,6 +156,7 @@ uiServer.get('/app-config.json', (req, res) => {
 uiServer.get('/', (req, res) => res.sendFile(path.join(__dirname, 'out', 'index.html')));
 uiServer.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'out', 'app.html')));
 uiServer.get('/session', (req, res) => res.sendFile(path.join(__dirname, 'out', 'session.html')));
+uiServer.get('/pet', (req, res) => res.sendFile(path.join(__dirname, 'out', 'pet.html')));
 uiServer.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'out', 'login.html')));
 uiServer.get('/history', (req, res) => res.sendFile(path.join(__dirname, 'out', 'history.html')));
 uiServer.get('/recent', (req, res) => res.sendFile(path.join(__dirname, 'out', 'recent.html')));
@@ -208,6 +209,49 @@ function createWindow() {
 
   const appStartUrl = process.env.APP_URL || `http://127.0.0.1:${actualUiPort}/app`;
   loadWithRetry(appStartUrl);
+
+  // Initialize pet window
+  let petWindow = null;
+  const createPetWindow = () => {
+    petWindow = new BrowserWindow({
+      width: 280,
+      height: 380,
+      transparent: true,
+      frame: false,
+      alwaysOnTop: true,
+      resizable: false,
+      hasShadow: false,
+      skipTaskbar: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, 'preload.js'),
+        additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
+      }
+    });
+    const petUrl = process.env.APP_URL ? process.env.APP_URL.replace('/app', '/pet') : `http://127.0.0.1:${actualUiPort}/pet`;
+    petWindow.loadURL(petUrl);
+    petWindow.hide();
+  };
+  createPetWindow();
+
+  win.on('minimize', () => {
+    if (petWindow) petWindow.show();
+  });
+  
+  win.on('restore', () => {
+    if (petWindow) petWindow.hide();
+  });
+  
+  win.on('closed', () => {
+    if (petWindow && !petWindow.isDestroyed()) petWindow.close();
+  });
+
+  ipcMain.on('pet-state-update', (event, data) => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.webContents.send('pet-sync-state', data);
+    }
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isTrustedRendererUrl(url)) return { action: 'allow' };

@@ -15,7 +15,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense } from 'react'
 import { io, Socket } from "socket.io-client"
 import { motion } from "framer-motion"
-import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer,
+import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer, X,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
     VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot
 } from 'lucide-react'
@@ -198,6 +198,8 @@ function SessionContent() {
     const [systemAudioOn, setSystemAudioOn] = useState(false)
     const [pipCollapsed, setPipCollapsed] = useState(false)
     const [videoStats, setVideoStats] = useState("")
+    const [shareSources, setShareSources] = useState<any[]>([])
+    const [showSharePicker, setShowSharePicker] = useState(false)
     const [mouseEnabled, setMouseEnabled] = useState(false)
     const [keyboardEnabled, setKeyboardEnabled] = useState(false)
     const [hudVisible, setHudVisible] = useState(true)
@@ -1337,11 +1339,34 @@ function SessionContent() {
         })
     }, [joinInput, addLog, router])
 
+    // Sync Pet state with Electron Floating Window
+    useEffect(() => {
+        if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
+            (window as any).ipcRenderer.send('pet-state-update', { petState, petMessage })
+        }
+    }, [petState, petMessage])
+
     useEffect(() => {
         if (setupMode === null && !socketRef.current) {
             setupSocket(role, joinInput || undefined)
         }
     }, [setupMode, role, joinInput, setupSocket])
+
+    const startSharingProcess = async () => {
+        if (typeof window !== 'undefined' && (window as any).api && (window as any).api.getShareableSources) {
+            try {
+                const sources = await (window as any).api.getShareableSources();
+                if (sources && sources.length > 0) {
+                    setShareSources(sources);
+                    setShowSharePicker(true);
+                    return;
+                }
+            } catch (e) {
+                console.warn('Failed to get sources via API', e);
+            }
+        }
+        startSharing();
+    }
 
     const startSharing = async () => {
         console.log('[DEBUG] startSharing CALLED!');
@@ -2420,7 +2445,7 @@ function SessionContent() {
                             </>
                         )}
                         {role === 'host' && !isStreaming && (
-                            <button onClick={startSharing} className="px-6 py-2 bg-[var(--accent)] text-black font-bold rounded-full">START SHARING</button>
+                            <button onClick={startSharingProcess} className="px-6 py-2 bg-[var(--accent)] text-black font-bold rounded-full">START SHARING</button>
                         )}
                         
                         {/* PiP / Remote Camera Container */}
@@ -2723,6 +2748,53 @@ function SessionContent() {
                         setRequestingUser(null)
                     }}
                 />
+            )}
+
+            {showSharePicker && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+                    <div className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-xl flex flex-col h-[80vh] overflow-hidden shadow-2xl">
+                        <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--background)]">
+                            <h2 className="text-xl font-bold font-display text-[var(--text-primary)]">Select screen or window to share</h2>
+                            <button onClick={() => setShowSharePicker(false)} className="text-[var(--text-dim)] hover:text-white">
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg)]">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                                {shareSources.map((source) => (
+                                    <div 
+                                        key={source.id}
+                                        onClick={async () => {
+                                            setShowSharePicker(false);
+                                            if ((window as any).api && (window as any).api.setShareSource) {
+                                                await (window as any).api.setShareSource(source.id);
+                                            }
+                                            startSharing();
+                                        }}
+                                        className="flex flex-col group cursor-pointer bg-[var(--surface)] rounded-lg overflow-hidden border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-[0_0_15px_rgba(0,212,255,0.3)] transition-all duration-200"
+                                    >
+                                        <div className="aspect-video bg-black flex items-center justify-center overflow-hidden p-2 relative">
+                                            {source.thumbnail ? (
+                                                <img src={source.thumbnail} alt={source.name} className="max-w-full max-h-full object-contain rounded drop-shadow-md" />
+                                            ) : (
+                                                <div className="text-[var(--text-dim)] flex flex-col items-center">
+                                                    <Monitor className="w-8 h-8 mb-2 opacity-50" />
+                                                    <span className="text-xs">No preview</span>
+                                                </div>
+                                            )}
+                                            {source.isScreen && (
+                                                <div className="absolute top-2 right-2 bg-[var(--accent)] text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase">Entire Screen</div>
+                                            )}
+                                        </div>
+                                        <div className="p-3 border-t border-[var(--border)] bg-[var(--background)] group-hover:bg-[var(--elevated)]">
+                                            <p className="text-sm font-semibold text-[var(--text-primary)] truncate" title={source.name}>{source.name}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {(showPet || sessionMode === 'supervised') && <PetCanvas petState={petState} sessionMode={sessionMode} petMessage={petMessage} />}
