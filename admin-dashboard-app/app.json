@@ -1,13 +1,17 @@
 {
   "expo": {
     "name": "admin-dashboard-app",
-    "slug": "admin-dashboard-app",
+    "slug": "lets-collab",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kishankarthikssteam.letscollab",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -15,13 +19,20 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "package": "com.kishankarthikssteam.letscollab"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8b2d642b-1e9d-46a9-95b7-4d2037f77f2e"
+      }
+    },
+    "owner": "kishankarthikss-team"
   }
 }
