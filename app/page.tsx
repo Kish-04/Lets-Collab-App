@@ -467,16 +467,7 @@ export default function LandingPage() {
                   ))}
                   
                   {/* Compare complete milestone toast */}
-                  <motion.div
-                    initial={{ opacity: 0, x: 100 }}
-                    whileInView={{ opacity: 1, x: 0 }}
-                    viewport={{ once: true, margin: "-50px" }}
-                    transition={{ delay: 1, type: "tween" }}
-                    className="absolute bottom-6 right-6 bg-white/10 backdrop-blur-xl border border-white/20 px-6 py-3 rounded-xl text-white font-bold shadow-2xl flex items-center gap-3 z-50 overflow-hidden group"
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-r from-[var(--accent)]/20 to-purple-500/20 translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-500" />
-                    <Sparkles className="w-5 h-5 text-[var(--accent)]" /> 19/19 — Every box checked.
-                  </motion.div>
+
                 </div>
               </div>
             </div>
