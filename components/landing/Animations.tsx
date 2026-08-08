@@ -6,7 +6,7 @@ import { motion, useScroll, useSpring, useVelocity, useAnimationFrame, useTransf
 // 1. Text Reveal Character by Character
 export const TextReveal = ({ text, delay = 0 }: { text: string, delay?: number }) => {
   return (
-    <span className="inline-block overflow-hidden">
+    <span className="inline-block px-1">
       {text.split('').map((char, index) => (
         <motion.span
           key={index}

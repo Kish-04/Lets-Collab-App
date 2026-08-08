@@ -6,6 +6,8 @@ import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, C
 import { AppLogo } from '@/components/ircp/shared'
 import { MagneticButton, TiltCard, VelocityMarquee, TextReveal } from '@/components/landing/Animations'
 import { FeatureOrbit } from '@/components/landing/FeatureOrbit'
+import { HeroCanvas } from '@/components/landing/HeroCanvas'
+import { ShowcaseShaderMask } from '@/components/landing/ShowcaseShaderMask'
 import Link from 'next/link'
 
 const desktopDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.9.exe"
@@ -17,9 +19,15 @@ export default function LandingPage() {
   // Smooth scroll springs
   const smoothProgress = useSpring(scrollYProgress, { damping: 20, stiffness: 100 })
   
-  // Parallax values
-  const yHero = useTransform(smoothProgress, [0, 0.2], ["0%", "40%"])
-  const opacityHero = useTransform(smoothProgress, [0, 0.15], [1, 0])
+  // Portal sequence values
+  const yPortal = useTransform(smoothProgress, [0, 0.08], ["0%", "100%"])
+  const scalePortal = useTransform(smoothProgress, [0, 0.08], [1, 8])
+  const blurPortal = useTransform(smoothProgress, [0, 0.08], ["0px", "20px"])
+  const opacityPortal = useTransform(smoothProgress, [0.06, 0.08], [1, 0])
+  
+  // Spatial Z-Axis Parallax values
+  const zHero = useTransform(smoothProgress, [0.08, 0.28], [1, 3])
+  const opacityHero = useTransform(smoothProgress, [0.08, 0.23], [1, 0])
   
   const { scrollYProgress: pageScrollProgress } = useScroll()
   const [scrollPercent, setScrollPercent] = useState(0)
@@ -54,7 +62,7 @@ export default function LandingPage() {
   }, [])
 
   return (
-    <div ref={containerRef} className="relative min-h-screen bg-[#030305] text-white selection:bg-[var(--accent)] selection:text-black overflow-clip font-sans cursor-default">
+    <div ref={containerRef} className="relative min-h-screen bg-black text-white selection:bg-[var(--accent)] selection:text-black overflow-clip font-sans cursor-default">
       
       {/* Custom Trailing Cursor */}
       <motion.div 
@@ -138,7 +146,7 @@ export default function LandingPage() {
         initial={{ y: -100 }}
         animate={{ y: 0 }}
         transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-        className="sticky top-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4 backdrop-blur-xl border-b border-white/5 bg-[#030305]/80"
+        className="sticky top-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4 backdrop-blur-xl border-b border-white/5 bg-black/80"
       >
         <MagneticButton>
           <AppLogo size="small" />
@@ -167,7 +175,7 @@ export default function LandingPage() {
               href="/app" 
               onMouseEnter={() => setIsHovering(true)}
               onMouseLeave={() => setIsHovering(false)}
-              className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 text-sm font-black text-[#030305] bg-white rounded-full overflow-hidden transition-transform hover:scale-105 active:scale-95"
+              className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 text-sm font-black text-black bg-white rounded-full overflow-hidden transition-transform hover:scale-105 active:scale-95"
             >
               <span className="relative z-10">Launch App</span>
               <div className="absolute inset-0 bg-gradient-to-r from-[var(--accent)] to-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
@@ -188,10 +196,29 @@ export default function LandingPage() {
         </div>
 
         {/* Hero Section */}
-        <section id="vision" className="relative min-h-[120vh] flex flex-col items-center justify-center pt-32 pb-20 md:pb-64 px-4">
+        <section id="vision" className="relative min-h-[120vh] flex flex-col items-center justify-center pt-32 pb-20 md:pb-64 px-4 overflow-hidden">
+          
+          <HeroCanvas />
+
+          {/* Portal Dive Intro */}
           <motion.div 
-            style={{ opacity: opacityHero, y: yHero }}
-            className="flex flex-col items-center text-center max-w-7xl mx-auto relative z-10"
+            style={{ 
+              y: yPortal, 
+              scale: scalePortal, 
+              opacity: opacityPortal,
+              filter: useTransform(blurPortal, blur => `blur(${blur})`)
+            }}
+            className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none"
+          >
+            <div className="flex items-center justify-center">
+              <div className="w-4 h-4 rounded-full bg-[var(--accent)] animate-ping absolute" />
+              <div className="w-4 h-4 rounded-full bg-[var(--accent)]" />
+            </div>
+          </motion.div>
+
+          <motion.div 
+            style={{ opacity: opacityHero, scale: zHero }}
+            className="flex flex-col items-center text-center max-w-7xl mx-auto relative z-10 pointer-events-auto"
           >
             <motion.div
               initial={{ opacity: 0, scale: 0 }}
@@ -208,10 +235,10 @@ export default function LandingPage() {
             </motion.div>
 
             <h1 className="text-6xl sm:text-[12vw] md:text-[10rem] lg:text-[12rem] font-black tracking-tighter leading-tight sm:leading-[0.8] mb-10 pb-4">
-              <span className="inline-block bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
+              <span className="inline-block bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60 pb-2">
                 <TextReveal text="Space to" />
               </span><br/>
-              <span className="inline-block bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent)] via-indigo-400 to-purple-500 pb-4">
+              <span className="inline-block bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent)] via-indigo-400 to-purple-500 pb-2">
                 <TextReveal text="Create." delay={0.4} />
               </span>
             </h1>
@@ -240,7 +267,7 @@ export default function LandingPage() {
                   }}
                   onMouseEnter={() => setIsHovering(true)}
                   onMouseLeave={() => setIsHovering(false)}
-                  className="relative group inline-flex items-center justify-center px-12 py-6 text-xl font-black text-[#030305] bg-white rounded-full overflow-hidden transition-all shadow-[0_0_60px_-10px_rgba(255,255,255,0.5)] hover:shadow-[0_0_80px_0_rgba(255,255,255,0.8)]"
+                  className="relative group inline-flex items-center justify-center px-12 py-6 text-xl font-black text-black bg-white rounded-full overflow-hidden transition-all shadow-[0_0_60px_-10px_rgba(255,255,255,0.5)] hover:shadow-[0_0_80px_0_rgba(255,255,255,0.8)]"
                 >
                   <span className="relative z-10 flex items-center gap-3">
                     Install Desktop Client <Download className="w-6 h-6 animate-bounce" />
@@ -278,78 +305,90 @@ export default function LandingPage() {
               </div>
               
               {/* Abstract App Representation */}
-              <div className="aspect-[16/9] relative overflow-hidden flex items-center justify-center bg-[#050508]">
-                {/* Simulated remote screen */}
-                <div className="absolute inset-0 opacity-20 bg-[url('/grid.svg')] bg-center [mask-image:radial-gradient(ellipse_at_center,white,transparent_80%)]" />
-                
-                {/* Dynamic SVG Mesh Lines */}
-                <svg className="absolute inset-0 w-full h-full opacity-40 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-                  {[...Array(5)].map((_, i) => (
-                    <motion.path 
-                      key={i}
-                      d={`M ${-10 + i * 30} 110 Q ${50 + (i % 2 === 0 ? 25 : -25)} ${50 + (i % 3 === 0 ? 20 : -20)} ${110 + i * 10} -10`}
-                      stroke="url(#gradient-line)" 
-                      strokeWidth="0.2" 
-                      fill="none"
-                      initial={{ pathLength: 0, opacity: 0 }}
-                      whileInView={{ pathLength: 1, opacity: 1 }}
-                      transition={{ duration: 3 + i, ease: "easeInOut", repeat: Infinity, repeatType: "reverse" }}
-                    />
-                  ))}
-                  <defs>
-                    <linearGradient id="gradient-line" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="var(--accent)" />
-                      <stop offset="100%" stopColor="#8b5cf6" />
-                    </linearGradient>
-                  </defs>
-                </svg>
-                
-                <div className="relative z-10 text-center">
-                  <motion.div 
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                    className="w-40 h-40 rounded-full border-2 border-dashed border-white/20 mx-auto flex items-center justify-center relative"
-                  >
+              <div className="aspect-[16/9] relative overflow-hidden flex items-center justify-center bg-black">
+                <ShowcaseShaderMask>
+                  {/* Simulated remote screen */}
+                  <div className="absolute inset-0 opacity-20 bg-[url('/grid.svg')] bg-center [mask-image:radial-gradient(ellipse_at_center,white,transparent_80%)]" />
+                  
+                  {/* Dynamic SVG Mesh Lines */}
+                  <svg className="absolute inset-0 w-full h-full opacity-40 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    {[...Array(5)].map((_, i) => (
+                      <motion.path 
+                        key={i}
+                        d={`M ${-10 + i * 30} 110 Q ${50 + (i % 2 === 0 ? 25 : -25)} ${50 + (i % 3 === 0 ? 20 : -20)} ${110 + i * 10} -10`}
+                        stroke="url(#gradient-line)" 
+                        strokeWidth="0.2" 
+                        fill="none"
+                        initial={{ pathLength: 0, opacity: 0 }}
+                        whileInView={{ pathLength: 1, opacity: 1 }}
+                        transition={{ duration: 3 + i, ease: "easeInOut", repeat: Infinity, repeatType: "reverse" }}
+                      />
+                    ))}
+                    <defs>
+                      <linearGradient id="gradient-line" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="var(--accent)" />
+                        <stop offset="100%" stopColor="#8b5cf6" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                  
+                  <div className="relative z-10 text-center h-full flex items-center justify-center">
                     <motion.div 
-                      animate={{ rotate: -360 }}
+                      animate={{ rotate: 360 }}
                       transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                      className="w-32 h-32 rounded-[2rem] bg-gradient-to-br from-[var(--accent)] to-indigo-600 flex items-center justify-center shadow-2xl shadow-[var(--accent)]/50"
+                      className="w-40 h-40 rounded-full border-2 border-dashed border-white/20 mx-auto flex items-center justify-center relative"
                     >
-                      <InfinityIcon className="w-16 h-16 text-white" />
+                      <motion.div 
+                        animate={{ rotate: -360 }}
+                        transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                        className="w-32 h-32 rounded-[2rem] bg-gradient-to-br from-[var(--accent)] to-indigo-600 flex items-center justify-center shadow-2xl shadow-[var(--accent)]/50"
+                      >
+                        <InfinityIcon className="w-16 h-16 text-white" />
+                      </motion.div>
                     </motion.div>
-                  </motion.div>
-                </div>
-                
-                {/* Floating interactive cursors */}
-                {[
-                  { delay: 0, color: "text-[var(--accent)]", name: "Alice (macOS)", x1: 80, x2: -110, y1: 45, y2: -65 },
-                  { delay: 2, color: "text-purple-400", name: "Bob (Windows)", x1: -95, x2: 125, y1: -55, y2: 75 }
-                ].map((cursor, idx) => (
+                  </div>
+                  
+                  {/* Floating interactive cursors */}
+                  {[
+                    { delay: 0, color: "text-[var(--accent)]", name: "Alice (macOS)", x1: 80, x2: -110, y1: 45, y2: -65 },
+                    { delay: 2, color: "text-purple-400", name: "Bob (Windows)", x1: -95, x2: 125, y1: -55, y2: 75 }
+                  ].map((cursor, idx) => (
+                    <motion.div 
+                      key={idx}
+                      animate={{ 
+                        x: [0, cursor.x1, cursor.x2, 0],
+                        y: [0, cursor.y1, cursor.y2, 0]
+                      }}
+                      transition={{ duration: 8 + cursor.delay, repeat: Infinity, ease: "easeInOut", delay: cursor.delay }}
+                      className="absolute top-1/2 left-1/2 px-4 py-2 rounded-full bg-white/10 border border-white/20 shadow-2xl flex items-center gap-3 backdrop-blur-xl"
+                    >
+                      <MousePointer2 className={`w-5 h-5 ${cursor.color}`} fill="currentColor" />
+                      <span className="text-white text-xs font-bold tracking-wider">{cursor.name}</span>
+                    </motion.div>
+                  ))}
+
                   <motion.div 
-                    key={idx}
-                    animate={{ 
-                      x: [0, cursor.x1, cursor.x2, 0],
-                      y: [0, cursor.y1, cursor.y2, 0]
-                    }}
-                    transition={{ duration: 8 + cursor.delay, repeat: Infinity, ease: "easeInOut", delay: cursor.delay }}
-                    className="absolute top-1/2 left-1/2 px-4 py-2 rounded-full bg-white/10 border border-white/20 shadow-2xl flex items-center gap-3 backdrop-blur-xl"
+                    initial={{ opacity: 0, scale: 0, y: 20 }}
+                    whileInView={{ opacity: 1, scale: 1, y: 0 }}
+                    viewport={{ once: true, margin: "-10%" }}
+                    transition={{ delay: 3.5, type: "spring", bounce: 0.5 }}
+                    className="absolute bottom-10 right-10 px-4 py-2 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/30 backdrop-blur-md shadow-[0_0_20px_rgba(0,212,255,0.2)] text-[var(--accent)] text-xs font-bold flex items-center gap-2 z-50"
                   >
-                    <MousePointer2 className={`w-5 h-5 ${cursor.color}`} fill="currentColor" />
-                    <span className="text-white text-xs font-bold tracking-wider">{cursor.name}</span>
+                    <Zap className="w-4 h-4" /> Zero-Server P2P
                   </motion.div>
-                ))}
+                </ShowcaseShaderMask>
               </div>
             </motion.div>
           </div>
         </section>
 
         {/* Feature Orbit Showcase */}
-        <section id="features" className="relative bg-[#030305]">
+        <section id="features" className="relative bg-black">
           <FeatureOrbit />
         </section>
 
         {/* Comparison Section */}
-        <section id="compare" className="py-40 px-4 relative bg-[#050508] border-y border-white/5">
+        <section id="compare" className="py-40 px-4 relative bg-black border-y border-white/5">
           <div className="max-w-7xl mx-auto relative z-10">
             <div className="text-center mb-24">
               <motion.h2 
@@ -426,6 +465,18 @@ export default function LandingPage() {
                       </div>
                     </motion.div>
                   ))}
+                  
+                  {/* Compare complete milestone toast */}
+                  <motion.div
+                    initial={{ opacity: 0, x: 100 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true, margin: "-50px" }}
+                    transition={{ delay: 1, type: "tween" }}
+                    className="absolute bottom-6 right-6 bg-white/10 backdrop-blur-xl border border-white/20 px-6 py-3 rounded-xl text-white font-bold shadow-2xl flex items-center gap-3 z-50 overflow-hidden group"
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-r from-[var(--accent)]/20 to-purple-500/20 translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-500" />
+                    <Sparkles className="w-5 h-5 text-[var(--accent)]" /> 19/19 — Every box checked.
+                  </motion.div>
                 </div>
               </div>
             </div>
@@ -579,7 +630,7 @@ export default function LandingPage() {
         </section>
 
         {/* Downloads Section */}
-        <section id="download" className="py-40 px-4 relative bg-[#030305]">
+        <section id="download" className="py-40 px-4 relative bg-black">
           <div className="absolute inset-0 bg-gradient-to-t from-[var(--accent)]/10 to-transparent" />
           <div className="max-w-7xl mx-auto text-center relative z-10">
             <motion.h2 
@@ -592,17 +643,28 @@ export default function LandingPage() {
             </motion.h2>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-              <DownloadCard 
-                os="Windows"
-                status="Version 1.0.0 • Stable"
-                link={desktopDownloadUrl}
-                active={true}
-                icon={
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-20 h-20 mb-10 text-[var(--accent)] group-hover:scale-125 transition-transform duration-700 ease-out">
-                    <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.951-1.801"/>
-                  </svg>
-                }
-              />
+              <div className="relative">
+                <motion.div 
+                  initial={{ scale: 0 }}
+                  whileInView={{ scale: 1 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: 0.5, type: "spring", bounce: 0.5 }}
+                  className="absolute -top-3 -right-3 px-3 py-1 bg-[var(--accent)] text-black text-[10px] font-black rounded-full z-20 shadow-[0_0_15px_var(--accent)]"
+                >
+                  v1.0.0
+                </motion.div>
+                <DownloadCard 
+                  os="Windows"
+                  status="Version 1.0.0 • Stable"
+                  link={desktopDownloadUrl}
+                  active={true}
+                  icon={
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-20 h-20 mb-10 text-[var(--accent)] group-hover:scale-125 transition-transform duration-700 ease-out">
+                      <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.951-1.801"/>
+                    </svg>
+                  }
+                />
+              </div>
               <DownloadCard 
                 os="macOS"
                 status="Beta Testing • Q4 2026"
@@ -629,7 +691,7 @@ export default function LandingPage() {
         </section>
 
         {/* Footer */}
-        <footer className="py-20 border-t border-white/5 bg-[#030305] relative z-10 overflow-hidden">
+        <footer className="py-20 border-t border-white/5 bg-black relative z-10 overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[var(--accent)]/5 pointer-events-none" />
           <div className="max-w-7xl mx-auto px-8 relative z-10 flex flex-col md:flex-row justify-between gap-16">
             
