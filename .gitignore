@@ -28,5 +28,6 @@ tsconfig.tsbuildinfo
 .DS_Store
 out/
 dist/
+dist-fixed/
 
 .vercel

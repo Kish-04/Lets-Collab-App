@@ -1,26 +1,7 @@
 import type { Metadata, Viewport } from "next"
-import { Exo_2, JetBrains_Mono, DM_Sans } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import ThemeCustomizer from "@/components/ircp/ThemeCustomizer"
 import "./globals.css"
-
-const exo2 = Exo_2({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: ["400", "600", "800", "900"],
-})
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  weight: ["400", "500", "700"],
-})
-
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  weight: ["400", "500"],
-})
 
 export const metadata: Metadata = {
   title: "Let's Collab! | Secure Remote Collaboration",
@@ -103,7 +84,7 @@ export default function RootLayout({
           })();
         ` }} />
       </head>
-      <body suppressHydrationWarning className="${exo2.variable} ${jetbrainsMono.variable} ${dmSans.variable} font-sans antialiased bg-[var(--bg)] text-[var(--text-primary)] transition-colors duration-200">
+      <body suppressHydrationWarning className="font-sans antialiased bg-[var(--bg)] text-[var(--text-primary)] transition-colors duration-200">
         {children}
         <ThemeCustomizer />
         <Analytics />
