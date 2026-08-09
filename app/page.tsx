@@ -10,7 +10,7 @@ import { HeroCanvas } from '@/components/landing/HeroCanvas'
 import { ShowcaseShaderMask } from '@/components/landing/ShowcaseShaderMask'
 import Link from 'next/link'
 
-const desktopDownloadUrl = "https://github.com/Kish-04/Let-s-Collab-/releases/download/v1.0.0/Let.s.Collab.exe"
+const desktopDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.9.exe"
 
 export default function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -642,11 +642,11 @@ export default function LandingPage() {
                   transition={{ delay: 0.5, type: "spring", bounce: 0.5 }}
                   className="absolute -top-3 -right-3 px-3 py-1 bg-[var(--accent)] text-black text-[10px] font-black rounded-full z-20 shadow-[0_0_15px_var(--accent)]"
                 >
-                  v1.0.0
+                  v0.1.9
                 </motion.div>
                 <DownloadCard 
                   os="Windows"
-                  status="Version 1.0.0 • Stable"
+                  status="Version 0.1.9 • Stable"
                   link={desktopDownloadUrl}
                   active={true}
                   icon={
