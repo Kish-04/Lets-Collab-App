@@ -1,7 +1,6 @@
 node_modules
 .git
 .next
-public/downloads/*.exe
 server/node_modules
 chrome
 dist
