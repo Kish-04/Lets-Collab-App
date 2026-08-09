@@ -10,7 +10,7 @@ import { HeroCanvas } from '@/components/landing/HeroCanvas'
 import { ShowcaseShaderMask } from '@/components/landing/ShowcaseShaderMask'
 import Link from 'next/link'
 
-const desktopDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.9.exe"
+const desktopDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.exe"
 
 export default function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null)
