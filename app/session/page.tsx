@@ -38,7 +38,7 @@ import { FederatedFeatures, FederatedLearner } from "@/lib/FederatedLearner"
 
 import dynamic from 'next/dynamic'
 const PetCanvas = dynamic(() => import('@/components/ircp/pet/PetCanvas').then(m => m.PetCanvas), { ssr: false })
-const StandaloneCanvas = dynamic(() => import('@/components/ircp/StandaloneCanvas').then(m => m.StandaloneCanvas), { ssr: false })
+const StandaloneCanvas = dynamic<{ peerId?: string; isHost: boolean; onClose: () => void }>(() => import('@/components/ircp/StandaloneCanvas').then(m => m.StandaloneCanvas as any), { ssr: false })
 
 import { ExamHostDashboard, ExamQuestion } from '@/components/ircp/exam/ExamHostDashboard'
 import { ExamControllerOverlay } from '@/components/ircp/exam/ExamControllerOverlay'
