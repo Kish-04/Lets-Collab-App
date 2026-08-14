@@ -92,7 +92,7 @@ export default function ThemeCustomizer() {
   if (pathname?.startsWith('/pet')) return null;
 
   return (
-    <div className="fixed bottom-5 right-5 z-[90] font-sans">
+    <div className="fixed bottom-5 right-5 z-[170] font-sans">
       {open && (
         <section className="absolute bottom-16 right-0 w-[390px] max-h-[min(78vh,700px)] overflow-y-auto rounded-[var(--app-radius)] border border-[var(--border)] bg-[rgba(var(--surface-rgb),var(--surface-alpha))] shadow-2xl backdrop-blur-xl">
           <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-[var(--border)] bg-[rgba(var(--surface-rgb),0.96)] p-5 backdrop-blur-xl">
@@ -143,7 +143,7 @@ export default function ThemeCustomizer() {
                     </div>
                     <div className="mb-2 flex gap-1">
                       {["background", "surface", "accent"].map((key) => (
-                        <span key={key} className="h-3 w-3 rounded-full border border-white/10" style={{ background: APPEARANCE_PRESETS[preset.id][key as "background" | "surface" | "accent"] }} />
+                        <span key={key} className="h-3 w-3 rounded-full border border-[var(--border)]/60" style={{ background: APPEARANCE_PRESETS[preset.id][key as "background" | "surface" | "accent"] }} />
                       ))}
                     </div>
                     <p className="text-[10px] text-[var(--text-secondary)]">{preset.description}</p>

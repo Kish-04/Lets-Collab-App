@@ -33,40 +33,43 @@ export default function LoginScreen() {
   };
 
   return (
-    <View className="flex-1 justify-center items-center bg-background px-6">
-      <View className="w-full max-w-sm p-8 bg-card rounded-3xl border border-white/10">
-        <Text className="text-3xl font-black text-white text-center mb-2">Admin Panel</Text>
-        <Text className="text-zinc-400 text-center mb-8">Sign in to Let's Collab</Text>
+    <View className="flex-1 justify-center items-center px-6" style={{ backgroundColor: '#0a101f' }}>
+      <View className="w-full max-w-md p-8 bg-[#111827] rounded-xl border border-white/10 shadow-2xl">
+        <Text className="text-blue-500 text-xs font-bold tracking-widest mb-2 uppercase">Administrator Sign In</Text>
+        <Text className="text-3xl font-bold text-white mb-2">Welcome back</Text>
+        <Text className="text-gray-400 text-sm mb-8">Use an administrator account to continue.</Text>
 
-        {error ? <Text className="text-red-500 text-center mb-4">{error}</Text> : null}
+        {error ? <Text className="text-red-500 text-sm mb-4">{error}</Text> : null}
 
+        <Text className="text-gray-400 text-xs font-medium mb-2 ml-1">Administrator ID</Text>
         <TextInput
-          className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white mb-4"
-          placeholder="Admin Email"
-          placeholderTextColor="#71717a"
+          className="w-full h-12 bg-[#ebf3ff] border-0 rounded-md px-4 text-gray-900 font-medium mb-6"
+          placeholder="admin@letscollab.com"
+          placeholderTextColor="#9ca3af"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
         />
         
+        <Text className="text-gray-400 text-xs font-medium mb-2 ml-1">Password</Text>
         <TextInput
-          className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white mb-6"
-          placeholder="Password"
-          placeholderTextColor="#71717a"
+          className="w-full h-12 bg-[#ebf3ff] border-0 rounded-md px-4 text-gray-900 font-medium mb-8"
+          placeholder="••••••••"
+          placeholderTextColor="#9ca3af"
           secureTextEntry
           value={password}
           onChangeText={setPassword}
         />
 
         <TouchableOpacity 
-          className="w-full h-12 bg-accent rounded-xl justify-center items-center"
+          className="w-full h-12 bg-blue-500 rounded-md justify-center items-center shadow-lg"
           onPress={handleLogin}
           disabled={loading}
         >
           {loading ? (
-            <ActivityIndicator color="#000" />
+            <ActivityIndicator color="#fff" />
           ) : (
-            <Text className="text-black font-black text-lg">Login</Text>
+            <Text className="text-white font-bold text-base">Enter Console</Text>
           )}
         </TouchableOpacity>
       </View>

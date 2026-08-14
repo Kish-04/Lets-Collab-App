@@ -9,6 +9,7 @@ export interface ExamQuestion {
     language?: string;
     starterCode?: string;
     voicePrompt?: string;
+    answerKey?: string;
 }
 
 const defaultSnippets: Record<string, string> = {
@@ -39,6 +40,9 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
     const [isRunning, setIsRunning] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [voicePrompt, setVoicePrompt] = useState<string | null>(null);
+    const [sentQuestions, setSentQuestions] = useState<ExamQuestion[]>([]);
+    const [answerKey, setAnswerKey] = useState<string>('');
+    const [currentReviewIndex, setCurrentReviewIndex] = useState<number>(0);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
 
@@ -122,7 +126,8 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
             id: Math.random().toString(36).substring(7),
             type: questionType,
             prompt: prompt,
-            voicePrompt: voicePrompt || undefined
+            voicePrompt: voicePrompt || undefined,
+            answerKey: answerKey.trim() || undefined
         };
         if (questionType === 'mc' || questionType === 'poll') {
             q.options = options.filter(o => o.trim());
@@ -132,30 +137,35 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
             q.starterCode = starterCode;
         }
         onPushQuestion(q);
+        setSentQuestions(prev => {
+            setCurrentReviewIndex(prev.length);
+            return [...prev, q];
+        });
         setPrompt('');
         setVoicePrompt(null);
         setOptions(['', '']);
+        setAnswerKey('');
     };
 
     return (
-        <div className="w-full h-full flex flex-col p-6 font-sans text-white/90">
+        <div className="w-full h-full flex flex-col p-6 font-sans text-[var(--text-primary)] overflow-y-auto overflow-x-hidden custom-scrollbar">
             <h2 className="text-2xl font-black mb-6 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent tracking-tight">Exam Dashboard</h2>
             
-            <div className="flex flex-col gap-4 mb-8 p-5 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md shadow-inner">
-                <h3 className="font-bold text-sm tracking-wide text-white/70 uppercase">Create Question</h3>
+            <div className="flex flex-col gap-4 mb-8 p-5 bg-[var(--elevated)] border border-[var(--border)]/60 rounded-2xl backdrop-blur-md shadow-inner">
+                <h3 className="font-bold text-sm tracking-wide text-[var(--text-primary)] uppercase">Create Question</h3>
                 
                 <div className="relative">
                     <select 
                         value={questionType}
                         onChange={(e) => setQuestionType(e.target.value as any)}
-                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
+                        className="w-full bg-[var(--bg)]/70 border border-[var(--border)]/60 rounded-xl px-4 py-2.5 text-sm text-[var(--text-primary)] appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
                     >
                         <option value="freeform">Freeform (Text/Voice)</option>
                         <option value="mc">Multiple Choice</option>
                         <option value="poll">Live Poll</option>
                         <option value="code">Coding</option>
                     </select>
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-white/50">▼</div>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-primary)]">▼</div>
                 </div>
 
                 <div className="relative">
@@ -163,11 +173,11 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
                         value={prompt}
                         onChange={(e) => setPrompt(e.target.value)}
                         placeholder="Type your question..."
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-4 pb-16 text-sm min-h-[100px] text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all resize-none shadow-inner"
+                        className="w-full bg-[var(--bg)]/70 border border-[var(--border)]/60 rounded-xl p-4 pb-16 text-sm min-h-[100px] text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all resize-none shadow-inner"
                     />
                     
                     {voicePrompt && (
-                        <div className="absolute bottom-12 left-4 right-4 flex items-center gap-2 bg-black/60 p-1.5 rounded-lg border border-white/10 backdrop-blur-md">
+                        <div className="absolute bottom-12 left-4 right-4 flex items-center gap-2 bg-[var(--bg)]/60 p-1.5 rounded-lg border border-[var(--border)]/60 backdrop-blur-md">
                             <audio src={voicePrompt} controls className="h-6 w-full" />
                             <button onClick={() => setVoicePrompt(null)} className="text-red-400 hover:text-red-300 px-2 font-bold shrink-0">×</button>
                         </div>
@@ -175,7 +185,7 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
 
                     <button 
                         onClick={toggleRecording}
-                        className={`absolute bottom-2 right-2 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-2 transition-all ${isRecording ? 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.2)] animate-pulse' : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10 hover:text-white'}`}
+                        className={`absolute bottom-2 right-2 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-2 transition-all ${isRecording ? 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.2)] animate-pulse' : 'bg-[var(--elevated)] text-[var(--text-primary)] border border-[var(--border)]/60 hover:bg-[var(--elevated)]/80 hover:text-[var(--text-primary)]'}`}
                     >
                         {isRecording ? (
                             <><span className="w-2 h-2 rounded-full bg-red-400" /> Recording...</>
@@ -198,7 +208,7 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
                                     setOptions(newOpts);
                                 }}
                                 placeholder={`Option ${i + 1}`}
-                                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                                className="w-full bg-[var(--bg)]/70 border border-[var(--border)]/60 rounded-xl px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                             />
                         ))}
                         <button 
@@ -216,7 +226,7 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
                             <select 
                                 value={language}
                                 onChange={handleLanguageChange}
-                                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
+                                className="w-full bg-[var(--bg)]/70 border border-[var(--border)]/60 rounded-xl px-4 py-2.5 text-sm text-[var(--text-primary)] appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
                             >
                                 <option value="python">Python</option>
                                 <option value="javascript">JavaScript</option>
@@ -228,10 +238,10 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
                                 <option value="go">Go</option>
                                 <option value="html">HTML</option>
                             </select>
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-white/50">▼</div>
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-primary)]">▼</div>
                         </div>
                         
-                        <div className="h-64 border border-white/10 rounded-xl overflow-hidden shadow-inner bg-black/60 relative">
+                        <div className="h-64 border border-[var(--border)]/60 rounded-xl overflow-hidden shadow-inner bg-[var(--bg)]/60 relative">
                             <MonacoEditor
                                 height="100%"
                                 language={language}
@@ -253,58 +263,117 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
                         </div>
 
                         {hostOutput && (
-                            <div className="p-3 bg-black/80 border border-white/5 rounded-xl font-mono text-[11px] text-green-400/90 whitespace-pre-wrap max-h-32 overflow-y-auto shadow-inner custom-scrollbar">
+                            <div className="p-3 bg-[var(--bg)]/80 border border-[var(--border)] rounded-xl font-mono text-[11px] text-green-400/90 whitespace-pre-wrap max-h-32 overflow-y-auto shadow-inner custom-scrollbar">
                                 {hostOutput}
                             </div>
                         )}
                     </div>
                 )}
 
+                {questionType !== 'poll' && (
+                    <div className="mt-2">
+                        <input 
+                            type="text"
+                            value={answerKey}
+                            onChange={(e) => setAnswerKey(e.target.value)}
+                            placeholder="Correct Answer (Optional) - Used for Auto-Grading"
+                            className="w-full bg-[var(--bg)]/70 border border-[var(--border)]/60 rounded-xl px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-green-500/50 transition-all"
+                        />
+                    </div>
+                )}
                 <button 
                     onClick={handleSend}
-                    className="mt-2 w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-3 rounded-xl shadow-lg hover:shadow-blue-500/25 hover:from-blue-500 hover:to-indigo-500 transition-all active:scale-[0.98]"
+                    className="mt-2 w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-[var(--text-primary)] font-bold py-3 rounded-xl shadow-lg hover:shadow-blue-500/25 hover:from-blue-500 hover:to-indigo-500 transition-all active:scale-[0.98]"
                 >
                     Push to Controllers
                 </button>
             </div>
 
-            <h3 className="font-bold text-sm tracking-wide text-white/70 uppercase mb-4">Live Responses</h3>
-            <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col gap-4 pr-2 custom-scrollbar">
-                {Object.entries(liveAnswers).map(([qId, userAnswers]) => (
-                    <div key={qId} className="bg-white/5 border border-white/10 rounded-2xl p-4 shadow-sm">
-                        <div className="text-white/40 mb-3 font-mono text-[10px] tracking-wider uppercase">Question ID: {qId.slice(-6)}</div>
-                        
-                        <div className="flex flex-col gap-3">
-                            {Object.entries(userAnswers).map(([controllerId, ans]) => (
-                                <div key={controllerId} className="bg-black/40 border border-white/5 p-3 rounded-xl">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <span className="font-semibold text-sm text-blue-300">{ans.controllerName}</span>
-                                        <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${ans.isFinal ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
-                                            {ans.isFinal ? 'Submitted' : 'Drafting'}
-                                        </span>
-                                    </div>
-                                    <div className="text-sm text-white/90 break-words whitespace-pre-wrap">{ans.text || (ans.options && ans.options.join(', '))}</div>
-                                    
-                                    {ans.audio && (
-                                        <div className="mt-3 bg-black/40 p-1.5 rounded-lg border border-white/5 shadow-inner">
-                                            <audio src={ans.audio} controls className="h-8 w-full" />
-                                        </div>
-                                    )}
+            <h3 className="font-bold text-sm tracking-wide text-[var(--text-primary)] uppercase mb-4">Live Responses</h3>
+            <div className="flex flex-col gap-4 pr-2">
+                {sentQuestions.length === 0 ? (
+                    <div className="h-32 flex items-center justify-center text-[var(--text-primary)] text-sm italic bg-[var(--elevated)] rounded-2xl border border-[var(--border)] border-dashed">
+                        Waiting for active questions...
+                    </div>
+                ) : (
+                    <>
+                        <div className="flex items-center justify-between bg-[var(--elevated)] border border-[var(--border)]/60 rounded-xl p-3 shadow-inner">
+                            <button 
+                                onClick={() => setCurrentReviewIndex(Math.max(0, currentReviewIndex - 1))}
+                                disabled={currentReviewIndex === 0}
+                                className="px-3 py-1 bg-[var(--bg)] text-[var(--text-primary)] rounded-lg disabled:opacity-50 border border-[var(--border)]/60 hover:bg-[var(--elevated)] transition-colors text-sm font-bold"
+                            >
+                                ← Prev
+                            </button>
+                            <span className="text-sm font-medium text-[var(--text-primary)]">
+                                Question {currentReviewIndex + 1} of {sentQuestions.length}
+                            </span>
+                            <button 
+                                onClick={() => setCurrentReviewIndex(Math.min(sentQuestions.length - 1, currentReviewIndex + 1))}
+                                disabled={currentReviewIndex === sentQuestions.length - 1}
+                                className="px-3 py-1 bg-[var(--bg)] text-[var(--text-primary)] rounded-lg disabled:opacity-50 border border-[var(--border)]/60 hover:bg-[var(--elevated)] transition-colors text-sm font-bold"
+                            >
+                                Next →
+                            </button>
+                        </div>
 
-                                    {ans.output && (
-                                        <div className="mt-3 p-2 bg-black/60 border border-white/5 text-green-400 font-mono text-[11px] rounded-lg shadow-inner">
-                                            {ans.output}
+                        {(() => {
+                            const qObj = sentQuestions[currentReviewIndex];
+                            if (!qObj) return null;
+                            const userAnswers = liveAnswers[qObj.id] || {};
+                            const hasAnswers = Object.keys(userAnswers).length > 0;
+                            
+                            return (
+                                <div key={qObj.id} className="bg-[var(--elevated)] border border-[var(--border)]/60 rounded-2xl p-4 shadow-sm">
+                                    <div className="text-[var(--text-primary)] mb-3 font-mono text-[10px] tracking-wider uppercase">
+                                        Question: {qObj.prompt}
+                                    </div>
+                                    
+                                    {!hasAnswers ? (
+                                        <div className="text-sm text-[var(--text-secondary)] italic text-center py-4">No submissions yet.</div>
+                                    ) : (
+                                        <div className="flex flex-col gap-3">
+                                            {Object.entries(userAnswers).map(([controllerId, ans]) => (
+                                                <div key={controllerId} className="bg-[var(--bg)]/70 border border-[var(--border)] p-3 rounded-xl">
+                                                    <div className="flex justify-between items-center mb-2">
+                                                        <span className="font-semibold text-sm text-blue-300">{ans.controllerName}</span>
+                                                        <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${ans.isFinal ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                                                            {ans.isFinal ? 'Submitted' : 'Drafting'}
+                                                        </span>
+                                                    </div>
+                                                    {qObj?.type === 'code' ? (
+                                                        <div className="h-48 border border-[var(--border)]/60 rounded-xl overflow-hidden shadow-inner bg-[var(--bg)]/60 mt-2">
+                                                            <MonacoEditor
+                                                                height="100%"
+                                                                language={qObj.language || 'javascript'}
+                                                                theme="vs-dark"
+                                                                value={ans.text || ''}
+                                                                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, padding: { top: 12 } }}
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-sm text-[var(--text-primary)] break-words whitespace-pre-wrap">{ans.text || (ans.options && ans.options.join(', '))}</div>
+                                                    )}
+                                                    
+                                                    {ans.audio && (
+                                                        <div className="mt-3 bg-[var(--bg)]/70 p-1.5 rounded-lg border border-[var(--border)] shadow-inner">
+                                                            <audio src={ans.audio} controls className="h-8 w-full" />
+                                                        </div>
+                                                    )}
+
+                                                    {ans.output && (
+                                                        <div className="mt-3 p-2 bg-[var(--bg)]/60 border border-[var(--border)] text-green-400 font-mono text-[11px] rounded-lg shadow-inner">
+                                                            {ans.output}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-                ))}
-                {Object.keys(liveAnswers).length === 0 && (
-                    <div className="h-32 flex items-center justify-center text-white/30 text-sm italic bg-white/5 rounded-2xl border border-white/5 border-dashed">
-                        Waiting for active questions...
-                    </div>
+                            );
+                        })()}
+                    </>
                 )}
             </div>
             <style dangerouslySetInnerHTML={{__html: `

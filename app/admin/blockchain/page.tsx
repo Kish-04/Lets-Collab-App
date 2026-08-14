@@ -29,18 +29,18 @@ type ChainData = {
 }
 
 // ── Event type styling ────────────────────────────────────────────────────────
-const eventStyles: Record<string, { bg: string; text: string }> = {
-  ROOM_CREATED: { bg: "bg-[var(--emerald)]/10", text: "text-[var(--emerald)]" },
-  SESSION_START: { bg: "bg-[var(--emerald)]/10", text: "text-[var(--emerald)]" },
-  USER_JOINED: { bg: "bg-[var(--violet)]/10", text: "text-[var(--violet)]" },
-  JOIN: { bg: "bg-[var(--violet)]/10", text: "text-[var(--violet)]" },
-  PERMISSION_CHANGE: { bg: "bg-[var(--accent)]/10", text: "text-[var(--accent)]" },
-  KILL_SWITCH: { bg: "bg-[var(--red)]/10", text: "text-[var(--red)]" },
-  SESSION_END: { bg: "bg-[var(--text-dim)]/10", text: "text-[var(--text-dim)]" },
-  ANTICHEAT_ALERT: { bg: "bg-[var(--amber)]/10", text: "text-[var(--amber)]" },
+const eventStyles: Record<string, { bg: string; text: string; shadow: string }> = {
+  ROOM_CREATED: { bg: "bg-[var(--emerald)]/20", text: "text-[var(--emerald)]", shadow: "drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" },
+  SESSION_START: { bg: "bg-[var(--emerald)]/20", text: "text-[var(--emerald)]", shadow: "drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" },
+  USER_JOINED: { bg: "bg-[var(--violet)]/20", text: "text-[var(--violet)]", shadow: "drop-shadow-[0_0_5px_rgba(139,92,246,0.5)]" },
+  JOIN: { bg: "bg-[var(--violet)]/20", text: "text-[var(--violet)]", shadow: "drop-shadow-[0_0_5px_rgba(139,92,246,0.5)]" },
+  PERMISSION_CHANGE: { bg: "bg-[var(--accent)]/20", text: "text-[var(--accent)]", shadow: "drop-shadow-[0_0_5px_rgba(0,255,255,0.5)]" },
+  KILL_SWITCH: { bg: "bg-[var(--red)]/20", text: "text-[var(--red)]", shadow: "drop-shadow-[0_0_5px_rgba(244,63,94,0.5)]" },
+  SESSION_END: { bg: "bg-[var(--elevated)]/80", text: "text-[var(--text-primary)]/", shadow: "" },
+  ANTICHEAT_ALERT: { bg: "bg-[var(--amber)]/20", text: "text-[var(--amber)]", shadow: "drop-shadow-[0_0_5px_rgba(251,191,36,0.5)]" },
 }
 function getEventStyle(type: string) {
-  return eventStyles[type] || { bg: "bg-[var(--border)]/30", text: "text-[var(--text-secondary)]" }
+  return eventStyles[type] || { bg: "bg-[var(--elevated)]/80", text: "text-[var(--text-primary)]/", shadow: "" }
 }
 
 function formatTs(unix: number): string {
@@ -119,20 +119,20 @@ export default function BlockchainPage() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <h1 className="font-display font-bold text-2xl text-[var(--text-primary)] flex items-center gap-3">
-            <Link2 className="w-6 h-6 text-[var(--violet)]" />
+            <Link2 className="w-6 h-6 text-[var(--violet)] drop-shadow-[0_0_10px_rgba(139,92,246,0.8)]" />
             Blockchain Audit Trail
           </h1>
-          <span className="px-2 py-1 rounded bg-[var(--violet)]/10 border border-[var(--violet)] font-mono text-xs text-[var(--violet)]">
+          <span className="px-2 py-1 rounded-md bg-[var(--violet)]/20 border border-[var(--violet)]/40 font-mono text-xs text-[var(--violet)] drop-shadow-[0_0_5px_rgba(139,92,246,0.3)] shadow-[0_0_15px_rgba(139,92,246,0.2)_inset]">
             SEPOLIA TESTNET
           </span>
           {/* Live / offline indicator */}
           {chainData && (
             chainData.active ? (
-              <span className="flex items-center gap-1.5 text-xs text-[var(--emerald)] font-mono">
+              <span className="flex items-center gap-1.5 text-xs text-[var(--emerald)] font-mono drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]">
                 <Wifi className="w-3.5 h-3.5" /> CONNECTED
               </span>
             ) : (
-              <span className="flex items-center gap-1.5 text-xs text-[var(--amber)] font-mono">
+              <span className="flex items-center gap-1.5 text-xs text-[var(--amber)] font-mono drop-shadow-[0_0_5px_rgba(251,191,36,0.5)]">
                 <WifiOff className="w-3.5 h-3.5" /> MOCK MODE
               </span>
             )
@@ -142,7 +142,7 @@ export default function BlockchainPage() {
           onClick={handleSync}
           disabled={syncing || loading}
           className={cn(
-            "flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-bright)] transition-colors",
+            "flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/60 backdrop-blur-sm text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-bright)]/80 transition-all",
             (syncing || loading) && "opacity-50 cursor-not-allowed"
           )}
         >
@@ -162,7 +162,7 @@ export default function BlockchainPage() {
           label="Current Block"
           value={loading ? "…" : chainData?.currentBlock ? `#${chainData.currentBlock.toLocaleString()}` : "—"}
         />
-        <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg">
+        <div className="p-5 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl shadow-[0_4px_16px_rgba(0,0,0,0.1)] hover:bg-[var(--surface)]/40 hover:border-[var(--border-bright)] transition-all duration-300">
           <span className="block font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)] mb-2">
             Contract Address
           </span>
@@ -184,14 +184,14 @@ export default function BlockchainPage() {
 
       {/* Mock mode warning */}
       {!loading && chainData && !chainData.active && (
-        <div className="mb-6 px-4 py-3 rounded-lg border border-[var(--amber)]/40 bg-[var(--amber)]/5 text-sm text-[var(--amber)] font-mono">
+        <div className="mb-6 px-4 py-3 rounded-xl border border-[var(--amber)]/40 bg-[var(--amber)]/10 text-sm text-[var(--amber)] font-mono backdrop-blur-md shadow-[0_0_15px_rgba(251,191,36,0.15)]">
           ⚠ Hardhat node not detected — showing mock tx hashes. Start Hardhat to enable real on-chain logging.
         </div>
       )}
 
       {/* Error banner */}
       {chainData?.error && (
-        <div className="mb-6 px-4 py-3 rounded-lg border border-[var(--red)]/40 bg-[var(--red)]/5 text-sm text-[var(--red)] font-mono">
+        <div className="mb-6 px-4 py-3 rounded-xl border border-[var(--red)]/40 bg-[var(--red)]/10 text-sm text-[var(--red)] font-mono backdrop-blur-md shadow-[0_0_15px_rgba(244,63,94,0.15)]">
           Error: {chainData.error}
         </div>
       )}
@@ -202,10 +202,10 @@ export default function BlockchainPage() {
           <button
             onClick={() => setFilterType("all")}
             className={cn(
-              "px-3 py-1 rounded-full text-xs font-mono uppercase transition-colors",
+              "px-4 py-1.5 rounded-full text-xs font-mono uppercase transition-all duration-300 shadow-md",
               filterType === "all"
-                ? "bg-[var(--accent)] text-black"
-                : "bg-[var(--elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                ? "bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/50 drop-shadow-[0_0_5px_rgba(0,255,255,0.5)]"
+                : "bg-[var(--elevated)] border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--elevated)]/80"
             )}
           >
             All ({logs.length})
@@ -218,10 +218,10 @@ export default function BlockchainPage() {
                 key={type}
                 onClick={() => setFilterType(type)}
                 className={cn(
-                  "px-3 py-1 rounded-full text-xs font-mono uppercase transition-colors",
+                  "px-4 py-1.5 rounded-full text-xs font-mono uppercase transition-all duration-300 border shadow-md",
                   filterType === type
-                    ? `${style.bg} ${style.text} ring-1 ring-current`
-                    : "bg-[var(--elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    ? `${style.bg} ${style.text} ${style.shadow} border-current ring-1 ring-current`
+                    : "bg-[var(--elevated)] border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--elevated)]/80"
                 )}
               >
                 {type} ({count})
@@ -232,14 +232,14 @@ export default function BlockchainPage() {
       )}
 
       {/* Logs Table */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+      <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
         {loading ? (
-          <div className="p-12 text-center">
-            <RefreshCw className="w-6 h-6 text-[var(--text-dim)] animate-spin mx-auto mb-3" />
+          <div className="p-16 text-center">
+            <RefreshCw className="w-8 h-8 text-[var(--accent)] animate-spin mx-auto mb-4 drop-shadow-[0_0_10px_rgba(0,255,255,0.5)]" />
             <p className="text-sm text-[var(--text-dim)] font-mono">Querying blockchain…</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center text-[var(--text-dim)] font-mono text-sm">
+          <div className="p-16 text-center text-[var(--text-dim)] font-mono text-sm">
             {logs.length === 0
               ? "No transactions yet — events will appear as sessions are created"
               : "No transactions match this filter"}
@@ -247,9 +247,9 @@ export default function BlockchainPage() {
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-[var(--border)]">
+              <tr className="border-b border-[var(--border)]/60 bg-[var(--elevated)]/60">
                 {["Block #", "TX Hash", "Session", "Event Type", "Time", "Data"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">
+                  <th key={h} className="px-5 py-4 text-left font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">
                     {h}
                   </th>
                 ))}
@@ -266,29 +266,29 @@ export default function BlockchainPage() {
                       onClick={() => setExpandedRow(isExpanded ? null : i)}
                       className="border-b border-[var(--border)] cursor-pointer transition-colors hover:bg-[var(--elevated)]"
                     >
-                      <td className="px-4 py-3 font-mono text-sm text-[var(--text-secondary)]">
+                      <td className="px-5 py-4 font-mono text-sm text-[var(--text-secondary)] font-semibold">
                         {log.blockNumber ? log.blockNumber.toLocaleString() : "—"}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-5 py-4">
                         <TxHash hash={log.txHash} />
                       </td>
-                      <td className="px-4 py-3 font-mono text-sm text-[var(--accent)]">
+                      <td className="px-5 py-4 font-mono text-sm text-[var(--text-primary)] font-medium">
                         {log.sessionId
                           ? `${log.sessionId.slice(0, 4)}·${log.sessionId.slice(4)}`
                           : "—"}
                       </td>
-                      <td className="px-4 py-3">
-                        <span className={cn("px-2 py-0.5 rounded text-xs font-mono", style.bg, style.text)}>
+                      <td className="px-5 py-4">
+                        <span className={cn("px-2.5 py-1 rounded-md text-xs font-mono border border-current/20", style.bg, style.text, style.shadow)}>
                           {log.eventType}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-mono text-sm text-[var(--text-dim)]">
-                        <div>{formatTs(log.timestamp)}</div>
-                        <div className="text-[10px] text-[var(--text-dim)]/60">{formatDate(log.timestamp)}</div>
+                      <td className="px-5 py-4 font-mono text-sm text-[var(--text-dim)]">
+                        <div className="text-[var(--text-primary)]/">{formatTs(log.timestamp)}</div>
+                        <div className="text-[10px] mt-1">{formatDate(log.timestamp)}</div>
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-5 py-4 text-center">
                         <ChevronDown className={cn(
-                          "w-4 h-4 text-[var(--text-dim)] mx-auto transition-transform",
+                          "w-4 h-4 text-[var(--text-primary)]/ mx-auto transition-transform",
                           isExpanded && "rotate-180"
                         )} />
                       </td>
@@ -296,11 +296,11 @@ export default function BlockchainPage() {
 
                     {/* Expanded row — full log details */}
                     {isExpanded && (
-                      <tr className="border-b border-[var(--border)] bg-[var(--bg)]">
-                        <td colSpan={6} className="p-4">
-                          <div className="grid grid-cols-2 gap-4">
+                      <tr className="border-b border-[var(--border)]/60 bg-[var(--bg)]/70 backdrop-blur-md shadow-inner">
+                        <td colSpan={6} className="p-6">
+                          <div className="grid grid-cols-2 gap-6">
                             {/* Left: structured fields */}
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                               {[
                                 ["Session ID", log.sessionId || "—"],
                                 ["Host ID", log.hostId || "—"],
@@ -308,22 +308,22 @@ export default function BlockchainPage() {
                                 ["Block", log.blockNumber?.toLocaleString() || "—"],
                                 ["Unix Timestamp", log.timestamp?.toString() || "—"],
                               ].map(([label, val]) => (
-                                <div key={label} className="flex gap-2 text-xs font-mono">
-                                  <span className="text-[var(--text-dim)] w-28 shrink-0">{label}</span>
-                                  <span className="text-[var(--text-secondary)] truncate">{val}</span>
+                                <div key={label} className="flex gap-2 text-xs font-mono items-center bg-[var(--elevated)]/60 p-2 rounded-lg border border-[var(--border)]">
+                                  <span className="text-[var(--text-dim)] w-32 shrink-0">{label}</span>
+                                  <span className="text-[var(--text-primary)] truncate font-medium">{val}</span>
                                 </div>
                               ))}
                             </div>
 
                             {/* Right: data hash */}
-                            <div className="p-3 bg-[var(--surface)] rounded-lg border border-[var(--border)]">
-                              <p className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)] mb-2">
-                                Data Hash (keccak256)
+                            <div className="p-4 bg-[var(--surface)]/30 rounded-xl border border-[var(--border)]/60 backdrop-blur-sm shadow-[0_4px_16px_rgba(0,0,0,0.2)]">
+                              <p className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)] mb-3 flex items-center gap-2">
+                                <Link2 className="w-3 h-3 text-[var(--violet)]" /> Data Hash (keccak256)
                               </p>
-                              <p className="font-mono text-xs text-[var(--violet)] break-all leading-relaxed">
+                              <p className="font-mono text-sm text-[var(--violet)] break-all leading-relaxed drop-shadow-[0_0_8px_rgba(139,92,246,0.4)]">
                                 {log.dataHash || "—"}
                               </p>
-                              <p className="font-mono text-[10px] text-[var(--text-dim)] mt-2">
+                              <p className="font-mono text-[10px] text-[var(--text-primary)]/ mt-4 border-t border-[var(--border)]/60 pt-3">
                                 Hash of the original event payload — immutable proof of data integrity.
                               </p>
                             </div>
@@ -340,7 +340,7 @@ export default function BlockchainPage() {
       </div>
 
       {/* Footer */}
-      <p className="text-center font-mono text-[10px] text-[var(--text-dim)] mt-6">
+      <p className="text-center font-mono text-[10px] text-[var(--text-dim)] mt-6 bg-[var(--elevated)]/60 inline-block px-4 py-2 rounded-full border border-[var(--border)] shadow-inner">
         All session events are hashed with keccak256 and permanently recorded on-chain. Data cannot be altered.
       </p>
     </div>

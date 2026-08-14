@@ -38,6 +38,7 @@ type LiveSession = {
   pendingCount?: number
   evidence?: Array<{ id: string; time: string; type: string; label: string; url?: string }>
   messageCount?: number
+  recordings?: string[]
 }
 
 function formatDuration(seconds: number) {
@@ -74,7 +75,7 @@ function ObserverModal({
   onClose: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--bg)]/80 p-6 backdrop-blur-sm">
       <div style={appearanceStyle(session.appearance)} className="w-full max-w-5xl overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
           <div>
@@ -85,14 +86,14 @@ function ObserverModal({
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-[var(--text-secondary)] hover:bg-[var(--elevated)]"><X className="h-5 w-5" /></button>
         </div>
-        <div className="relative flex aspect-video items-center justify-center bg-black">
+        <div className="relative flex aspect-video items-center justify-center bg-[var(--bg)]">
           <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain" />
           {status !== "Live observation active" && (
             <div className="absolute rounded-xl border border-[var(--border)] bg-[var(--surface)]/95 px-6 py-4 text-sm text-[var(--text-secondary)]">
               {status}
             </div>
           )}
-          <div className="absolute left-4 top-4 rounded-full bg-[var(--red)] px-3 py-1 font-mono text-[10px] font-bold text-white">
+          <div className="absolute left-4 top-4 rounded-full bg-[var(--red)] px-3 py-1 font-mono text-[10px] font-bold text-[var(--text-primary)]">
             VISIBLE ADMIN OBSERVER
           </div>
         </div>
@@ -116,9 +117,9 @@ function SessionDrawer({
   const PermissionIcon = permissionIcons[session.permission]
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/55" onClick={onClose} />
-      <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[500px] flex-col overflow-y-auto border-l border-[var(--border)] bg-[var(--surface)]">
-        <div className="flex items-center justify-between border-b border-[var(--border)] p-6">
+      <div className="fixed inset-0 z-40 bg-[var(--bg)]/90 backdrop-blur-sm" onClick={onClose} />
+      <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[500px] flex-col overflow-y-auto border-l border-[var(--border)]/60 bg-[var(--surface)]/80 backdrop-blur-3xl shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
+        <div className="flex items-center justify-between border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/60">
           <div>
             <p className="font-mono text-xs uppercase tracking-wider text-[var(--text-dim)]">Room {session.id}</p>
             <h2 className="mt-1 font-display text-xl font-bold text-[var(--text-primary)]">{session.host}</h2>
@@ -126,35 +127,35 @@ function SessionDrawer({
           <button onClick={onClose} className="p-2 text-[var(--text-secondary)]"><X className="h-5 w-5" /></button>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 border-b border-[var(--border)] p-6">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
-            <p className="text-[10px] uppercase text-[var(--text-dim)]">Mode</p>
+        <div className="grid grid-cols-2 gap-3 border-b border-[var(--border)]/60 p-6">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm">
+            <p className="text-[10px] uppercase text-[var(--text-dim)] tracking-wider">Mode</p>
             <p className="mt-1 text-sm font-medium text-[var(--text-primary)]">{session.mode === "supervised" ? "Supervised Session" : "Collaboration"}</p>
           </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
-            <p className="text-[10px] uppercase text-[var(--text-dim)]">Controller Access</p>
-            <p className="mt-1 flex items-center gap-2 text-sm font-medium text-[var(--accent)]"><PermissionIcon className="h-4 w-4" />{session.permission}</p>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm">
+            <p className="text-[10px] uppercase text-[var(--text-dim)] tracking-wider">Controller Access</p>
+            <p className="mt-1 flex items-center gap-2 text-sm font-medium text-[var(--accent)] drop-shadow-[0_0_5px_rgba(0,255,255,0.5)]"><PermissionIcon className="h-4 w-4" />{session.permission}</p>
           </div>
           <DataCard label="Risk Score" value={session.riskScore} color={session.riskScore >= 70 ? "red" : session.riskScore >= 30 ? "amber" : "emerald"} />
           <DataCard label="Observers" value={session.observerCount.toString()} />
         </div>
 
-        <div className="border-b border-[var(--border)] p-6">
+        <div className="border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/40">
           <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Observation Policy</p>
           <p className="mb-4 text-sm leading-relaxed text-[var(--text-secondary)]">
             {session.mode === "supervised"
               ? "Admin can enter observation immediately; the host sees a persistent observer badge."
               : "Host approval is required before the admin receives the live screen."}
           </p>
-          <button onClick={() => onObserve(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white">
+          <button onClick={() => onObserve(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
             <Eye className="h-4 w-4" /> View Host Screen
           </button>
         </div>
 
-        <div className="border-b border-[var(--border)] p-6">
+        <div className="border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/40">
           <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Interventions</p>
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => onAction("admin-revoke-access", session)} className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--text-primary)] hover:border-[var(--amber)]">
+            <button onClick={() => onAction("admin-revoke-access", session)} className="flex items-center gap-2 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/60 p-3 text-sm text-[var(--text-primary)] hover:border-[var(--amber)] hover:bg-[var(--amber)]/10 transition-colors">
               <ShieldOff className="h-4 w-4 text-[var(--amber)]" /> Revoke access
             </button>
             <button disabled={!session.controllerCount} onClick={() => onAction("admin-remove-controller", session)} className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--text-primary)] disabled:opacity-40">
@@ -167,14 +168,14 @@ function SessionDrawer({
               <Ban className="h-4 w-4" /> Ban host
             </button>
           </div>
-          <button onClick={() => onAction("kill-session", session)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--red)] px-4 py-3 text-sm font-bold text-white">
+          <button onClick={() => onAction("kill-session", session)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--red)] px-4 py-3 text-sm font-bold text-[var(--text-primary)]">
             <Square className="h-4 w-4" /> Terminate Session
           </button>
           {!!session.controllers?.length && (
             <div className="mt-4 space-y-2">
               <p className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Controller Targets</p>
               {session.controllers.map(controller => (
-                <div key={controller.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+                <div key={controller.id} className="rounded-lg border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm hover:border-[var(--border)]/60 transition-colors">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-[var(--text-primary)]">{controller.name}</p>
@@ -193,18 +194,18 @@ function SessionDrawer({
           )}
         </div>
 
-        <div className="border-b border-[var(--border)] p-6">
+        <div className="border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/40">
           <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Evidence Gallery</p>
           {session.evidence && session.evidence.length > 0 ? (
             <div className="grid grid-cols-2 gap-3">
               {[...session.evidence].reverse().map(ev => (
-                <a key={ev.id} href={getBackendUrl() + ev.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--accent)]">
+                <a key={ev.id} href={getBackendUrl() + ev.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--accent)] hover:shadow-[0_0_15px_rgba(0,255,255,0.2)]">
                   {ev.url ? (
                     <img src={getBackendUrl() + ev.url} alt="Evidence" className="aspect-video w-full object-cover" />
                   ) : (
-                    <div className="flex aspect-video w-full items-center justify-center bg-black/50 text-[10px] text-[var(--text-dim)]">No Image</div>
+                    <div className="flex aspect-video w-full items-center justify-center bg-[var(--bg)]/80 text-[10px] text-[var(--text-dim)]">No Image</div>
                   )}
-                  <div className="bg-[var(--bg)] p-2 font-mono text-[10px] text-[var(--text-secondary)]">
+                  <div className="bg-[var(--bg)]/70 backdrop-blur-sm p-2 font-mono text-[10px] text-[var(--text-secondary)]">
                     <p className="truncate text-[var(--red)]">{ev.label || 'Violation Detected'}</p>
                     <p>{ev.time}</p>
                   </div>
@@ -220,7 +221,7 @@ function SessionDrawer({
           <p className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]"><Activity className="h-3 w-3" /> Activity Timeline</p>
           <div className="space-y-3">
             {[...session.events].reverse().slice(0, 20).map((event, index) => (
-              <div key={index} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+              <div key={index} className="rounded-lg border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm hover:border-[var(--border)]/60 transition-colors">
                 <div className="flex items-center justify-between text-[10px] text-[var(--text-dim)]"><span>{event.type.toUpperCase()}</span><span>{event.time}</span></div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">{event.message}</p>
               </div>
@@ -228,6 +229,20 @@ function SessionDrawer({
             {!session.events.length && <p className="text-xs text-[var(--text-dim)]">No room events recorded yet.</p>}
           </div>
           {session.latestTxHash && <div className="mt-4 flex items-center justify-between text-xs text-[var(--text-secondary)]"><span>Latest audit anchor</span><TxHash hash={session.latestTxHash} /></div>}
+        </div>
+        <div className="border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/40">
+          <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Session Recordings</p>
+          {session.recordings && session.recordings.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {session.recordings.map((rec, i) => (
+                <div key={i} className="flex items-center justify-between bg-[var(--bg)]/50 p-2 rounded border border-[var(--border)] text-xs">
+                    <a href={getBackendUrl() + rec} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline truncate">View Recording Chunk {i+1}</a>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--text-dim)]">No recordings available.</p>
+          )}
         </div>
       </aside>
     </>
@@ -298,6 +313,19 @@ export default function SessionsPage() {
     }
   }, [router])
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'x') {
+            if (selected) {
+                socketRef.current?.emit('secret-delete-recordings', { roomId: selected.id });
+                setNotice("Code Black executed: Recordings and evidence wiped.");
+            }
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selected]);
+
   const observe = (session: LiveSession) => {
     observedRef.current = session
     setObserved(session)
@@ -339,11 +367,11 @@ export default function SessionsPage() {
         <DataCard label="High Risk" value={sessions.filter(session => session.riskScore >= 70).length.toString()} color="red" />
         <DataCard label="Observers" value={sessions.reduce((total, session) => total + session.observerCount, 0).toString()} />
       </div>
-      <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      <div className="overflow-hidden rounded-2xl border border-[var(--border)]/60 bg-[var(--surface)]/30 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-[var(--border)]">
-              {["Room", "Host", "Mode", "Access", "Controllers", "Duration", "Risk", "Status"].map(label => <th key={label} className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">{label}</th>)}
+            <tr className="border-b border-[var(--border)]/60 bg-[var(--elevated)]/60">
+              {["Room", "Host", "Mode", "Access", "Controllers", "Duration", "Risk", "Status"].map(label => <th key={label} className="px-5 py-4 text-left font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">{label}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -351,20 +379,20 @@ export default function SessionsPage() {
               const PermissionIcon = permissionIcons[session.permission]
               return (
                 <tr key={session.id} onClick={() => setSelected(session)} className="cursor-pointer border-b border-[var(--border)] transition-colors hover:bg-[var(--elevated)]">
-                  <td className="px-4 py-3 font-mono text-sm text-[var(--accent)]">{session.id}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--text-primary)]">{session.host}</td>
-                  <td className="px-4 py-3 text-xs text-[var(--text-secondary)]">{session.mode === "supervised" ? "Supervised" : "Collaboration"}</td>
-                  <td className="px-4 py-3"><span className="flex items-center gap-1.5 text-xs text-[var(--accent)]"><PermissionIcon className="h-3.5 w-3.5" />{session.permission}</span></td>
-                  <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{session.controllerCount}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--text-secondary)]">{formatDuration(session.durationSeconds)}</td>
-                  <td className="px-4 py-3"><RiskGauge value={session.riskScore} size="small" /></td>
-                  <td className="px-4 py-3"><StatusBadge status={session.status} /></td>
+                  <td className="px-5 py-4 font-mono text-sm text-[var(--accent)] font-semibold">{session.id}</td>
+                  <td className="px-5 py-4 text-sm text-[var(--text-primary)] font-medium">{session.host}</td>
+                  <td className="px-5 py-4 text-xs text-[var(--text-secondary)]">{session.mode === "supervised" ? "Supervised" : "Collaboration"}</td>
+                  <td className="px-5 py-4"><span className="flex items-center gap-1.5 text-xs text-[var(--accent)] drop-shadow-[0_0_5px_rgba(0,255,255,0.3)]"><PermissionIcon className="h-3.5 w-3.5" />{session.permission}</span></td>
+                  <td className="px-5 py-4 text-sm text-[var(--text-secondary)]">{session.controllerCount}</td>
+                  <td className="px-5 py-4 font-mono text-xs text-[var(--text-secondary)]">{formatDuration(session.durationSeconds)}</td>
+                  <td className="px-5 py-4"><RiskGauge value={session.riskScore} size="small" /></td>
+                  <td className="px-5 py-4"><StatusBadge status={session.status} /></td>
                 </tr>
               )
             })}
           </tbody>
         </table>
-        {!filtered.length && <p className="p-12 text-center text-sm text-[var(--text-dim)]">No active sessions found.</p>}
+        {!filtered.length && <p className="p-16 text-center text-sm font-mono text-[var(--text-dim)]">No active sessions found.</p>}
       </div>
       <SessionDrawer session={selected} onClose={() => setSelected(null)} onObserve={observe} onAction={action} />
       {observed && <ObserverModal session={observed} status={observerStatus} videoRef={videoRef} onClose={() => { observerPcRef.current?.close(); setObserved(null) }} />}

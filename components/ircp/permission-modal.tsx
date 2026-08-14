@@ -62,7 +62,7 @@ export function PermissionRequestModal({
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+        className="absolute inset-0 bg-[var(--bg)]/80 backdrop-blur-sm"
         onClick={onClose}
       />
       
@@ -95,7 +95,7 @@ export function PermissionRequestModal({
         <div className="p-4 bg-[var(--bg)] border border-[var(--border)] rounded-xl mb-6">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-[var(--violet)] flex items-center justify-center">
-              <span className="font-display font-bold text-lg text-white">
+              <span className="font-display font-bold text-lg text-[var(--text-primary)]">
                 {requester.initials}
               </span>
             </div>

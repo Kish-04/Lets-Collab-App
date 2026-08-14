@@ -8,15 +8,15 @@ export const useUserAwareness = () => {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        useRobotStore.getState().setEmotion('Sleep')
+        useRobotStore.getState().setEmotion('Sleep', true)
       } else {
         // Wake up!
-        useRobotStore.getState().setEmotion('Greeting')
+        useRobotStore.getState().setEmotion('Greeting', true)
         
         // Reset to Idle after greeting
         setTimeout(() => {
           if (useRobotStore.getState().emotion === 'Greeting') {
-            useRobotStore.getState().setEmotion('Idle')
+            useRobotStore.getState().setEmotion('Idle', true)
           }
         }, 3000)
       }
@@ -29,10 +29,10 @@ export const useUserAwareness = () => {
 
       // Wake up from Idle/Curious if moving mouse
       if (['Idle', 'Curious'].includes(current)) {
-        useRobotStore.getState().setEmotion('Happy')
+        useRobotStore.getState().setEmotion('Happy', true)
         setTimeout(() => {
            if (useRobotStore.getState().emotion === 'Happy') {
-             useRobotStore.getState().setEmotion('Idle')
+             useRobotStore.getState().setEmotion('Idle', true)
            }
         }, 2000)
       }
@@ -42,12 +42,12 @@ export const useUserAwareness = () => {
         // User has been inactive for 30 seconds
         const currentNow = useRobotStore.getState().emotion
         if (currentNow === 'Idle') {
-          useRobotStore.getState().setEmotion('Curious') // Look around
+          useRobotStore.getState().setEmotion('Curious', true) // Look around
           
           // Eventually go to sleep if still inactive
           idleTimeout.current = setTimeout(() => {
             if (useRobotStore.getState().emotion === 'Curious') {
-              useRobotStore.getState().setEmotion('Sleep')
+              useRobotStore.getState().setEmotion('Sleep', true)
             }
           }, 30000) // Sleep after 1 minute total
         }
@@ -60,13 +60,13 @@ export const useUserAwareness = () => {
 
       const current = useRobotStore.getState().emotion
       if (['Sleep', 'Idle', 'Curious', 'Happy'].includes(current)) {
-        useRobotStore.getState().setEmotion('Typing')
+        useRobotStore.getState().setEmotion('Typing', true)
       }
 
       clearTimeout(typingTimeout.current)
       typingTimeout.current = setTimeout(() => {
         if (useRobotStore.getState().emotion === 'Typing') {
-          useRobotStore.getState().setEmotion('Idle')
+          useRobotStore.getState().setEmotion('Idle', true)
         }
       }, 2000) // 2 seconds after last keypress
     }

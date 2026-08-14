@@ -215,8 +215,22 @@ export class AntiCheatEngine {
           this.speechRecognition = new SpeechRecognition();
           this.speechRecognition.continuous = true;
           this.speechRecognition.interimResults = true;
-          this.speechRecognition.onresult = () => {
-            this.emitEvent("VOICE_DETECTED" as any, "Human voice / talking detected", 5);
+          this.speechRecognition.onresult = (event: any) => {
+            let finalTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript.toLowerCase();
+                }
+            }
+            if (finalTranscript.length > 0) {
+                const forbiddenWords = ['answer', 'help', 'cheat', 'what is', 'tell me', 'search'];
+                const found = forbiddenWords.some(w => finalTranscript.includes(w));
+                if (found) {
+                    this.emitEvent("VOICE_DETECTED" as any, `Suspicious speech detected: "${finalTranscript.trim()}"`, 10);
+                } else {
+                    this.emitEvent("TALKING_DETECTED", "Human voice / talking detected", 2);
+                }
+            }
           };
           this.speechRecognition.onerror = () => {};
           this.speechRecognition.start();
@@ -288,6 +302,19 @@ export class AntiCheatEngine {
               const eyeW = Math.abs(marks[263].x - marks[33].x);
               if (Math.abs(marks[1].x - (marks[33].x + marks[263].x)/2) / eyeW > this.config.headPoseMargin) {
                   this.emitEvent("LOOKING_AWAY", "Direct gaze lost", 5);
+              }
+              
+              if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
+                  const blendshapes = result.faceBlendshapes[0].categories;
+                  let isDartingEyes = false;
+                  for (const shape of blendshapes) {
+                      if (shape.categoryName.startsWith('eyeLook') && shape.score > this.config.eyeTrackingThreshold) {
+                          isDartingEyes = true;
+                      }
+                  }
+                  if (isDartingEyes) {
+                      this.emitEvent("LOOKING_AWAY", "Suspicious precise eye movement (Iris darting) detected", 8);
+                  }
               }
               if (ctx && canvasElement) {
                   ctx.strokeStyle = "rgba(0, 255, 127, 0.7)";

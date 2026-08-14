@@ -140,10 +140,10 @@ export function WhiteboardOverlay({ peerId, isHost }: { peerId?: string, isHost:
                 className={`absolute inset-0 w-full h-full object-contain ${isDrawingMode ? 'pointer-events-auto cursor-crosshair z-20' : 'pointer-events-none z-10'}`}
             />
             
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-[#111] p-2 rounded-xl border border-[#333] shadow-lg">
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-[#111] p-2 rounded-xl border border-[var(--border)] shadow-lg backdrop-blur-md bg-opacity-80">
                 <button
                     onClick={() => setIsDrawingMode(!isDrawingMode)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isDrawingMode ? 'bg-[var(--accent)] text-black' : 'hover:bg-[#222] text-white'}`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isDrawingMode ? 'bg-[var(--accent)] text-black' : 'hover:bg-[#222] text-neutral-100'}`}
                 >
                     <PenTool className="w-4 h-4" />
                     {isDrawingMode ? 'Drawing Mode Active' : 'Annotate Screen'}

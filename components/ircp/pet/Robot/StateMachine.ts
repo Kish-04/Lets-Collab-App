@@ -17,12 +17,16 @@ interface RobotStore {
   focusTarget: THREE.Vector3 | null
   dragVelocity: THREE.Vector2
   bodyColor: string
+  isMuted: boolean
+  isCanvasMode: boolean
   
-  setEmotion: (emotion: EmotionState) => void
+  setEmotion: (emotion: EmotionState, silent?: boolean) => void
   setTargetLook: (x: number, y: number, z: number) => void
   setFocusTarget: (target: THREE.Vector3 | null) => void
   setDragVelocity: (vx: number, vy: number) => void
   setBodyColor: (color: string) => void
+  toggleMute: () => void
+  setIsCanvasMode: (val: boolean) => void
 }
 
 export const useRobotStore = create<RobotStore>((set, get) => ({
@@ -31,7 +35,17 @@ export const useRobotStore = create<RobotStore>((set, get) => ({
   focusTarget: null,
   dragVelocity: new THREE.Vector2(0, 0),
   bodyColor: '#F5F6F8', // Default off-white ceramic
+  isMuted: false,
+  isCanvasMode: false,
   
+  setIsCanvasMode: (val) => set({ isCanvasMode: val }),
+  toggleMute: () => set((state) => {
+    const newMuted = !state.isMuted
+    if (newMuted && typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+    return { isMuted: newMuted }
+  }),
   setBodyColor: (color: string) => set({ bodyColor: color }),
   setFocusTarget: (target: THREE.Vector3 | null) => set({ focusTarget: target }),
   setDragVelocity: (vx: number, vy: number) => set((state) => {
@@ -43,21 +57,23 @@ export const useRobotStore = create<RobotStore>((set, get) => ({
     
     return state
   }),
-  setEmotion: (newEmotion) => {
+  setEmotion: (newEmotion, silent = false) => {
     const currentEmotion = get().emotion
     if (currentEmotion !== newEmotion) {
       set({ emotion: newEmotion })
       updateLEDColor(newEmotion)
       
-      const lower = newEmotion.toLowerCase()
-      if (lower.includes('warning') || lower.includes('error') || lower.includes('offline')) {
-        playWarningTone()
-      } else if (lower.includes('thinking') || lower.includes('searching') || lower.includes('reasoning') || lower.includes('coding')) {
-        playThinkingPulse()
-      } else if (lower.includes('happy') || lower.includes('celebrating') || lower.includes('success')) {
-        playSuccessChime()
-      } else {
-        playBlip(440) // neutral
+      if (!silent && !get().isMuted) {
+        const lower = newEmotion.toLowerCase()
+        if (lower.includes('warning') || lower.includes('error') || lower.includes('offline')) {
+          playWarningTone()
+        } else if (lower.includes('thinking') || lower.includes('searching') || lower.includes('reasoning') || lower.includes('coding')) {
+          playThinkingPulse()
+        } else if (lower.includes('happy') || lower.includes('celebrating') || lower.includes('success')) {
+          playSuccessChime()
+        } else {
+          playBlip(440) // neutral
+        }
       }
     }
   },

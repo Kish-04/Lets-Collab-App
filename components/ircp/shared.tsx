@@ -139,7 +139,7 @@ export function GlowButton({
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const variantStyles = {
     primary: "bg-[var(--accent)] text-black font-bold hover:shadow-[0_0_20px_rgba(0,212,255,0.4)]",
-    secondary: "bg-[var(--violet)] text-white font-bold hover:shadow-[0_0_20px_rgba(110,63,255,0.4)]",
+    secondary: "bg-[var(--violet)] text-[var(--text-primary)] font-bold hover:shadow-[0_0_20px_rgba(110,63,255,0.4)]",
     ghost: "bg-transparent border border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--border-bright)] hover:bg-[var(--elevated)]"
   }
   
@@ -196,7 +196,7 @@ export function DangerButton({
       className={cn(
         "inline-flex items-center justify-center gap-2 font-bold transition-all duration-150",
         "border border-[var(--red)] text-[var(--red)] bg-transparent",
-        "hover:bg-[var(--red)] hover:text-white hover:shadow-[0_0_20px_rgba(255,59,92,0.4)]",
+        "hover:bg-[var(--red)] hover:text-[var(--text-primary)] hover:shadow-[0_0_20px_rgba(255,59,92,0.4)]",
         "active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed",
         pulsing && "[--glow-color:rgba(255,59,92,0.4)] animate-pulse-glow",
         sizeStyles[size],
@@ -234,20 +234,20 @@ export function DataCard({
   
   return (
     <div className={cn(
-      "p-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg",
+      "p-5 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl shadow-[0_4px_16px_rgba(0,0,0,0.1)] hover:bg-[var(--surface)]/40 hover:border-[var(--border-bright)] hover:-translate-y-1 transition-all duration-300",
       className
     )}>
-      <span className="block font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)] mb-1">
+      <span className="block font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)] mb-2">
         {label}
       </span>
       <span className={cn(
-        "block font-display font-extrabold text-2xl tracking-tight animate-count-up",
+        "block font-display font-extrabold text-3xl tracking-tight animate-count-up drop-shadow-[0_0_10px_rgba(255,255,255,0.1)]",
         colorStyles[color]
       )}>
         {value}
       </span>
       {trend && (
-        <span className="block text-xs text-[var(--text-secondary)] mt-1">
+        <span className="block text-xs text-[var(--text-secondary)] mt-2">
           {trend}
         </span>
       )}

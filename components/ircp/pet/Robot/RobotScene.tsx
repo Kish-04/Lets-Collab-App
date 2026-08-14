@@ -28,6 +28,32 @@ const STATUS_TEXT: Record<string, string> = {
 }
 
 export const RobotScene = ({ hovered, pokeTrigger, emotion }: RobotSceneProps) => {
+  const isCanvasMode = useRobotStore(state => state.isCanvasMode)
+  
+  const content = (
+    <>
+      {hovered && (
+        <Html center position={[0, 0.5, 0]} style={{ pointerEvents: 'none' }}>
+          <div
+            style={{
+              background: 'rgba(17,17,17,0.85)',
+              color: '#f5f5f5',
+              fontSize: 11,
+              padding: '3px 8px',
+              borderRadius: 6,
+              whiteSpace: 'nowrap',
+              fontFamily: 'sans-serif',
+            }}
+          >
+            {STATUS_TEXT[emotion] || emotion}
+          </div>
+        </Html>
+      )}
+      
+      <RobotAssembly hovered={hovered} pokeTrigger={pokeTrigger} />
+    </>
+  )
+
   return (
     <>
       <Lights />
@@ -38,25 +64,7 @@ export const RobotScene = ({ hovered, pokeTrigger, emotion }: RobotSceneProps) =
         rotationIntensity={0.1}
         floatIntensity={0.2}
       >
-        {hovered && (
-          <Html center position={[0, 0.5, 0]} style={{ pointerEvents: 'none' }}>
-            <div
-              style={{
-                background: 'rgba(17,17,17,0.85)',
-                color: '#fff',
-                fontSize: 11,
-                padding: '3px 8px',
-                borderRadius: 6,
-                whiteSpace: 'nowrap',
-                fontFamily: 'sans-serif',
-              }}
-            >
-              {STATUS_TEXT[emotion] || emotion}
-            </div>
-          </Html>
-        )}
-        
-        <RobotAssembly hovered={hovered} pokeTrigger={pokeTrigger} />
+        {content}
       </Float>
 
       <Effects />

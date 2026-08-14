@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "febc67ba-7996-441d-889c-cac20d0d3f5c"
+      }
+    },
+    "android": {
+      "package": "com.kishankarthiks.letscollab"
+    }
+  }
+}

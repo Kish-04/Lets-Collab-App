@@ -1,4 +1,5 @@
 // Procedural Web Audio API sound generators
+import { useRobotStore } from './StateMachine'
 
 let audioCtx: AudioContext | null = null
 let masterPanner: StereoPannerNode | null = null
@@ -61,6 +62,11 @@ export function updateAudioPosition(panValue: number) {
 export function updateServoVelocity(speed: number) {
   if (!servoOsc || !servoGain || !audioCtx) return
   
+  if (useRobotStore.getState().isMuted) {
+    servoGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1)
+    return
+  }
+
   // Base idle hum is very quiet and low pitch
   // When speed increases, pitch goes up slightly and volume increases
   const targetPitch = 40 + (speed * 100) // Up to 140Hz
@@ -84,6 +90,7 @@ function routeSound(gainNode: GainNode, ctx: AudioContext) {
 // --------------------------------------------------------
 
 export function playHoverBeep() {
+  if (useRobotStore.getState().isMuted) return;
   const ctx = getContext()
   if (!ctx) return
   const osc = ctx.createOscillator()
@@ -99,6 +106,7 @@ export function playHoverBeep() {
 }
 
 export function playThinkingPulse() {
+  if (useRobotStore.getState().isMuted) return;
   const ctx = getContext()
   if (!ctx) return
   const osc = ctx.createOscillator()
@@ -122,6 +130,7 @@ export function playThinkingPulse() {
 }
 
 export function playSuccessChime() {
+  if (useRobotStore.getState().isMuted) return;
   const ctx = getContext()
   if (!ctx) return
   const notes = [440, 554.37, 659.25, 880] // A4, C#5, E5, A5
@@ -144,6 +153,7 @@ export function playSuccessChime() {
 }
 
 export function playWarningTone() {
+  if (useRobotStore.getState().isMuted) return;
   const ctx = getContext()
   if (!ctx) return
   const osc = ctx.createOscillator()
@@ -171,6 +181,7 @@ export function playWarningTone() {
 }
 
 export function playBlip(freq: number) {
+  if (useRobotStore.getState().isMuted) return;
   const ctx = getContext()
   if (!ctx) return
   const osc = ctx.createOscillator()
@@ -183,4 +194,51 @@ export function playBlip(freq: number) {
   routeSound(gain, ctx)
   osc.start()
   osc.stop(ctx.currentTime + 0.2)
+}
+
+// --------------------------------------------------------
+// Speech Synthesis (TTS)
+// --------------------------------------------------------
+
+export function speakText(text: string) {
+  if (typeof window === 'undefined') return;
+  if (useRobotStore.getState().isMuted) return;
+  
+  const ctx = getContext();
+  if (!ctx) return;
+  
+  // Clean text and calculate length
+  const cleanText = text.replace(/[^a-zA-Z0-9]/g, '');
+  const durationPerChar = 0.04; // Very fast, chipmunk-like speed
+  
+  // Play a sequence of retro synth beeps (like Animal Crossing / R2D2)
+  for (let i = 0; i < cleanText.length; i++) {
+    // Only beep for actual letters
+    if (cleanText[i].trim() === '') continue;
+    
+    // Schedule a beep for this character
+    const time = ctx.currentTime + (i * durationPerChar);
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    // High pitch, robotic square wave (funny chipmunk kid robot)
+    osc.type = 'square';
+    
+    // Map character code to a frequency range (600Hz to 1400Hz)
+    const charCode = cleanText.charCodeAt(i);
+    const freq = 600 + ((charCode % 26) * 30) + (Math.random() * 200);
+    osc.frequency.setValueAtTime(freq, time);
+    
+    // Envelope for a quick "blip"
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(0.015, time + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + durationPerChar - 0.005);
+    
+    osc.connect(gain);
+    routeSound(gain, ctx);
+    
+    osc.start(time);
+    osc.stop(time + durationPerChar);
+  }
 }

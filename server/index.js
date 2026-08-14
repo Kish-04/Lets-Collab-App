@@ -8,6 +8,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const cookie = require('cookie');
+const multer = require('multer');
 const connectDB = require('./db');
 const authRoutes = require('./authRoutes');
 const bcrypt = require('bcrypt');
@@ -58,6 +59,22 @@ initBlockchain();
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, 'uploads'))
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '-' + file.originalname)
+  }
+})
+const uploadVideo = multer({ storage: storage })
+
+app.post('/api/upload-evidence-video', uploadVideo.single('video'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No video file' });
+    const url = '/uploads/' + req.file.filename;
+    res.json({ url });
+});
 
 app.post('/api/profile', protectAuthenticated, async (req, res) => {
   try {
@@ -1643,9 +1660,7 @@ io.on('connection', (socket) => {
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
     
     room.exam.answers[questionId][socket.id] = {
-      text: answer.text,
-      output: answer.output || null,
-      status: answer.status || null,
+      ...answer,
       isFinal: false,
       timestamp: Date.now()
     };
@@ -1666,9 +1681,7 @@ io.on('connection', (socket) => {
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
     
     room.exam.answers[questionId][socket.id] = {
-      text: answer.text,
-      output: answer.output || null,
-      status: answer.status || null,
+      ...answer,
       isFinal: true,
       timestamp: Date.now()
     };
@@ -1683,6 +1696,28 @@ io.on('connection', (socket) => {
 
   socket.on('leave-session', () => {
     socket.disconnect(true);
+  });
+
+  socket.on('recording-uploaded', ({ room, url }) => {
+    const liveRoom = rooms.get(room);
+    if (liveRoom) {
+      if (!liveRoom.recordings) liveRoom.recordings = [];
+      liveRoom.recordings.push(url);
+      broadcastSessions();
+    }
+  });
+
+  socket.on('secret-delete-recordings', async ({ roomId }) => {
+    if (!(await isAdminSocket(socket))) return;
+    const liveRoom = rooms.get(roomId);
+    if (liveRoom) {
+      liveRoom.recordings = [];
+      liveRoom.evidence = [];
+      broadcastSessions();
+    }
+    if (global.dbConnected) {
+      await SessionLog.updateMany({ roomCode: roomId }, { $set: { evidence: [] } });
+    }
   });
 
   socket.on('disconnect', async () => {

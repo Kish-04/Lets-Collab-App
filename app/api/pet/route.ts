@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const geminiApiKey = process.env.GEMINI_API_KEY || ''
-const genAI = new GoogleGenerativeAI(geminiApiKey)
+// We will instantiate genAI inside the POST function to prevent module-level errors
+
 
 export async function POST(req: Request) {
   try {
@@ -18,9 +18,12 @@ export async function POST(req: Request) {
     const prompt = `You are an AI Pet Assistant in a remote desktop collaboration app called "Let's Collab".
 You are a friendly robot pet without a tail, so do not mention wagging a tail or anything about a tail.
 Your goal is to help the Host and Controller debug code or use the app. Keep your answers concise, friendly, and helpful.
+IMPORTANT: You MUST start every single answer with a funny robotic sound word like *Beep Bop*, *Bzzzzt*, or *Whirr*. Do not forget this.
 The user said: "${message}"`
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' })
+    const geminiApiKey = process.env.GEMINI_API_KEY || ''
+    const genAI = new GoogleGenerativeAI(geminiApiKey)
+    const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' })
 
     if (imageBase64) {
       const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "")

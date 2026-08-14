@@ -99,6 +99,7 @@ export class DataChannelManager {
                                 resolve();
                             }
                         };
+                        channel.bufferedAmountLowThreshold = threshold;
                         channel.addEventListener('bufferedamountlow', check);
                         setTimeout(() => { channel.removeEventListener('bufferedamountlow', check); resolve(); }, 5000);
                     }));

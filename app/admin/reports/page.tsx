@@ -93,44 +93,44 @@ function ReportCard({
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
-      <div className="p-5 flex items-start justify-between">
+    <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl overflow-hidden hover:border-[var(--border-bright)] transition-all">
+      <div className="p-6 flex items-start justify-between bg-[var(--elevated)]/60">
         <div className="flex items-start gap-4">
-          <div className={cn("p-2.5 rounded-lg", `bg-[var(--${color})]/10`)}>
-            <Icon className={cn("w-5 h-5", `text-[var(--${color})]`)} />
+          <div className={cn("p-3 rounded-xl border shadow-inner", `bg-[var(--${color})]/20 border-[var(--${color})]/30`)}>
+            <Icon className={cn("w-5 h-5 drop-shadow-[0_0_5px_currentColor]", `text-[var(--${color})]`)} />
           </div>
           <div>
-            <h3 className="font-display font-bold text-base text-[var(--text-primary)]">{title}</h3>
-            <p className="text-xs text-[var(--text-dim)] mt-0.5">{subtitle}</p>
-            <span className={cn("inline-block mt-2 px-2 py-0.5 rounded-full font-mono text-[10px]", `bg-[var(--${color})]/10 text-[var(--${color})]`)}>
+            <h3 className="font-display font-bold text-lg text-[var(--text-primary)] drop-shadow-md">{title}</h3>
+            <p className="text-xs text-[var(--text-dim)] mt-1">{subtitle}</p>
+            <span className={cn("inline-block mt-3 px-2.5 py-1 rounded-md font-mono text-[10px] border", `bg-[var(--${color})]/10 border-[var(--${color})]/30 text-[var(--${color})] drop-shadow-[0_0_5px_currentColor]`)}>
               {count} records
             </span>
           </div>
         </div>
-        <div className="flex flex-col gap-2 items-end">
-          <div className="flex gap-1.5">
+        <div className="flex flex-col gap-3 items-end">
+          <div className="flex gap-2">
             {[
               { label: "JSON", fn: onJSON, color: "var(--accent)" },
               { label: "CSV", fn: onCSV, color: "var(--emerald)" },
               { label: "PDF", fn: onPDF, color: "var(--amber)" },
             ].map(btn => (
               <button key={btn.label} onClick={btn.fn}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-[10px] font-mono font-bold transition-colors hover:border-current"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/80 backdrop-blur-sm text-[10px] font-mono font-bold transition-all hover:border-current hover:bg-[var(--bg)]/80 shadow-sm"
                 style={{ color: btn.color }}>
-                <Download className="w-3 h-3" />
+                <Download className="w-3.5 h-3.5 drop-shadow-[0_0_3px_currentColor]" />
                 {btn.label}
               </button>
             ))}
           </div>
           <button onClick={() => setOpen(o => !o)}
-            className="text-[10px] font-mono text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors">
+            className="text-[10px] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors bg-[var(--elevated)] px-2 py-1 rounded mt-1 border border-[var(--border)]">
             {open ? '▲ Hide preview' : '▼ Preview data'}
           </button>
         </div>
       </div>
 
       {open && (
-        <div className="border-t border-[var(--border)] max-h-64 overflow-y-auto">
+        <div className="border-t border-[var(--border)]/60 max-h-80 overflow-y-auto custom-scrollbar bg-[var(--bg)]/70 shadow-inner">
           {children}
         </div>
       )}
@@ -164,14 +164,15 @@ export default function ReportsPage() {
   useEffect(() => { fetchReports() }, [])
 
   if (loading) return (
-    <div className="p-6 flex items-center justify-center h-full">
-      <p className="font-mono text-sm text-[var(--text-dim)]">Loading reports…</p>
+    <div className="p-6 flex flex-col items-center justify-center h-[60vh] gap-4">
+      <RefreshCw className="w-8 h-8 text-[var(--accent)] animate-spin drop-shadow-[0_0_10px_rgba(0,255,255,0.5)]" />
+      <p className="font-mono text-sm text-[var(--text-dim)]">Generating reports…</p>
     </div>
   )
 
   if (!data) return (
     <div className="p-6 flex items-center justify-center h-full">
-      <p className="font-mono text-sm text-[var(--red)]">Failed to load reports. Is the server running?</p>
+      <p className="font-mono text-sm text-[var(--red)] bg-[var(--red)]/10 px-4 py-2 rounded-lg border border-[var(--red)]/20">Failed to load reports. Is the server running?</p>
     </div>
   )
 
@@ -243,60 +244,60 @@ export default function ReportsPage() {
 
   return (
     <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="font-display font-bold text-2xl text-[var(--text-primary)]">Reports</h1>
+          <h1 className="font-display font-bold text-2xl text-[var(--text-primary)] drop-shadow-md">System Reports</h1>
           {generatedAt && (
-            <p className="text-xs font-mono text-[var(--text-dim)] mt-1">
+            <p className="text-xs font-mono text-[var(--text-dim)] mt-2 bg-[var(--elevated)]/60 inline-block px-3 py-1 rounded-full border border-[var(--border)]">
               Last generated: {formatDate(generatedAt)}
-              {data.mock && <span className="ml-2 text-[var(--amber)]">· MOCK DATA (DB offline)</span>}
+              {data.mock && <span className="ml-2 text-[var(--amber)] drop-shadow-[0_0_3px_rgba(251,191,36,0.5)]">· MOCK DATA (DB offline)</span>}
             </p>
           )}
         </div>
         <button onClick={fetchReports}
-          className="flex items-center gap-2 px-4 py-2 bg-[var(--accent)] text-black rounded-lg text-sm font-bold hover:brightness-110 transition-all">
+          className="flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-black rounded-lg text-sm font-bold shadow-[0_0_15px_rgba(0,255,255,0.4)] hover:shadow-[0_0_25px_rgba(0,255,255,0.6)] hover:-translate-y-0.5 transition-all">
           <RefreshCw className="w-4 h-4" />
-          Refresh
+          Regenerate All
         </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-4 gap-4 mb-8">
         <DataCard label="Total Users" value={userActivity.length.toString()} />
         <DataCard label="Total Sessions" value={totalSessions.toString()} color="accent" />
         <DataCard label="Total Alerts" value={alerts.length.toString()} color="amber" />
         <DataCard label="Total Penalty" value={totalPenalty.toString()} color="red" />
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-6">
         {/* User Activity */}
         <ReportCard icon={Users} title="User Activity Summary" color="accent"
           subtitle="Sessions per user, roles, verification status"
           count={userActivity.length}
           onJSON={handleUserJSON} onCSV={handleUserCSV} onPDF={handleUserPDF}>
           <table className="w-full text-xs font-mono">
-            <thead><tr className="bg-[var(--elevated)]">
+            <thead><tr className="bg-[var(--elevated)]/80 border-b border-[var(--border)]/60">
               {['Name', 'Email', 'Role', 'Sessions', 'Status'].map(h => (
-                <th key={h} className="px-4 py-2 text-left text-[var(--text-dim)] font-normal">{h}</th>
+                <th key={h} className="px-5 py-3 text-left text-[var(--text-secondary)] font-normal uppercase tracking-wider">{h}</th>
               ))}
             </tr></thead>
             <tbody>
               {userActivity.map((u, i) => (
-                <tr key={i} className="border-t border-[var(--border)]">
-                  <td className="px-4 py-2 text-[var(--text-primary)]">{u.name}</td>
-                  <td className="px-4 py-2 text-[var(--text-dim)]">{u.email}</td>
-                  <td className="px-4 py-2">
-                    <span className={cn("px-1.5 py-0.5 rounded text-[9px]",
-                      u.role === 'admin' ? 'bg-[var(--violet)]/10 text-[var(--violet)]' : 'bg-[var(--border)] text-[var(--text-dim)]')}>
+                <tr key={i} className="border-b border-[var(--border)] hover:bg-[var(--elevated)] transition-colors">
+                  <td className="px-5 py-3 text-[var(--text-primary)] font-medium">{u.name}</td>
+                  <td className="px-5 py-3 text-[var(--text-dim)]">{u.email}</td>
+                  <td className="px-5 py-3">
+                    <span className={cn("px-2 py-0.5 rounded-md text-[9px] border",
+                      u.role === 'admin' ? 'bg-[var(--violet)]/20 text-[var(--violet)] border-[var(--violet)]/30 drop-shadow-[0_0_3px_currentColor]' : 'bg-[var(--elevated)]/60 text-[var(--text-dim)] border-[var(--border)]')}>
                       {u.role.toUpperCase()}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-[var(--accent)]">{u.sessionCount}</td>
-                  <td className="px-4 py-2">
-                    <span className={cn("px-1.5 py-0.5 rounded text-[9px]",
-                      u.banned ? 'bg-[var(--red)]/10 text-[var(--red)]'
-                        : u.isVerified ? 'bg-[var(--emerald)]/10 text-[var(--emerald)]'
-                          : 'bg-[var(--amber)]/10 text-[var(--amber)]')}>
+                  <td className="px-5 py-3 text-[var(--accent)] font-bold">{u.sessionCount}</td>
+                  <td className="px-5 py-3">
+                    <span className={cn("px-2 py-0.5 rounded-md text-[9px] border",
+                      u.banned ? 'bg-[var(--red)]/20 text-[var(--red)] border-[var(--red)]/30 drop-shadow-[0_0_3px_currentColor]'
+                        : u.isVerified ? 'bg-[var(--emerald)]/20 text-[var(--emerald)] border-[var(--emerald)]/30 drop-shadow-[0_0_3px_currentColor]'
+                          : 'bg-[var(--amber)]/20 text-[var(--amber)] border-[var(--amber)]/30 drop-shadow-[0_0_3px_currentColor]')}>
                       {u.banned ? 'BANNED' : u.isVerified ? 'ACTIVE' : 'UNVERIFIED'}
                     </span>
                   </td>
@@ -312,25 +313,25 @@ export default function ReportsPage() {
           count={alerts.length}
           onJSON={handleAlertJSON} onCSV={handleAlertCSV} onPDF={handleAlertPDF}>
           {alerts.length === 0 ? (
-            <div className="p-6 text-center text-xs font-mono text-[var(--text-dim)]">No alerts recorded yet</div>
+            <div className="p-8 text-center text-sm font-mono text-[var(--text-dim)]">No alerts recorded yet</div>
           ) : (
             <table className="w-full text-xs font-mono">
-              <thead><tr className="bg-[var(--elevated)]">
+              <thead><tr className="bg-[var(--elevated)]/80 border-b border-[var(--border)]/60">
                 {['Room', 'Host', 'Type', 'Message', 'Penalty', 'Time'].map(h => (
-                  <th key={h} className="px-4 py-2 text-left text-[var(--text-dim)] font-normal">{h}</th>
+                  <th key={h} className="px-5 py-3 text-left text-[var(--text-secondary)] font-normal uppercase tracking-wider">{h}</th>
                 ))}
               </tr></thead>
               <tbody>
                 {alerts.slice(0, 50).map((a, i) => (
-                  <tr key={i} className="border-t border-[var(--border)]">
-                    <td className="px-4 py-2 text-[var(--accent)]">{a.room.slice(0, 4)}·{a.room.slice(4, 8)}</td>
-                    <td className="px-4 py-2 text-[var(--text-dim)]">{a.hostEmail}</td>
-                    <td className="px-4 py-2">
-                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-[var(--amber)]/10 text-[var(--amber)]">{a.type}</span>
+                  <tr key={i} className="border-b border-[var(--border)] hover:bg-[var(--elevated)] transition-colors">
+                    <td className="px-5 py-3 text-[var(--accent)]">{a.room.slice(0, 4)}·{a.room.slice(4, 8)}</td>
+                    <td className="px-5 py-3 text-[var(--text-primary)]">{a.hostEmail}</td>
+                    <td className="px-5 py-3">
+                      <span className="px-2 py-0.5 rounded-md text-[9px] bg-[var(--amber)]/20 text-[var(--amber)] border border-[var(--amber)]/30 drop-shadow-[0_0_3px_currentColor]">{a.type}</span>
                     </td>
-                    <td className="px-4 py-2 text-[var(--text-secondary)] max-w-[200px] truncate">{a.message}</td>
-                    <td className="px-4 py-2 text-[var(--red)]">+{a.penalty}</td>
-                    <td className="px-4 py-2 text-[var(--text-dim)]">{formatDate(a.time)}</td>
+                    <td className="px-5 py-3 text-[var(--text-secondary)] max-w-[200px] truncate">{a.message}</td>
+                    <td className="px-5 py-3 text-[var(--red)] font-bold drop-shadow-[0_0_5px_rgba(244,63,94,0.5)]">+{a.penalty}</td>
+                    <td className="px-5 py-3 text-[var(--text-dim)]">{formatDate(a.time)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -343,7 +344,7 @@ export default function ReportsPage() {
           subtitle="Combined export of all system activity"
           count={userActivity.length + alerts.length}
           onJSON={handleFullJSON} onCSV={handleFullCSV} onPDF={handleFullPDF}>
-          <div className="p-4 grid grid-cols-3 gap-3">
+          <div className="p-6 grid grid-cols-3 gap-4">
             {[
               { label: 'Total Users', value: userActivity.length },
               { label: 'Total Sessions', value: totalSessions },
@@ -352,9 +353,11 @@ export default function ReportsPage() {
               { label: 'Banned Users', value: userActivity.filter(u => u.banned).length },
               { label: 'Verified Users', value: userActivity.filter(u => u.isVerified).length },
             ].map(s => (
-              <div key={s.label} className="p-3 bg-[var(--bg)] border border-[var(--border)] rounded-lg">
-                <p className="font-mono text-[9px] text-[var(--text-dim)] uppercase tracking-wider">{s.label}</p>
-                <p className="font-display font-bold text-xl text-[var(--text-primary)] mt-1">{s.value}</p>
+              <div key={s.label} className="p-4 bg-[var(--elevated)]/60 border border-[var(--border)] rounded-xl backdrop-blur-sm shadow-inner hover:bg-[var(--elevated)]/80 transition-colors">
+                <p className="font-mono text-[10px] text-[var(--text-dim)] uppercase tracking-wider flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-white/20"></span> {s.label}
+                </p>
+                <p className="font-display font-bold text-2xl text-[var(--text-primary)] mt-2 drop-shadow-md">{s.value}</p>
               </div>
             ))}
           </div>
@@ -363,10 +366,3 @@ export default function ReportsPage() {
     </div>
   )
 }
-
-
-
-
-
-
-

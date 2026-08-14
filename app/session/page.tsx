@@ -17,7 +17,7 @@ import { io, Socket } from "socket.io-client"
 import { motion } from "framer-motion"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer, X,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -47,6 +47,7 @@ import { useFaceProctoring } from "@/hooks/useFaceProctoring"
 import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
+import { CryptoUtil } from "@/lib/CryptoUtil"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
     readPersonalAppearance, SessionMode
@@ -248,6 +249,37 @@ function SessionContent() {
     const prevAvatarStyleRef = useRef<AvatarStyle>('none')
     
     const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyle>('none')
+
+    // ── Glassmorphic UI Inactivity State ─────────────────────────────────────
+    const [isUiVisible, setIsUiVisible] = useState(true)
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+    const uiTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+    useEffect(() => {
+        const resetTimer = () => {
+            setIsUiVisible(true)
+            if (uiTimerRef.current) clearTimeout(uiTimerRef.current)
+            uiTimerRef.current = setTimeout(() => {
+                // Only hide if we are connected/streaming (active session)
+                if (connectionState === 'connected' || isStreaming) {
+                    setIsUiVisible(false)
+                }
+            }, 3000)
+        }
+
+        window.addEventListener('mousemove', resetTimer)
+        window.addEventListener('keydown', resetTimer)
+        window.addEventListener('touchstart', resetTimer)
+        
+        resetTimer()
+
+        return () => {
+            window.removeEventListener('mousemove', resetTimer)
+            window.removeEventListener('keydown', resetTimer)
+            window.removeEventListener('touchstart', resetTimer)
+            if (uiTimerRef.current) clearTimeout(uiTimerRef.current)
+        }
+    }, [connectionState, isStreaming])
     const [customBackgroundUrl, setCustomBackgroundUrl] = useState<string | null>(null)
     const [bgError, setBgError] = useState<string | null>(null)
     const customBgObjectUrlRef = useRef<string | null>(null)
@@ -1241,7 +1273,14 @@ function SessionContent() {
             const pc = observerPcRefs.current.get(fromId)
             await pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
         })
-        socket.on('chat-message', (message: ChatMessage) => setChatMessages(prev => [...prev, message].slice(-100)))
+        socket.on('chat-message', async (message: ChatMessage) => {
+            try {
+                const decryptedText = await CryptoUtil.decrypt(message.text, roomCodeRef.current || 'default-secret');
+                setChatMessages(prev => [...prev, { ...message, text: decryptedText }].slice(-100));
+            } catch (err) {
+                setChatMessages(prev => [...prev, message].slice(-100));
+            }
+        })
         socket.on('federated-update-accepted', ({ round, pendingContributors }: { round: number; pendingContributors: number }) => {
             addLog('system', `Federated update accepted for round ${round} (${pendingContributors} pending)`)
         })
@@ -1789,7 +1828,8 @@ function SessionContent() {
         const text = chatInput.trim()
         const activeRoom = roomCodeRef.current
         if (!text || !activeRoom) return
-        socketRef.current?.emit('chat-message', { roomId: activeRoom, text })
+        const encryptedText = await CryptoUtil.encrypt(text, activeRoom);
+        socketRef.current?.emit('chat-message', { roomId: activeRoom, text: encryptedText })
         setChatInput('')
         setChatOpen(true)
 
@@ -1962,15 +2002,19 @@ function SessionContent() {
                     >
                         Join Room
                     </button>
-                    <button onClick={() => router.push('/app')} className="mt-4 text-xs text-[var(--text-dim)] hover:text-white">Cancel</button>
+                    <button onClick={() => router.push('/app')} className="mt-4 text-xs text-[var(--text-dim)] hover:text-[var(--text-primary)]">Cancel</button>
                 </div>
             </div>
         )
     }
 
     return (
-        <div ref={containerRef} className="h-screen overflow-hidden bg-[var(--bg)] flex flex-col text-[var(--text-primary)] font-sans">
-            <header className="h-[52px] flex items-center justify-between px-4 border-b border-[var(--border)] bg-[var(--surface)]">
+        <div ref={containerRef} className="h-screen overflow-hidden bg-[var(--bg)] relative text-[var(--text-primary)] font-sans">
+            {/* FLOATING HEADER (DYNAMIC ISLAND) */}
+            <header className={cn(
+                "absolute top-4 left-1/2 -translate-x-1/2 h-[52px] flex items-center justify-between px-6 rounded-full border border-[var(--border)]/60 bg-[var(--surface)]/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] z-50 transition-all duration-500",
+                !isUiVisible && "opacity-0 -translate-y-8 pointer-events-none scale-95"
+            )}>
                 <div className="flex items-center gap-3">
                     <div onClick={async () => { 
                         if(roomCode) {
@@ -2015,17 +2059,27 @@ function SessionContent() {
                     >
                         <MessageSquare className="w-4 h-4" />
                         {chatMessages.length > 0 && (
-                            <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--red)] px-1 text-[9px] font-bold text-white">
+                            <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--red)] px-1 text-[9px] font-bold text-[var(--text-primary)]">
                                 {Math.min(chatMessages.length, 99)}
                             </span>
                         )}
                     </button>
-                    <button onClick={toggleLocalMic} className={cn("p-1.5 rounded-lg border", localMicMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>{localMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
+                    <button 
+                        onClick={toggleLocalMic} 
+                        className={cn("relative p-2 rounded-full border transition-all duration-300 hover:scale-110 active:scale-95 shadow-sm", 
+                            !localMicMuted ? "bg-[var(--accent)] text-black border-transparent shadow-[0_0_15px_var(--accent-glow)]" : "bg-[var(--surface)]/50 text-[var(--red)] border-[var(--border)]"
+                        )}
+                    >
+                        {localMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </button>
                     <button 
                         onClick={toggleLocalCam} 
                         disabled={sessionMode === 'supervised' && role === 'controller' && !localCamMuted}
                         aria-label="Toggle Camera" 
-                        className={cn("p-1.5 rounded-lg border", (sessionMode === 'supervised' && role === 'controller' && !localCamMuted) ? "opacity-50 cursor-not-allowed" : "", localCamMuted ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}
+                        className={cn("relative p-2 rounded-full border transition-all duration-300 hover:scale-110 active:scale-95 shadow-sm", 
+                            (sessionMode === 'supervised' && role === 'controller' && !localCamMuted) ? "opacity-50 cursor-not-allowed" : "", 
+                            !localCamMuted ? "bg-[var(--accent)] text-black border-transparent shadow-[0_0_15px_var(--accent-glow)]" : "bg-[var(--surface)]/50 text-[var(--red)] border-[var(--border)]"
+                        )}
                     >
                         {localCamMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
                     </button>
@@ -2040,6 +2094,9 @@ function SessionContent() {
                             <Bot className="w-4 h-4" />
                         </button>
                     )}
+                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", isSidebarOpen ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle Sidebar">
+                        <PanelLeft className="w-4 h-4" />
+                    </button>
                     {role === 'host' && sessionMode === 'supervised' && (
                         <button onClick={() => setShowExamDashboard(!showExamDashboard)} className={cn("p-1.5 rounded-lg border hover:text-[var(--text-primary)] transition-colors", showExamDashboard ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)]")} title="Toggle Exam Dashboard">
                             <Clipboard className="w-4 h-4" />
@@ -2058,16 +2115,19 @@ function SessionContent() {
                         >STOP SHARING</button>
                     )}
                     {role === 'host' ? (
-                        <button onClick={() => setShowKillConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-white text-xs font-bold">END SESSION</button>
+                        <button onClick={() => setShowKillConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-[var(--text-primary)] text-xs font-bold">END SESSION</button>
                     ) : (
-                        <button onClick={() => setShowLeaveConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-white text-xs font-bold">LEAVE ROOM</button>
+                        <button onClick={() => setShowLeaveConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-[var(--text-primary)] text-xs font-bold">LEAVE ROOM</button>
                     )}
                 </div>
             </header>
 
-            <div className="flex-1 flex overflow-hidden">
-                <aside className="w-[240px] shrink-0 border-r border-[var(--border)] bg-[var(--surface)] flex flex-col overflow-y-auto">
-                    <div className="px-4 py-4 border-b border-[var(--border)]">
+            {/* FLOATING SIDEBAR */}
+            <aside className={cn(
+                "absolute left-4 top-[80px] bottom-4 w-[280px] rounded-2xl border border-[var(--border)]/60 bg-[var(--surface)]/30 backdrop-blur-xl flex flex-col overflow-y-auto shadow-[0_8px_32px_rgba(0,0,0,0.4)] z-40 transition-all duration-500 group",
+                (!isUiVisible || !isSidebarOpen) ? "opacity-0 -translate-x-8 pointer-events-none" : "hover:bg-[var(--surface)]/50 hover:backdrop-blur-2xl"
+            )}>
+                <div className="px-4 py-4 transition-opacity duration-300 opacity-60 group-hover:opacity-100">
                         {role === 'host' && pendingJoinRequests.length > 0 && (
                             <div className="mb-4">
                                 <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--accent)] font-bold block mb-2">Pending Requests ({pendingJoinRequests.length})</span>
@@ -2075,7 +2135,7 @@ function SessionContent() {
                                     {pendingJoinRequests.map(req => (
                                         <div key={req.id} className="p-2.5 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20">
                                             <div className="flex items-center justify-between mb-2">
-                                                <span className="text-sm font-bold text-white truncate pr-2">{req.name}</span>
+                                                <span className="text-sm font-bold text-[var(--text-primary)] truncate pr-2">{req.name}</span>
                                                 <span className="text-[10px] text-[var(--text-dim)] font-mono">{req.device || 'Unknown'}</span>
                                             </div>
                                             <div className="flex gap-2">
@@ -2427,8 +2487,8 @@ function SessionContent() {
                     </div>
                 </aside>
 
-                <main className="flex-1 flex flex-col bg-[var(--bg)]">
-                    <div className="flex-1 bg-black relative flex items-center justify-center">
+                <main className="absolute inset-0 bg-[var(--bg)] flex flex-col z-0">
+                    <div className="flex-1 relative flex items-center justify-center">
                         {isCanvasMode && (
                             <StandaloneCanvas 
                                 isHost={role === 'host'} 
@@ -2447,7 +2507,10 @@ function SessionContent() {
                                     onMouseDown={event => emitMouse(event, 'mousedown')}
                                     onMouseUp={event => emitMouse(event, 'mouseup')}
                                     onWheel={event => emitMouse(event, 'wheel')}
-                                    className="w-full h-full object-contain absolute inset-0"
+                                    className={cn(
+                                        "w-full h-full object-contain absolute inset-0 transition-transform duration-300",
+                                        (role === 'host' && isFullscreen && isStreaming) ? "scale-[0.95]" : "scale-100"
+                                    )}
                                 />
                                 {sessionMode === 'collaboration' && <WhiteboardOverlay isHost={role === 'host'} />}
                             </>
@@ -2462,7 +2525,7 @@ function SessionContent() {
                                 participants
                                     .filter(participant => remoteCameraStreams[participant.id])
                                     .map(participant => (
-                                        <div key={participant.id} className="w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative pointer-events-auto">
+                                        <div key={participant.id} className="w-48 h-36 bg-[var(--bg)] border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative pointer-events-auto">
                                             <video
                                                 ref={node => {
                                                     if (node) {
@@ -2476,7 +2539,7 @@ function SessionContent() {
                                                 playsInline
                                                 className="h-full w-full object-cover"
                                             />
-                                            <div className="absolute bottom-0 left-0 right-0 truncate bg-black/65 px-2 py-1 text-[10px] font-bold text-white">
+                                            <div className="absolute bottom-0 left-0 right-0 truncate bg-black/65 px-2 py-1 text-[10px] font-bold text-[var(--text-primary)]">
                                                 {participant.name}
                                             </div>
                                         </div>
@@ -2485,8 +2548,8 @@ function SessionContent() {
                                 <div className={cn(
                                     "transition-all duration-300 pointer-events-auto",
                                     mainVideoRef.current?.srcObject
-                                        ? "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-100"
-                                        : "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-0 pointer-events-none"
+                                        ? "w-48 h-36 bg-[var(--bg)] border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-100"
+                                        : "w-48 h-36 bg-[var(--bg)] border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative opacity-0 pointer-events-none"
                                 )}>
                                     <video ref={remoteCamRef} autoPlay playsInline className={cn(
                                         "w-full h-full",
@@ -2497,7 +2560,7 @@ function SessionContent() {
 
                             {/* Local Camera PiP */}
                             <div className={cn(
-                                "w-48 h-36 bg-black border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative transition-opacity pointer-events-auto",
+                                "w-48 h-36 bg-[var(--bg)] border-2 border-[var(--border)] rounded-xl overflow-hidden shadow-2xl relative transition-opacity pointer-events-auto",
                                 !hasLocalMedia ? "opacity-0 pointer-events-none" : "opacity-100"
                             )}>
                                 {/* The raw camera is visually hidden but must not use display:none so AI pipelines keep getting frames */}
@@ -2520,14 +2583,14 @@ function SessionContent() {
                 <motion.div 
                     drag 
                     dragMomentum={false}
-                    className="absolute right-4 top-20 z-40 transition-shadow duration-300 shadow-[0_0_20px_rgba(0,0,0,0.5)] rounded-2xl bg-[#111] border border-[#222] overflow-hidden flex flex-col"
-                    style={{ width: '24rem', height: 'calc(100vh - 100px)', resize: 'both', minWidth: '300px', minHeight: '400px' }}
+                    className="absolute right-4 top-20 z-40 transition-shadow duration-300 shadow-[0_0_20px_rgba(0,0,0,0.5)] rounded-2xl bg-[var(--surface)] backdrop-blur-2xl border border-[var(--border)] overflow-hidden flex flex-col"
+                    style={{ width: '32rem', height: 'calc(100vh - 120px)' }}
                 >
                     <div className="w-full h-full flex flex-col">
-                        <div className="cursor-move h-4 w-full flex items-center justify-center bg-white/5 border-b border-white/5 hover:bg-white/10 transition-colors">
+                        <div className="cursor-move h-4 w-full flex items-center justify-center bg-[var(--elevated)] border-b border-[var(--border)] hover:bg-[var(--elevated)]/80 transition-colors">
                             <div className="w-8 h-1 rounded-full bg-white/20"></div>
                         </div>
-                        <div className="flex-1 overflow-hidden flex flex-col">
+                        <div className="flex-1 overflow-hidden flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
                             <ExamHostDashboard 
                                 onPushQuestion={(q) => socketRef.current?.emit('host-push-question', { ...q, roomId: roomCodeRef.current || joinInput })}
                                 liveAnswers={examLiveAnswers}
@@ -2556,7 +2619,6 @@ function SessionContent() {
                         {/* Malpractice Warnings Removed as per user request */}
                     </div>
                 </main>
-            </div>
 
             {chatOpen && (
                 <div className="fixed right-4 top-16 z-[90] flex h-[min(560px,calc(100vh-5rem))] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
@@ -2688,7 +2750,7 @@ function SessionContent() {
             )}
 
             {isCalibrating && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md flex-col text-white font-mono">
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md flex-col text-[var(--text-primary)] font-mono">
                     <div className="w-12 h-12 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin mb-6"></div>
                     <h2 className="text-2xl font-bold text-[var(--accent)] tracking-widest mb-2">
                         {antiCheatMsg?.toUpperCase() || "LOADING AI MODELS... (50MB)"}
@@ -2709,7 +2771,7 @@ function SessionContent() {
                             <button onClick={() => {
                                 socketRef.current?.emit('kill-session', roomCode);
                                 window.location.href = '/app';
-                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-white font-bold hover:brightness-110">End Now</button>
+                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">End Now</button>
                         </div>
                     </div>
                 </div>
@@ -2726,7 +2788,7 @@ function SessionContent() {
                             <button onClick={() => {
                                 socketRef.current?.emit('leave-session', roomCode);
                                 window.location.href = '/app';
-                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-white font-bold hover:brightness-110">Leave Now</button>
+                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">Leave Now</button>
                         </div>
                     </div>
                 </div>
@@ -2763,7 +2825,7 @@ function SessionContent() {
                     <div className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-xl flex flex-col h-[80vh] overflow-hidden shadow-2xl">
                         <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--background)]">
                             <h2 className="text-xl font-bold font-display text-[var(--text-primary)]">Select screen or window to share</h2>
-                            <button onClick={() => setShowSharePicker(false)} className="text-[var(--text-dim)] hover:text-white">
+                            <button onClick={() => setShowSharePicker(false)} className="text-[var(--text-dim)] hover:text-[var(--text-primary)]">
                                 <X className="w-6 h-6" />
                             </button>
                         </div>
@@ -2781,7 +2843,7 @@ function SessionContent() {
                                         }}
                                         className="flex flex-col group cursor-pointer bg-[var(--surface)] rounded-lg overflow-hidden border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-[0_0_15px_rgba(0,212,255,0.3)] transition-all duration-200"
                                     >
-                                        <div className="aspect-video bg-black flex items-center justify-center overflow-hidden p-2 relative">
+                                        <div className="aspect-video bg-[var(--bg)] flex items-center justify-center overflow-hidden p-2 relative">
                                             {source.thumbnail ? (
                                                 <img src={source.thumbnail} alt={source.name} className="max-w-full max-h-full object-contain rounded drop-shadow-md" />
                                             ) : (
@@ -2805,7 +2867,7 @@ function SessionContent() {
                 </div>
             )}
 
-            {(showPet || sessionMode === 'supervised') && <PetCanvas petState={petState} sessionMode={sessionMode} petMessage={petMessage} />}
+            {(showPet || sessionMode === 'supervised') && <PetCanvas petState={petState} sessionMode={sessionMode} petMessage={petMessage} isCanvasMode={isCanvasMode} />}
         </div>
     )
 }

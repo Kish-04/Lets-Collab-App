@@ -87,7 +87,7 @@ export default function RecentSessionsPage() {
     <div className="min-h-screen bg-[var(--background)] p-8 font-sans text-[var(--text-primary)]">
       <button
         onClick={() => router.push("/app")}
-        className="mb-8 flex items-center gap-2 text-sm text-[var(--text-dim)] transition-colors hover:text-white"
+        className="mb-8 flex items-center gap-2 text-sm text-[var(--text-dim)] transition-colors hover:text-[var(--text-primary)]"
       >
         <ArrowLeft className="h-4 w-4" /> Back to Home
       </button>
@@ -128,7 +128,7 @@ export default function RecentSessionsPage() {
             </p>
             <button
               onClick={() => router.push("/app")}
-              className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-white/5"
+              className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--elevated)]"
             >
               Go to dashboard
             </button>
@@ -190,7 +190,7 @@ export default function RecentSessionsPage() {
                   {live && (
                     <button
                       onClick={() => router.push(`/session?room=${s.roomCode}`)}
-                      className={`ml-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-white/5`}
+                      className={`ml-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--elevated)]`}
                     >
                       Rejoin
                     </button>

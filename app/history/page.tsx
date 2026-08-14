@@ -5,7 +5,7 @@ import { getAuthHeaders, getBackendUrl } from '@/lib/utils';
 
 export default function SessionHistoryWrapper() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#0a0a0a] text-white p-8">Loading...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#0a0a0a] text-[var(--text-primary)] p-8">Loading...</div>}>
       <SessionHistoryViewer />
     </Suspense>
   );
@@ -50,15 +50,15 @@ function SessionHistoryViewer() {
   }, [sessionId]);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white p-8 font-sans">
+    <div className="min-h-screen bg-[#0a0a0a] text-[var(--text-primary)] p-8 font-sans">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-2 tracking-tight text-white/90">
+        <h1 className="text-3xl font-bold mb-2 tracking-tight text-[var(--text-primary)]/">
           On-Chain Permission History
         </h1>
         <p className="text-gray-400 mb-8 font-medium">Session ID: <span className="text-cyan-400 font-mono bg-cyan-950/30 px-2 py-0.5 rounded border border-cyan-900/50">{sessionId}</span></p>
 
         {loading ? (
-          <div className="flex items-center justify-center p-12 bg-white/5 rounded-xl border border-white/10 shadow-2xl backdrop-blur-sm">
+          <div className="flex items-center justify-center p-12 bg-[var(--elevated)] rounded-xl border border-[var(--border)]/60 shadow-2xl backdrop-blur-sm">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500"></div>
             <span className="ml-4 text-cyan-400/80 font-medium">Querying Sepolia Blockchain...</span>
           </div>
@@ -71,9 +71,9 @@ function SessionHistoryViewer() {
             </div>
           </div>
         ) : logs.length === 0 ? (
-          <div className="bg-white/5 border border-white/10 text-gray-300 p-12 rounded-xl text-center shadow-2xl backdrop-blur-sm">
+          <div className="bg-[var(--elevated)] border border-[var(--border)]/60 text-gray-300 p-12 rounded-xl text-center shadow-2xl backdrop-blur-sm">
             <svg className="w-16 h-16 mx-auto text-gray-500 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <h3 className="text-xl font-bold text-white/80">No On-Chain History Found</h3>
+            <h3 className="text-xl font-bold text-[var(--text-primary)]/">No On-Chain History Found</h3>
             <p className="mt-2 text-gray-400">There are no verifiable events recorded on the blockchain for this session yet.</p>
           </div>
         ) : (
@@ -86,19 +86,19 @@ function SessionHistoryViewer() {
                     </svg>
                 </div>
                 
-                <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-5 rounded-xl bg-white/5 border border-white/10 shadow-xl backdrop-blur-md transition-all hover:bg-white/10 hover:border-cyan-500/30">
+                <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-5 rounded-xl bg-[var(--elevated)] border border-[var(--border)]/60 shadow-xl backdrop-blur-md transition-all hover:bg-[var(--elevated)]/80 hover:border-cyan-500/30">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-bold text-cyan-400 tracking-wide text-sm">{log.eventType}</span>
-                    <time className="text-xs font-mono text-gray-500 bg-black/40 px-2 py-1 rounded">
+                    <time className="text-xs font-mono text-gray-500 bg-[var(--bg)]/70 px-2 py-1 rounded">
                       {new Date(log.timestamp * 1000).toLocaleString()}
                     </time>
                   </div>
                   <div className="space-y-2 text-sm">
                     {log.hostEmail && log.hostEmail !== 'Unknown Hash' && (
-                        <p className="flex justify-between border-b border-white/5 pb-1"><span className="text-gray-400">Host:</span> <span className="font-medium">{log.hostEmail}</span></p>
+                        <p className="flex justify-between border-b border-[var(--border)] pb-1"><span className="text-gray-400">Host:</span> <span className="font-medium">{log.hostEmail}</span></p>
                     )}
                     {log.controllerEmail && log.controllerEmail !== 'Unknown Hash' && (
-                        <p className="flex justify-between border-b border-white/5 pb-1"><span className="text-gray-400">Controller:</span> <span className="font-medium text-emerald-400">{log.controllerEmail}</span></p>
+                        <p className="flex justify-between border-b border-[var(--border)] pb-1"><span className="text-gray-400">Controller:</span> <span className="font-medium text-emerald-400">{log.controllerEmail}</span></p>
                     )}
                     {typeof log.txHash === 'string' && log.txHash.startsWith('0x') ? (
                       <a
@@ -111,7 +111,7 @@ function SessionHistoryViewer() {
                         {log.txHash.substring(0, 10)}...{log.txHash.substring(log.txHash.length - 8)}
                       </a>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-400 bg-white/5 px-3 py-1.5 rounded-md font-mono">
+                      <span className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-400 bg-[var(--elevated)] px-3 py-1.5 rounded-md font-mono">
                         {log.txHash || 'Off-chain / unavailable'}
                       </span>
                     )}

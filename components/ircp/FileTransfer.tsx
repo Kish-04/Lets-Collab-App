@@ -163,7 +163,7 @@ export function FileTransfer({ peerId }: { peerId?: string }) {
             </div>
 
             {status !== 'Idle' && (
-                <div className="bg-black/50 rounded-lg p-3 border border-[#222]">
+                <div className="bg-[var(--bg)]/80 rounded-lg p-3 border border-[#222]">
                     <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] text-[var(--text-secondary)] font-mono">{status}</span>
                         <span className="text-[10px] text-[var(--accent)] font-mono">{progress}%</span>

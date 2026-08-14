@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
 import * as THREE from 'three'
 import { motion, AnimatePresence, useMotionValue, animate, useDragControls } from 'framer-motion'
+import { Volume2, VolumeX } from 'lucide-react'
 import { RobotScene } from './RobotScene'
 import { useRobotStore, EmotionState } from './StateMachine'
 import { useInactivitySleep, useDOMObserver } from './Interaction'
@@ -38,7 +39,7 @@ function InteractionCatcher({
   )
 }
 
-export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isStandalone }: { petState?: EmotionState, sessionMode?: string, petMessage?: string, isStandalone?: boolean }) {
+export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isStandalone, isCanvasMode }: { petState?: EmotionState, sessionMode?: string, petMessage?: string, isStandalone?: boolean, isCanvasMode?: boolean }) {
   useDOMObserver()
   const [hovered, setHovered] = useState(false)
   const [pokeTrigger, setPokeTrigger] = useState(0)
@@ -53,6 +54,11 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
   const rotate = useMotionValue(0)
   
   const [bounds, setBounds] = useState({ left: 0, right: 0, top: 0, bottom: 0 })
+
+  const setIsCanvasMode = useRobotStore(state => state.setIsCanvasMode)
+  useEffect(() => {
+    setIsCanvasMode(!!isCanvasMode)
+  }, [isCanvasMode, setIsCanvasMode])
 
   useEffect(() => {
     const updateBounds = () => {
@@ -89,9 +95,12 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     })
   }, [x, bounds])
 
-  const setEmotion = useRobotStore(state => state.setEmotion)
   const emotion = useRobotStore(state => state.emotion)
+  const setEmotion = useRobotStore(state => state.setEmotion)
   const setTargetLook = useRobotStore(state => state.setTargetLook)
+  const setDragVelocity = useRobotStore(state => state.setDragVelocity)
+  const isMuted = useRobotStore(state => state.isMuted)
+  const toggleMute = useRobotStore(state => state.toggleMute)
   const bodyColor = useRobotStore(state => state.bodyColor)
 
   // Fall asleep after 10 seconds of inactivity (for testing)
@@ -157,13 +166,17 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       setChatOpen(false); // Force speech bubble outside chat
       setAiResponse(petMessage);
       setEmotion('Warning');
-      import('./Sounds').then(m => m.playWarningTone());
+      import('./Sounds').then(m => {
+        m.playWarningTone();
+        m.speakText(petMessage);
+      });
     } else {
       setAiResponse(null);
     }
   }, [petMessage, setEmotion]);
 
   const handleClick = useCallback(() => {
+    import('./Sounds').then(m => m.playHoverBeep())
     setPokeTrigger((n) => n + 1)
     setChatOpen((v) => !v)
     // When closing via the robot, dismiss the lingering speech bubble too
@@ -179,6 +192,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
 
   const handleDoubleClick = useCallback((e: any) => {
     e.stopPropagation?.()
+    import('./Sounds').then(m => m.playBlip(600))
     setDetailsOpen((v) => !v)
     setEmotion('Happy')
     setTimeout(() => setEmotion('Idle'), 3000)
@@ -192,9 +206,13 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     setIsTyping(true)
     
     if (sessionMode === 'supervised') {
+      const msg = "I am your invigilator for this supervised session. I cannot answer your questions or provide assistance. Please focus on your screen.";
       setEmotion('Warning')
-      import('./Sounds').then(m => m.playWarningTone())
-      setAiResponse("I am your invigilator for this supervised session. I cannot answer your questions or provide assistance. Please focus on your screen.")
+      import('./Sounds').then(m => {
+        m.playWarningTone();
+        m.speakText(msg);
+      })
+      setAiResponse(msg)
       setIsTyping(false)
       setTimeout(() => setEmotion('Idle'), 5000)
       return
@@ -224,17 +242,26 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       setEmotion('Reasoning')
       setTimeout(() => {
         setEmotion('Answering')
-        setAiResponse(reply || "I didn't get that.")
-        import('./Sounds').then(m => m.playSuccessChime())
+        const finalReply = reply || "I didn't get that.";
+        setAiResponse(finalReply)
+        import('./Sounds').then(m => {
+          m.playSuccessChime();
+          m.speakText(finalReply);
+        })
         setIsTyping(false)
 
         setTimeout(() => setEmotion('Idle'), 5000) // Reset to idle after a while
       }, 1000)
 
-    } catch (e) {
+    } catch (e: any) {
+      console.error('Pet AI Error:', e)
+      const errorMessage = String(e?.message || e)
       setEmotion('Error')
-      import('./Sounds').then(m => m.playWarningTone())
-      setAiResponse("I hit a snag while thinking. Please try again.")
+      setAiResponse(`I hit a snag: ${errorMessage}`)
+      import('./Sounds').then(m => {
+        m.playWarningTone();
+        m.speakText(errorMessage);
+      })
       setIsTyping(false)
       setTimeout(() => setEmotion('Idle'), 4000)
     }
@@ -247,7 +274,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     setTargetLook(px * 12, py * 8 + 2, 8)
   }
 
-  const setDragVelocity = useRobotStore(state => state.setDragVelocity)
+
 
   const handleDrag = useCallback(
     (_: unknown, info: { velocity: { x: number; y: number }, delta: { x: number; y: number } }) => {
@@ -291,9 +318,9 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         onDragEnd={handleDragEnd}
         onDrag={handleDrag}
         style={{ width: 165, height: 320, x, y, rotate }}
-        className="fixed bottom-6 right-6 z-50 cursor-grab active:cursor-grabbing"
+        className="fixed bottom-6 right-6 z-[150] cursor-grab active:cursor-grabbing"
       >
-        <Canvas shadows dpr={[1, 2]} gl={{ antialias: true, alpha: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }} camera={{ position: [0, 0, 7.5], fov: 40 }} className="pointer-events-auto">
+        <Canvas frameloop="always" shadows dpr={[1, 2]} gl={{ antialias: true, alpha: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }} camera={{ position: [0, 0, 7.5], fov: 40 }} className="pointer-events-auto">
           <RobotScene hovered={hovered} pokeTrigger={pokeTrigger} emotion={emotion} />
           <InteractionCatcher 
             onHover={setHovered} 
@@ -314,14 +341,14 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8, y: 10 }}
             className={isStandalone
-              ? "absolute bottom-8 left-4 right-4 z-[60] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-white p-3 rounded-2xl shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
-              : "fixed bottom-[340px] right-24 z-[60] max-w-[250px] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-white p-3 rounded-2xl rounded-br-sm shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
+              ? "absolute bottom-8 left-4 right-4 z-[160] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-neutral-100 p-3 rounded-2xl shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
+              : "fixed bottom-[340px] right-24 z-[160] max-w-[250px] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-neutral-100 p-3 rounded-2xl rounded-br-sm shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
             }
           >
             <button
               onClick={closeChat}
               aria-label="Dismiss AI Pet message"
-              className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
+              className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 transition-colors"
             >
               ✕
             </button>
@@ -335,19 +362,28 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.96 }}
             className={isStandalone
-              ? "absolute bottom-4 left-4 right-4 z-[60] rounded-xl bg-neutral-900 text-white shadow-2xl p-3 border border-neutral-700"
-              : "fixed bottom-72 right-6 z-[60] w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-neutral-900 text-white shadow-2xl p-3"
+              ? "absolute bottom-4 left-4 right-4 z-[160] rounded-xl bg-neutral-900 text-neutral-100 shadow-2xl p-3 border border-neutral-700"
+              : "fixed bottom-72 right-6 z-[160] w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-neutral-900 text-neutral-100 shadow-2xl p-3"
             }
           >
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs text-neutral-400 uppercase tracking-wider font-semibold">AI Pet</div>
-              <button
-                onClick={closeChat}
-                aria-label="Close AI Pet chat"
-                className="w-6 h-6 flex items-center justify-center rounded-full text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={toggleMute}
+                  aria-label={isMuted ? "Unmute AI Pet" : "Mute AI Pet"}
+                  className="w-6 h-6 flex items-center justify-center rounded-full text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 transition-colors"
+                >
+                  {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  onClick={closeChat}
+                  aria-label="Close AI Pet chat"
+                  className="w-6 h-6 flex items-center justify-center rounded-full text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             {/* AI Speech Bubble inside chat */}
             {aiResponse && (
@@ -372,7 +408,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Ask something…"
-                className="flex-1 min-w-0 bg-neutral-800 rounded-md px-2 py-1 text-sm outline-none text-white focus:ring-1 ring-cyan-500"
+                className="flex-1 min-w-0 bg-neutral-800 rounded-md px-2 py-1 text-sm outline-none text-neutral-100 placeholder-neutral-500 focus:ring-1 ring-cyan-500"
                 onFocus={() => setEmotion('Reading')}
                 onBlur={() => setEmotion('Idle')}
                 onKeyDown={(e) => {

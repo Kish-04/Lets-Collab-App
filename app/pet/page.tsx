@@ -56,7 +56,7 @@ export default function PetWidgetPage() {
                   onPointerDown={onPointerDown}
                   onPointerMove={onPointerMove}
                   onPointerUp={onPointerUp}
-                  className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-12 h-6 bg-neutral-800/80 hover:bg-neutral-700 rounded-full cursor-move z-[9999] backdrop-blur-sm transition-colors text-white/70 hover:text-white border border-white/20 shadow-lg" 
+                  className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-12 h-6 bg-neutral-800/80 hover:bg-neutral-700 rounded-full cursor-move z-[9999] backdrop-blur-sm transition-colors text-[var(--text-primary)]/ hover:text-[var(--text-primary)] border border-[var(--border-bright)] shadow-lg" 
                   title="Drag to move"
                 >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>

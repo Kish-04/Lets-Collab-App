@@ -67,16 +67,16 @@ export const DesignVerificationOverlay = () => {
   return (
     <div 
       style={{ position: 'fixed', bottom: '20px', left: '20px', width: '250px', zIndex: 99999, pointerEvents: 'auto' }}
-      className="bg-black/90 text-green-400 p-4 rounded border border-green-900 font-mono text-xs shadow-2xl backdrop-blur"
+      className="bg-[var(--bg)]/90 text-green-400 p-4 rounded border border-green-900 font-mono text-xs shadow-2xl backdrop-blur"
     >
-      <div className="font-bold text-white mb-2 text-sm border-b border-green-900 pb-1">DESIGN VERIFICATION</div>
+      <div className="font-bold text-[var(--text-primary)] mb-2 text-sm border-b border-green-900 pb-1">DESIGN VERIFICATION</div>
       
       <div className="mb-2">
         <span className="text-gray-400">Total Meshes:</span> {stats.totalMeshes}
       </div>
       
       <div className="space-y-1 mb-3 border-t border-green-900 pt-2">
-        <div className="text-white font-semibold">Renderer (gl.info)</div>
+        <div className="text-[var(--text-primary)] font-semibold">Renderer (gl.info)</div>
         <div className="flex justify-between"><span>Draw Calls:</span> <span>{stats.calls}</span></div>
         <div className="flex justify-between"><span>Triangles:</span> <span>{stats.triangles.toLocaleString()}</span></div>
         <div className="flex justify-between"><span>Geometries:</span> <span>{stats.geometries}</span></div>
@@ -85,7 +85,7 @@ export const DesignVerificationOverlay = () => {
 
       <button 
         onClick={toggleWireframe}
-        className={`w-full py-2 rounded font-bold transition-all ${wireframe ? 'bg-green-500 text-black' : 'bg-gray-800 text-white hover:bg-gray-700'}`}
+        className={`w-full py-2 rounded font-bold transition-all ${wireframe ? 'bg-green-500 text-black' : 'bg-gray-800 text-[var(--text-primary)] hover:bg-gray-700'}`}
       >
         {wireframe ? 'Disable Wireframe' : 'Enable Wireframe'}
       </button>
