@@ -104,16 +104,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                     <SyncEngine peerId={peerId} />
                 </Tldraw>
             </div>
-            
-            <style dangerouslySetInnerHTML={{__html: `
-                .tldraw-wrapper [class*="watermark"],
-                .tldraw-wrapper [class*="badge"] {
-                    display: none !important;
-                    opacity: 0 !important;
-                    visibility: hidden !important;
-                    pointer-events: none !important;
-                }
-            `}} />
         </div>
     )
 }
