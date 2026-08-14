@@ -31,13 +31,14 @@ import { VirtualBackground, BackgroundStyle } from "@/lib/VirtualBackground"
 import { dataChannelManager } from "@/lib/DataChannelManager"
 import { FileTransfer } from "@/components/ircp/FileTransfer"
 import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
-import { StandaloneCanvas } from "@/components/ircp/StandaloneCanvas"
+// Removed direct import to use dynamic import instead
 import { AiSupervisor } from "@/components/ircp/supervisor/AiSupervisor"
 import { SessionRecorder } from "@/lib/SessionRecorder"
 import { FederatedFeatures, FederatedLearner } from "@/lib/FederatedLearner"
 
 import dynamic from 'next/dynamic'
 const PetCanvas = dynamic(() => import('@/components/ircp/pet/PetCanvas').then(m => m.PetCanvas), { ssr: false })
+const StandaloneCanvas = dynamic(() => import('@/components/ircp/StandaloneCanvas').then(m => m.StandaloneCanvas), { ssr: false })
 
 import { ExamHostDashboard, ExamQuestion } from '@/components/ircp/exam/ExamHostDashboard'
 import { ExamControllerOverlay } from '@/components/ircp/exam/ExamControllerOverlay'
