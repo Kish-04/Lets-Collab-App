@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { Tldraw, useEditor } from 'tldraw'
+import 'tldraw/tldraw.css'
 import { dataChannelManager } from '@/lib/DataChannelManager'
 import { X, Download, FilePlus } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
