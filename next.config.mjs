@@ -11,6 +11,11 @@ const nextConfig = {
       'monaco-editor/esm/vs/editor/editor.api.js': 'monaco-editor'
     }
     return config
+  },
+  turbopack: {
+    resolveAlias: {
+      'monaco-editor/esm/vs/editor/editor.api.js': 'monaco-editor'
+    }
   }
 }
 
