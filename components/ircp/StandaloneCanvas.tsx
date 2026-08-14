@@ -127,6 +127,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             <div className="relative flex-1 overflow-hidden tldraw-wrapper">
                 <CanvasErrorBoundary>
                     <Tldraw 
+                        forceFallback={true}
                         components={{
                             SharePanel: () => null
                         }}
