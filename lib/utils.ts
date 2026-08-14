@@ -66,7 +66,7 @@ export function getBackendUrl() {
     }
     return window.location.origin
   }
-  return normalizeUrl(process.env.BACKEND_URL) || `http://localhost:${backendPort}`;
+  return normalizeUrl(process.env.BACKEND_URL) || 'https://let-s-collab-tjwc.onrender.com';
 }
 
 export function getStoredAuthToken(): string | null {
