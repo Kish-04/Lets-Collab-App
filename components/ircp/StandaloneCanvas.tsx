@@ -13,6 +13,37 @@ interface Props {
     onClose: () => void
 }
 
+class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
+    constructor(props: {children: React.ReactNode}) {
+        super(props);
+        this.state = { hasError: false };
+    }
+
+    static getDerivedStateFromError(error: any) {
+        return { hasError: true };
+    }
+
+    componentDidCatch(error: any, errorInfo: any) {
+        console.error("Tldraw crashed. Often caused by AdBlockers hiding the canvas.", error, errorInfo);
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="flex-1 flex flex-col items-center justify-center text-white p-8 text-center bg-[#111]">
+                    <h2 className="text-2xl font-bold mb-4 text-red-500">Canvas Component Crashed</h2>
+                    <p className="mb-4 text-[var(--text-secondary)]">This is usually caused by an <b>Ad Blocker</b> or browser extension aggressively hiding UI elements.</p>
+                    <p className="mb-6 text-[var(--text-secondary)]">Please disable your Ad Blocker for this site, or try using an Incognito window.</p>
+                    <button onClick={() => window.location.reload()} className="px-6 py-2 bg-[var(--accent)] text-black font-bold rounded-lg transition-transform hover:scale-105">
+                        Reload Page
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 function SyncEngine({ peerId }: { peerId?: string }) {
     const editor = useEditor()
     
@@ -95,14 +126,16 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             </div>
             
             <div className="relative flex-1 overflow-hidden tldraw-wrapper">
-                <Tldraw 
-                    persistenceKey={`collab-canvas-${peerId || 'local'}`}
-                    components={{
-                        SharePanel: () => null
-                    }}
-                >
-                    <SyncEngine peerId={peerId} />
-                </Tldraw>
+                <CanvasErrorBoundary>
+                    <Tldraw 
+                        persistenceKey={`collab-canvas-${peerId || 'local'}`}
+                        components={{
+                            SharePanel: () => null
+                        }}
+                    >
+                        <SyncEngine peerId={peerId} />
+                    </Tldraw>
+                </CanvasErrorBoundary>
             </div>
         </div>
     )
