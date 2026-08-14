@@ -85,7 +85,7 @@ export class FederatedLearner {
     public async syncGlobalWeights() {
         try {
             const weights = await this.getSerializedWeights();
-            const BACKEND_URL = typeof window !== 'undefined' ? (window as any)._BACKEND_URL || 'https://let-s-collab-tjwc.onrender.com' : 'https://let-s-collab-tjwc.onrender.com';
+            const BACKEND_URL = typeof window !== 'undefined' ? (window as any)._BACKEND_URL || 'http://localhost:8081' : 'http://localhost:8081';
 
             await fetch(`${BACKEND_URL}/api/federated-weights`, {
                 method: 'POST',

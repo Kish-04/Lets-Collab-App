@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
 // Set this to your local machine IP or Render/Vercel URL
-export const BACKEND_URL = 'https://let-s-collab-tjwc.onrender.com';
+export const BACKEND_URL = 'http://10.233.82.28:8081';
 
 const api = axios.create({
   baseURL: BACKEND_URL,

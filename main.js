@@ -80,7 +80,7 @@ function getConfiguredBackendUrl() {
       }
     } catch (e) {}
   }
-  return 'https://let-s-collab-tjwc.onrender.com';
+  return 'https://letscollab.vercel.app'; // Fallback
 }
 
 function isTrustedRendererUrl(value) {
