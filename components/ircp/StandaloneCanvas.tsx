@@ -127,7 +127,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             <div className="relative flex-1 overflow-hidden tldraw-wrapper">
                 <CanvasErrorBoundary>
                     <Tldraw 
-                        persistenceKey={`collab-canvas-${peerId || 'local'}`}
                         components={{
                             SharePanel: () => null
                         }}
