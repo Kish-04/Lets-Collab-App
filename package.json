@@ -180,6 +180,7 @@
     "@react-three/fiber": "^9.7.0",
     "@react-three/postprocessing": "^3.0.4",
     "@vladmandic/face-api": "^1.7.15",
+    "dotenv": "^16.4.5",
     "electron-serve": "^1.1.0",
     "express": "^5.2.1",
     "framer-motion": "^12.42.2",
