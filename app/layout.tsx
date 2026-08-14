@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next"
 import { Analytics } from "@vercel/analytics/next"
 import ThemeCustomizer from "@/components/ircp/ThemeCustomizer"
 import "./globals.css"
+import "tldraw/tldraw.css"
 
 export const metadata: Metadata = {
   title: "Let's Collab! | Secure Remote Collaboration",
