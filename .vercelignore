@@ -6,3 +6,13 @@ chrome
 dist
 out
 asar_temp
+public/downloads/
+build/
+.idea
+admin-dashboard-app/
+mkcert.exe
+*.exe
+*.txt
+*.bat
+scratch/
+dist-fixed/
