@@ -45,6 +45,18 @@ if (fs.existsSync(nextOutPath)) {
     if (req.url === '/health' || req.url.startsWith('/api') || req.url.startsWith('/socket.io')) {
       return next();
     }
+    
+    const urlPath = req.path.endsWith('/') ? req.path + 'index' : req.path;
+    const htmlPath = path.join(nextOutPath, urlPath + '.html');
+    const folderIndexPath = path.join(nextOutPath, urlPath, 'index.html');
+    
+    if (fs.existsSync(htmlPath)) {
+      return res.sendFile(htmlPath);
+    }
+    if (fs.existsSync(folderIndexPath)) {
+      return res.sendFile(folderIndexPath);
+    }
+    
     res.sendFile(path.join(nextOutPath, 'index.html'));
   });
 }
