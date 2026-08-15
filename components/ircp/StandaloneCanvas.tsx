@@ -12,18 +12,18 @@ interface Props {
     onClose: () => void
 }
 
-class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
+class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, errorMsg: string}> {
     constructor(props: {children: React.ReactNode}) {
         super(props);
-        this.state = { hasError: false };
+        this.state = { hasError: false, errorMsg: '' };
     }
 
     static getDerivedStateFromError(error: any) {
-        return { hasError: true };
+        return { hasError: true, errorMsg: error?.message || String(error) };
     }
 
     componentDidCatch(error: any, errorInfo: any) {
-        console.error("Tldraw crashed. Often caused by AdBlockers hiding the canvas.", error, errorInfo);
+        console.error("Tldraw crashed.", error, errorInfo);
     }
 
     render() {
@@ -31,8 +31,8 @@ class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {
             return (
                 <div className="flex-1 flex flex-col items-center justify-center text-white p-8 text-center bg-[#111]">
                     <h2 className="text-2xl font-bold mb-4 text-red-500">Canvas Component Crashed</h2>
-                    <p className="mb-4 text-[var(--text-secondary)]">This is usually caused by an <b>Ad Blocker</b> or browser extension aggressively hiding UI elements.</p>
-                    <p className="mb-6 text-[var(--text-secondary)]">Please disable your Ad Blocker for this site, or try using an Incognito window.</p>
+                    <p className="mb-4 text-[var(--text-secondary)]">Error: <b>{this.state.errorMsg}</b></p>
+                    <p className="mb-4 text-[var(--text-secondary)]">If the error says something about hiding UI elements, it might be an Ad Blocker.</p>
                     <button onClick={() => window.location.reload()} className="px-6 py-2 bg-[var(--accent)] text-black font-bold rounded-lg transition-transform hover:scale-105">
                         Reload Page
                     </button>
