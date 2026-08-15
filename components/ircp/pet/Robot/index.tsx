@@ -241,10 +241,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         }
         lastScreenPos.current = { x: e.nativeEvent.screenX, y: e.nativeEvent.screenY }
         
-        setDragVelocity(dx * 20, dy * 20)
-        if (Math.abs(dx * 20) > 200 || Math.abs(dy * 20) > 200) {
-          setEmotion('Confused')
-        }
+        setDragVelocity(dx * 2, dy * 2) // Less intense velocity for window drag
       }
     } else if (emotion !== 'Sleep') {
       const px = (e.clientX / window.innerWidth) * 2 - 1

@@ -162,32 +162,41 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
     const injectBulletList = () => {
         if (!excalidrawAPIRef.current) return;
+    const injectBulletList = () => {
+        if (!excalidrawAPIRef.current) return;
         const appState = excalidrawAPIRef.current.getAppState();
         const currentElements = excalidrawAPIRef.current.getSceneElements();
+        
+        const newText = {
+            type: 'text',
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000000),
+            isDeleted: false,
+            id: `text-${Date.now()}`,
+            x: (appState.scrollX * -1) + (appState.width / 2) - 50,
+            y: (appState.scrollY * -1) + (appState.height / 2) - 40,
+            text: "• Item 1\n• Item 2\n• Item 3",
+            fontSize: 20,
+            fontFamily: 1,
+            textAlign: "left",
+            verticalAlign: "top",
+            strokeColor: appState.currentItemStrokeColor || '#000000',
+            backgroundColor: 'transparent',
+            width: 150,
+            height: 80,
+            seed: Math.floor(Math.random() * 1000000000),
+            groupIds: [],
+            boundElements: [],
+            updated: Date.now(),
+            locked: false
+        };
+        
         excalidrawAPIRef.current.updateScene({
-            elements: [...currentElements, {
-                type: 'text',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: `text-${Date.now()}`,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 50,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 40,
-                text: "• Item 1\n• Item 2\n• Item 3",
-                fontSize: 20,
-                fontFamily: 1,
-                textAlign: "left",
-                verticalAlign: "top",
-                strokeColor: appState.currentItemStrokeColor || '#000000',
-                backgroundColor: 'transparent',
-                width: 150,
-                height: 80,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [],
-                updated: Date.now(),
-                locked: false
-            }]
+            elements: [...currentElements, newText as any],
+            appState: {
+                activeTool: { type: 'selection', customType: null },
+                selectedElementIds: { [newText.id]: true }
+            }
         });
         setActiveMenu(null);
     }
@@ -200,55 +209,61 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         const rectId = `code-rect-${Date.now()}`;
         const textId = `code-text-${Date.now()}`;
         
+        const newRect = {
+            type: 'rectangle',
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000000),
+            isDeleted: false,
+            id: rectId,
+            x: (appState.scrollX * -1) + (appState.width / 2) - 150,
+            y: (appState.scrollY * -1) + (appState.height / 2) - 75,
+            strokeColor: 'transparent',
+            backgroundColor: '#1e1e1e', // Dark background for code
+            fillStyle: 'solid',
+            strokeWidth: 0,
+            strokeStyle: 'solid',
+            roughness: 0,
+            opacity: 100,
+            width: 300,
+            height: 150,
+            seed: Math.floor(Math.random() * 1000000000),
+            groupIds: [],
+            boundElements: [{ id: textId, type: 'text' }],
+            updated: Date.now(),
+            locked: false
+        };
+        
+        const newText = {
+            type: 'text',
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000000),
+            isDeleted: false,
+            id: textId,
+            x: (appState.scrollX * -1) + (appState.width / 2) - 140,
+            y: (appState.scrollY * -1) + (appState.height / 2) - 65,
+            text: "function helloWorld() {\n  console.log('Hello');\n}",
+            fontSize: 16,
+            fontFamily: 3, // Monospace
+            textAlign: "left",
+            verticalAlign: "top",
+            strokeColor: '#4ade80', // Green text
+            backgroundColor: 'transparent',
+            width: 280,
+            height: 130,
+            seed: Math.floor(Math.random() * 1000000000),
+            groupIds: [],
+            boundElements: [],
+            containerId: rectId,
+            updated: Date.now(),
+            locked: false
+        };
+        
         excalidrawAPIRef.current.updateScene({
-            elements: [...currentElements, 
-            {
-                type: 'rectangle',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: rectId,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 150,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 75,
-                strokeColor: 'transparent',
-                backgroundColor: '#1e1e1e', // Dark background for code
-                fillStyle: 'solid',
-                strokeWidth: 0,
-                strokeStyle: 'solid',
-                roughness: 0,
-                opacity: 100,
-                width: 300,
-                height: 150,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [{ id: textId, type: 'text' }],
-                updated: Date.now(),
-                locked: false
-            },
-            {
-                type: 'text',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: textId,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 140,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 65,
-                text: "function helloWorld() {\n  console.log('Hello');\n}",
-                fontSize: 16,
-                fontFamily: 3, // Monospace
-                textAlign: "left",
-                verticalAlign: "top",
-                strokeColor: '#4ade80', // Green text
-                backgroundColor: 'transparent',
-                width: 280,
-                height: 130,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [],
-                containerId: rectId,
-                updated: Date.now(),
-                locked: false
-            }]
+            elements: [...currentElements, newRect as any, newText as any],
+            appState: {
+                activeTool: { type: 'selection', customType: null },
+                selectedElementIds: { [newRect.id]: true }
+            }
         });
         setActiveMenu(null);
     }
@@ -261,55 +276,61 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         const rectId = `sticky-rect-${Date.now()}`;
         const textId = `sticky-text-${Date.now()}`;
         
+        const newRect = {
+            type: 'rectangle',
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000000),
+            isDeleted: false,
+            id: rectId,
+            x: (appState.scrollX * -1) + (appState.width / 2) - 100,
+            y: (appState.scrollY * -1) + (appState.height / 2) - 100,
+            strokeColor: 'transparent',
+            backgroundColor: stickyColor,
+            fillStyle: 'solid',
+            strokeWidth: 0,
+            strokeStyle: 'solid',
+            roughness: 0,
+            opacity: 100,
+            width: 200,
+            height: 200,
+            seed: Math.floor(Math.random() * 1000000000),
+            groupIds: [],
+            boundElements: [{ id: textId, type: 'text' }],
+            updated: Date.now(),
+            locked: false
+        };
+        
+        const newText = {
+            type: 'text',
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000000),
+            isDeleted: false,
+            id: textId,
+            x: (appState.scrollX * -1) + (appState.width / 2) - 90,
+            y: (appState.scrollY * -1) + (appState.height / 2) - 90,
+            text: "Type here...",
+            fontSize: 20,
+            fontFamily: 1, // Normal font
+            textAlign: "center",
+            verticalAlign: "middle",
+            strokeColor: '#000000',
+            backgroundColor: 'transparent',
+            width: 180,
+            height: 180,
+            seed: Math.floor(Math.random() * 1000000000),
+            groupIds: [],
+            boundElements: [],
+            containerId: rectId,
+            updated: Date.now(),
+            locked: false
+        };
+        
         excalidrawAPIRef.current.updateScene({
-            elements: [...currentElements, 
-            {
-                type: 'rectangle',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: rectId,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 100,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 100,
-                strokeColor: 'transparent',
-                backgroundColor: stickyColor,
-                fillStyle: 'solid',
-                strokeWidth: 0,
-                strokeStyle: 'solid',
-                roughness: 0,
-                opacity: 100,
-                width: 200,
-                height: 200,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [{ id: textId, type: 'text' }],
-                updated: Date.now(),
-                locked: false
-            },
-            {
-                type: 'text',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: textId,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 90,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 90,
-                text: "Type here...",
-                fontSize: 20,
-                fontFamily: 1, // Normal font
-                textAlign: "center",
-                verticalAlign: "middle",
-                strokeColor: '#000000',
-                backgroundColor: 'transparent',
-                width: 180,
-                height: 180,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [],
-                containerId: rectId,
-                updated: Date.now(),
-                locked: false
-            }]
+            elements: [...currentElements, newRect as any, newText as any],
+            appState: {
+                activeTool: { type: 'selection', customType: null },
+                selectedElementIds: { [newRect.id]: true }
+            }
         });
         setActiveMenu(null);
     }
@@ -327,6 +348,20 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         });
         setActiveMenu(null);
     }
+
+    // Reactively update highlighter if active
+    useEffect(() => {
+        if (!excalidrawAPIRef.current) return;
+        const appState = excalidrawAPIRef.current.getAppState();
+        if (appState.activeTool.type === 'freedraw') {
+            excalidrawAPIRef.current.updateScene({
+                appState: {
+                    currentItemStrokeColor: highlighterColor,
+                    currentItemStrokeWidth: highlighterSize
+                }
+            });
+        }
+    }, [highlighterSize, highlighterColor]);
 
     const injectShape = (shapeType: string) => {
         if (!excalidrawAPIRef.current) return;
@@ -762,9 +797,9 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                                 <div className="flex flex-col gap-1">
                                                     <div className="flex justify-between">
                                                         <label className="text-[10px] font-bold text-gray-500 uppercase">Highlighter Size</label>
-                                                        <span className="text-[10px] font-bold text-indigo-600">{highlighterSize}</span>
+                                                        <span className="text-[10px] font-bold text-indigo-600">{highlighterSize}px</span>
                                                     </div>
-                                                    <input type="range" min="1" max="10" value={highlighterSize} onChange={e => setHighlighterSize(parseInt(e.target.value))} className="w-full accent-indigo-500" />
+                                                    <input type="range" min="2" max="50" value={highlighterSize} onChange={e => setHighlighterSize(parseInt(e.target.value))} className="w-full accent-indigo-500" />
                                                 </div>
                                             </div>
                                         </div>
