@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket, Code, Moon, Sun } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket, Code, Moon, Sun, Type } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -54,7 +54,10 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
     // Theme & Shapes Menu State
     const [theme, setTheme] = useState<'light' | 'dark'>('light');
-    const [isShapesMenuOpen, setIsShapesMenuOpen] = useState(false);
+    const [activeMenu, setActiveMenu] = useState<string | null>(null);
+    const [stickyColor, setStickyColor] = useState('#fef08a');
+    const [highlighterColor, setHighlighterColor] = useState('#fef08a');
+    const [highlighterSize, setHighlighterSize] = useState(15);
     
     // Custom Modals State (To bypass Electron native dialog limits)
     const [tablePromptOpen, setTablePromptOpen] = useState(false);
@@ -166,6 +169,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 type: 'text',
                 version: 1,
                 versionNonce: Math.floor(Math.random() * 1000000000),
+                isDeleted: false,
                 id: `text-${Date.now()}`,
                 x: (appState.scrollX * -1) + (appState.width / 2) - 50,
                 y: (appState.scrollY * -1) + (appState.height / 2) - 40,
@@ -185,7 +189,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 locked: false
             }]
         });
-        setIsShapesMenuOpen(false);
+        setActiveMenu(null);
     }
     
     const injectCodeSnippet = () => {
@@ -197,6 +201,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 type: 'text',
                 version: 1,
                 versionNonce: Math.floor(Math.random() * 1000000000),
+                isDeleted: false,
                 id: `code-${Date.now()}`,
                 x: (appState.scrollX * -1) + (appState.width / 2) - 100,
                 y: (appState.scrollY * -1) + (appState.height / 2) - 40,
@@ -216,10 +221,10 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 locked: false
             }]
         });
-        setIsShapesMenuOpen(false);
+        setActiveMenu(null);
     }
 
-    const injectStickyNote = (color: string) => {
+    const injectStickyNote = () => {
         if (!excalidrawAPIRef.current) return;
         const appState = excalidrawAPIRef.current.getAppState();
         const currentElements = excalidrawAPIRef.current.getSceneElements();
@@ -228,11 +233,12 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 type: 'rectangle',
                 version: 1,
                 versionNonce: Math.floor(Math.random() * 1000000000),
+                isDeleted: false,
                 id: `sticky-${Date.now()}`,
                 x: (appState.scrollX * -1) + (appState.width / 2) - 75,
                 y: (appState.scrollY * -1) + (appState.height / 2) - 75,
                 strokeColor: '#1e1e1e',
-                backgroundColor: color,
+                backgroundColor: stickyColor,
                 fillStyle: 'solid',
                 strokeWidth: 1,
                 strokeStyle: 'solid',
@@ -247,21 +253,21 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 locked: false
             }]
         });
-        setIsShapesMenuOpen(false);
+        setActiveMenu(null);
     }
 
-    const setHighlighter = (color: string) => {
+    const setHighlighter = () => {
         if (!excalidrawAPIRef.current) return;
         excalidrawAPIRef.current.updateScene({
             appState: {
                 activeTool: { type: "freedraw", customType: null },
-                currentItemStrokeColor: color,
-                currentItemStrokeWidth: 15,
+                currentItemStrokeColor: highlighterColor,
+                currentItemStrokeWidth: highlighterSize,
                 currentItemOpacity: 50,
                 currentItemRoughness: 0
             }
         });
-        setIsShapesMenuOpen(false);
+        setActiveMenu(null);
     }
 
     const injectShape = (shapeType: string) => {
@@ -364,7 +370,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     const handleConfirmTable = () => {
         if (tableRows > 0 && tableCols > 0) insertTable(tableRows, tableCols);
         setTablePromptOpen(false);
-        setIsShapesMenuOpen(false);
+        setActiveMenu(null);
     }
 
     const onChange = (elements: readonly any[], appState: any) => {
@@ -563,79 +569,151 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             <div className="relative min-h-0 flex-1 flex flex-col overflow-hidden bg-white">
                 <div className="flex-1 relative flex">
                     {/* Custom Shapes Sidebar */}
-                    <div className="w-16 bg-[#fafafa] border-r border-[#e5e5e5] flex flex-col items-center py-4 gap-4 z-[201] shadow-sm relative">
-                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Tools</div>
+                    <div className="w-[68px] bg-[#fafafa] border-r border-[#e5e5e5] flex flex-col items-center py-4 gap-3 z-[201] shadow-sm relative shrink-0">
+                        <div className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-2">Tools</div>
                         
-                        <button 
-                            onClick={() => setIsShapesMenuOpen(!isShapesMenuOpen)} 
-                            className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${isShapesMenuOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} 
-                            title="Shapes & Tables"
-                        >
+                        <button onClick={() => setActiveMenu(activeMenu === 'geometries' ? null : 'geometries')} className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${activeMenu === 'geometries' ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} title="Basic Geometries">
+                            <Triangle className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        </button>
+                        
+                        <button onClick={() => setActiveMenu(activeMenu === 'arrows' ? null : 'arrows')} className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${activeMenu === 'arrows' ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} title="Block Arrows">
+                            <ArrowRight className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        </button>
+                        
+                        <button onClick={() => setActiveMenu(activeMenu === 'flowchart' ? null : 'flowchart')} className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${activeMenu === 'flowchart' ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} title="Flowchart">
+                            <Database className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        </button>
+                        
+                        <button onClick={() => setActiveMenu(activeMenu === 'fun' ? null : 'fun')} className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${activeMenu === 'fun' ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} title="Fun Shapes">
+                            <Heart className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        </button>
+                        
+                        <button onClick={() => setActiveMenu(activeMenu === 'annotations' ? null : 'annotations')} className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${activeMenu === 'annotations' ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} title="Text & Annotations">
+                            <Type className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        </button>
+
+                        <button onClick={() => setActiveMenu(activeMenu === 'data' ? null : 'data')} className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${activeMenu === 'data' ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} title="Smart Tools & Data">
                             <Component className="w-5 h-5 group-hover:scale-110 transition-transform" />
                         </button>
 
-                        {isShapesMenuOpen && (
-                            <div className="absolute left-full ml-2 top-0 bg-white border border-gray-200 shadow-2xl rounded-xl p-5 w-[360px] max-h-[85vh] overflow-y-auto custom-scrollbar">
+                        {activeMenu && (
+                            <div className="absolute left-full ml-2 top-4 bg-white border border-gray-200 shadow-2xl rounded-xl p-5 w-[360px] max-h-[85vh] overflow-y-auto custom-scrollbar">
                                 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Basic Geometries</div>
-                                <div className="grid grid-cols-6 gap-2 mb-5">
-                                    <button onClick={() => { injectShape('triangle'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Triangle"><Triangle className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('parallelogram'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Parallelogram"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="4 20 8 4 20 4 16 20 4 20"></polygon></svg></button>
-                                    <button onClick={() => { injectShape('pentagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Pentagon"><Pentagon className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('hexagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Hexagon"><Hexagon className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('octagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Octagon"><Octagon className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('star'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Star"><Star className="w-5 h-5"/></button>
-                                </div>
+                                {activeMenu === 'geometries' && (
+                                    <>
+                                        <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Basic Geometries</div>
+                                        <div className="grid grid-cols-6 gap-2 mb-5">
+                                            <button onClick={() => { injectShape('triangle'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Triangle"><Triangle className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('parallelogram'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Parallelogram"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="4 20 8 4 20 4 16 20 4 20"></polygon></svg></button>
+                                            <button onClick={() => { injectShape('pentagon'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Pentagon"><Pentagon className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('hexagon'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Hexagon"><Hexagon className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('octagon'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Octagon"><Octagon className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('star'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Star"><Star className="w-5 h-5"/></button>
+                                        </div>
+                                    </>
+                                )}
 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Block Arrows</div>
-                                <div className="grid grid-cols-6 gap-2 mb-5">
-                                    <button onClick={() => { injectShape('arrowRight'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Right"><ArrowRight className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('arrowLeft'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Left"><ArrowLeft className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('arrowUp'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Up"><ArrowUp className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('arrowDown'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Down"><ArrowDown className="w-5 h-5"/></button>
-                                </div>
+                                {activeMenu === 'arrows' && (
+                                    <>
+                                        <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Block Arrows</div>
+                                        <div className="grid grid-cols-6 gap-2 mb-5">
+                                            <button onClick={() => { injectShape('arrowRight'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Right"><ArrowRight className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('arrowLeft'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Left"><ArrowLeft className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('arrowUp'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Up"><ArrowUp className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('arrowDown'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Down"><ArrowDown className="w-5 h-5"/></button>
+                                        </div>
+                                    </>
+                                )}
 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Flowchart</div>
-                                <div className="grid grid-cols-6 gap-2 mb-5">
-                                    <button onClick={() => { injectShape('database'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Database"><Database className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('cloud'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Cloud"><Cloud className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('document'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Document"><FileText className="w-5 h-5"/></button>
-                                </div>
+                                {activeMenu === 'flowchart' && (
+                                    <>
+                                        <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Flowchart</div>
+                                        <div className="grid grid-cols-6 gap-2 mb-5">
+                                            <button onClick={() => { injectShape('database'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Database"><Database className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('cloud'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Cloud"><Cloud className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('document'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Document"><FileText className="w-5 h-5"/></button>
+                                        </div>
+                                    </>
+                                )}
 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Fun Shapes</div>
-                                <div className="grid grid-cols-6 gap-2 mb-6">
-                                    <button onClick={() => { injectShape('speechBubble'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Speech Bubble"><MessageCircle className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('lightning'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Lightning Bolt"><Zap className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('cross'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Cross"><PlusSquare className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('ribbon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Ribbon"><Ribbon className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('heart'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-500 transition-colors" title="Heart"><Heart className="w-5 h-5"/></button>
-                                </div>
+                                {activeMenu === 'fun' && (
+                                    <>
+                                        <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Fun Shapes</div>
+                                        <div className="grid grid-cols-6 gap-2 mb-6">
+                                            <button onClick={() => { injectShape('speechBubble'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Speech Bubble"><MessageCircle className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('lightning'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Lightning Bolt"><Zap className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('cross'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Cross"><PlusSquare className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('ribbon'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Ribbon"><Ribbon className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('heart'); setActiveMenu(null); }} className="p-2 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-500 transition-colors" title="Heart"><Heart className="w-5 h-5"/></button>
+                                        </div>
+                                    </>
+                                )}
 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Text & Annotations</div>
-                                <div className="grid grid-cols-6 gap-2 mb-6">
-                                    <button onClick={injectBulletList} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Bullet List"><List className="w-5 h-5"/></button>
-                                    <button onClick={() => injectStickyNote('#fef08a')} className="p-2 bg-yellow-100 hover:bg-yellow-200 rounded-lg flex items-center justify-center text-yellow-800 transition-colors shadow-sm" title="Yellow Sticky Note"><StickyNote className="w-5 h-5"/></button>
-                                    <button onClick={() => injectStickyNote('#fbcfe8')} className="p-2 bg-pink-100 hover:bg-pink-200 rounded-lg flex items-center justify-center text-pink-800 transition-colors shadow-sm" title="Pink Sticky Note"><StickyNote className="w-5 h-5"/></button>
-                                    <button onClick={() => setHighlighter('#fef08a')} className="p-2 hover:bg-yellow-50 rounded-lg flex items-center justify-center text-yellow-500 hover:text-yellow-600 transition-colors" title="Yellow Highlighter"><Highlighter className="w-5 h-5"/></button>
-                                    <button onClick={() => setHighlighter('#bbf7d0')} className="p-2 hover:bg-green-50 rounded-lg flex items-center justify-center text-green-500 hover:text-green-600 transition-colors" title="Green Highlighter"><Highlighter className="w-5 h-5"/></button>
-                                    <button onClick={injectCodeSnippet} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center text-gray-800 transition-colors border border-gray-300" title="Code Snippet Block"><Code className="w-5 h-5"/></button>
-                                </div>
+                                {activeMenu === 'annotations' && (
+                                    <>
+                                        <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Text & Annotations</div>
+                                        
+                                        <div className="space-y-4 mb-2">
+                                            {/* Tools Grid */}
+                                            <div className="flex gap-2">
+                                                <button onClick={injectBulletList} className="flex-1 p-2 bg-gray-50 hover:bg-indigo-50 rounded-lg flex flex-col items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Bullet List">
+                                                    <List className="w-5 h-5 mb-1"/> <span className="text-[10px] font-bold">List</span>
+                                                </button>
+                                                
+                                                <button onClick={injectStickyNote} className="flex-1 p-2 hover:brightness-95 rounded-lg flex flex-col items-center justify-center transition-colors shadow-sm border border-gray-200 text-gray-800" style={{ backgroundColor: stickyColor }} title="Sticky Note">
+                                                    <StickyNote className="w-5 h-5 mb-1 opacity-80"/> <span className="text-[10px] font-bold opacity-80">Sticky</span>
+                                                </button>
 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Smart Tools & Data</div>
-                                <div className="grid grid-cols-2 gap-2 mb-2">
-                                    <button onClick={() => setTablePromptOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Table">
-                                        <TableIcon className="w-4 h-4 mr-2"/> Table
-                                    </button>
-                                    <button onClick={() => setChartAlertOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Chart">
-                                        <BarChart2 className="w-4 h-4 mr-2"/> Chart
-                                    </button>
-                                    <button onClick={() => setMarkdownModalOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Markdown Guide">
-                                        <FileText className="w-4 h-4 mr-2"/> Markdown
-                                    </button>
-                                    <button onClick={() => setAutofillModalOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Autofill Shapes">
-                                        <PaintBucket className="w-4 h-4 mr-2"/> Autofill
-                                    </button>
-                                </div>
+                                                <button onClick={setHighlighter} className="flex-1 p-2 hover:brightness-95 rounded-lg flex flex-col items-center justify-center transition-colors shadow-sm border border-gray-200 text-gray-800" style={{ backgroundColor: highlighterColor }} title="Highlighter">
+                                                    <Highlighter className="w-5 h-5 mb-1 opacity-80"/> <span className="text-[10px] font-bold opacity-80">Highlight</span>
+                                                </button>
+
+                                                <button onClick={injectCodeSnippet} className="flex-1 p-2 bg-gray-50 hover:bg-indigo-50 rounded-lg flex flex-col items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Code Snippet">
+                                                    <Code className="w-5 h-5 mb-1"/> <span className="text-[10px] font-bold">Code</span>
+                                                </button>
+                                            </div>
+
+                                            {/* Customization Sliders */}
+                                            <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <label className="text-[10px] font-bold text-gray-500 uppercase">Sticky Note Color</label>
+                                                    <input type="color" value={stickyColor} onChange={e => setStickyColor(e.target.value)} className="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent" />
+                                                </div>
+                                                <div className="flex items-center justify-between border-t border-gray-200 pt-3">
+                                                    <label className="text-[10px] font-bold text-gray-500 uppercase">Highlighter Color</label>
+                                                    <input type="color" value={highlighterColor} onChange={e => setHighlighterColor(e.target.value)} className="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent" />
+                                                </div>
+                                                <div className="flex flex-col gap-1">
+                                                    <div className="flex justify-between">
+                                                        <label className="text-[10px] font-bold text-gray-500 uppercase">Highlighter Size</label>
+                                                        <span className="text-[10px] font-bold text-indigo-600">{highlighterSize}px</span>
+                                                    </div>
+                                                    <input type="range" min="2" max="50" value={highlighterSize} onChange={e => setHighlighterSize(parseInt(e.target.value))} className="w-full accent-indigo-500" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+
+                                {activeMenu === 'data' && (
+                                    <>
+                                        <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Smart Tools & Data</div>
+                                        <div className="grid grid-cols-2 gap-2 mb-2">
+                                            <button onClick={() => setTablePromptOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Table">
+                                                <TableIcon className="w-4 h-4 mr-2"/> Table
+                                            </button>
+                                            <button onClick={() => setChartAlertOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Chart">
+                                                <BarChart2 className="w-4 h-4 mr-2"/> Chart
+                                            </button>
+                                            <button onClick={() => setMarkdownModalOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Markdown Guide">
+                                                <FileText className="w-4 h-4 mr-2"/> Markdown
+                                            </button>
+                                            <button onClick={() => setAutofillModalOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Autofill Shapes">
+                                                <PaintBucket className="w-4 h-4 mr-2"/> Autofill
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
                                 
                                 <div className="mt-6 text-[10px] text-gray-400 text-center italic border-t border-gray-100 pt-3">
                                     For native Shapes & Icons, click the <b className="text-gray-500">Library button</b> in the top right.
