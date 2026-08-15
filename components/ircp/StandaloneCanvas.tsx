@@ -162,8 +162,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
     const injectBulletList = () => {
         if (!excalidrawAPIRef.current) return;
-    const injectBulletList = () => {
-        if (!excalidrawAPIRef.current) return;
         const appState = excalidrawAPIRef.current.getAppState();
         const currentElements = excalidrawAPIRef.current.getSceneElements();
         
