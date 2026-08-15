@@ -14,7 +14,6 @@ export default function ErrorBoundary({ error, reset }: { error: Error, reset: (
     }
   }, [error, isWasmError, reset]);
 
-  if (isWasmError) return null; // Don't show the error UI for suppressed errors
 
   const showDetails = process.env.NODE_ENV !== 'production'
   return (

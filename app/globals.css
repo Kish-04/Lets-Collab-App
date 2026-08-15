@@ -1,5 +1,4 @@
 @import 'tailwindcss';
-@import 'tldraw/tldraw.css';
 @import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));

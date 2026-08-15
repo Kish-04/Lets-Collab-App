@@ -1,9 +1,9 @@
 'use client'
 
-import React from 'react'
-import { Tldraw, useEditor } from 'tldraw'
+import React, { useRef, useEffect } from 'react'
+import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, FilePlus } from 'lucide-react'
+import { X, Download } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -23,7 +23,7 @@ class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {
     }
 
     componentDidCatch(error: any, errorInfo: any) {
-        console.error("Tldraw crashed.", error, errorInfo);
+        console.error("Excalidraw crashed.", error, errorInfo);
     }
 
     render() {
@@ -32,7 +32,6 @@ class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {
                 <div className="flex-1 flex flex-col items-center justify-center text-white p-8 text-center bg-[#111]">
                     <h2 className="text-2xl font-bold mb-4 text-red-500">Canvas Component Crashed</h2>
                     <p className="mb-4 text-[var(--text-secondary)]">Error: <b>{this.state.errorMsg}</b></p>
-                    <p className="mb-4 text-[var(--text-secondary)]">If the error says something about hiding UI elements, it might be an Ad Blocker.</p>
                     <button onClick={() => window.location.reload()} className="px-6 py-2 bg-[var(--accent)] text-black font-bold rounded-lg transition-transform hover:scale-105">
                         Reload Page
                     </button>
@@ -43,36 +42,35 @@ class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {
     }
 }
 
-function SyncEngine({ peerId }: { peerId?: string }) {
-    const editor = useEditor()
-    
-    React.useEffect(() => {
-        if (!editor) return
+export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
+    const excalidrawAPIRef = useRef<any>(null);
+    const isApplyingRemoteUpdateRef = useRef(false);
+    const lastSentElementsVersionRef = useRef<number>(0);
 
-        let isApplyingRemoteUpdate = false
+    // Calculate a naive version hash for elements to avoid sending redundant updates
+    const getElementsVersion = (elements: any[]) => {
+        return elements.reduce((acc, el) => acc + (el.version || 0), 0);
+    }
 
-        const unlisten = editor.store.listen((entry) => {
-            if (isApplyingRemoteUpdate) return
-            
-            const changes = Object.values(entry.changes.added).filter(r => r.typeName !== 'instance' && r.typeName !== 'camera' && r.typeName !== 'pointer')
-            const updates = Object.values(entry.changes.updated).map(u => u[1]).filter(r => r.typeName !== 'instance' && r.typeName !== 'camera' && r.typeName !== 'pointer')
-            const removed = Object.values(entry.changes.removed).filter(r => r.typeName !== 'instance' && r.typeName !== 'camera' && r.typeName !== 'pointer')
-            
-            if (changes.length > 0 || updates.length > 0 || removed.length > 0) {
-                const payload = {
-                    added: Object.fromEntries(changes.map(c => [c.id, c])),
-                    updated: Object.fromEntries(updates.map(u => [u.id, u])),
-                    removed: Object.fromEntries(removed.map(r => [r.id, r]))
-                }
-                const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
-                CryptoUtil.encrypt(JSON.stringify(payload), roomId).then(encrypted => {
-                    dataChannelManager.send('ircp-tldraw', { encrypted }, peerId)
-                });
-            }
-        }, { scope: 'document', source: 'user' })
+    const onChange = (elements: readonly any[], appState: any) => {
+        if (isApplyingRemoteUpdateRef.current) return;
+        
+        const currentVersion = getElementsVersion(elements as any[]);
+        if (currentVersion === lastSentElementsVersionRef.current) return;
+        lastSentElementsVersionRef.current = currentVersion;
 
+        const payload = { elements };
+        const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
+        
+        CryptoUtil.encrypt(JSON.stringify(payload), roomId).then(encrypted => {
+            dataChannelManager.send('ircp-excalidraw', { encrypted }, peerId)
+        }).catch(err => console.error("Encryption failed for Excalidraw payload:", err));
+    };
+
+    useEffect(() => {
         const handleRemoteDraw = async (payloadWrapper: any) => {
-            isApplyingRemoteUpdate = true
+            if (!excalidrawAPIRef.current) return;
+            
             try {
                 const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
                 let payload = payloadWrapper;
@@ -80,43 +78,76 @@ function SyncEngine({ peerId }: { peerId?: string }) {
                     const decrypted = await CryptoUtil.decrypt(payloadWrapper.encrypted, roomId);
                     payload = JSON.parse(decrypted);
                 }
-                editor.store.mergeRemoteChanges(() => {
-                    const { added, updated, removed } = payload
-                    if (added) editor.store.put(Object.values(added) as any)
-                    if (updated) editor.store.put(Object.values(updated) as any)
-                    if (removed) editor.store.remove(Object.keys(removed) as any)
-                })
+                
+                isApplyingRemoteUpdateRef.current = true;
+                
+                // Excalidraw handles merging elements based on version/versionNonce automatically
+                excalidrawAPIRef.current.updateScene({
+                    elements: payload.elements
+                });
+                
+                // Update our local version tracker so we don't echo back
+                lastSentElementsVersionRef.current = getElementsVersion(payload.elements);
+                
             } catch (e) {
                 console.error("Failed to decrypt or apply remote draw", e);
             } finally {
-                isApplyingRemoteUpdate = false
+                // Slight delay to allow Excalidraw's internal React updates to settle
+                setTimeout(() => {
+                    isApplyingRemoteUpdateRef.current = false;
+                }, 50);
             }
         }
 
-        dataChannelManager.on('ircp-tldraw', handleRemoteDraw)
+        dataChannelManager.on('ircp-excalidraw', handleRemoteDraw)
         return () => {
-            unlisten()
-            dataChannelManager.off('ircp-tldraw', handleRemoteDraw)
+            dataChannelManager.off('ircp-excalidraw', handleRemoteDraw)
         }
-    }, [editor, peerId])
+    }, [peerId]);
 
-    return null
-}
+    const handleSave = async () => {
+        if (!excalidrawAPIRef.current) return;
+        try {
+            const elements = excalidrawAPIRef.current.getSceneElements();
+            if (!elements || elements.length === 0) return;
+            
+            const blob = await exportToBlob({
+                elements,
+                mimeType: "image/png",
+                appState: excalidrawAPIRef.current.getAppState()
+            });
+            
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `whiteboard-${new Date().toISOString().slice(0,10)}.png`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error("Failed to save Excalidraw image:", err);
+        }
+    };
 
-function CanvasDiagnostics() {
-    React.useEffect(() => {
-        const canvas = document.createElement('canvas')
-        const webgl =
-            canvas.getContext('webgl2') ||
-            canvas.getContext('webgl') ||
-            canvas.getContext('experimental-webgl')
-        console.info(`[CanvasDiagnostics] WebGL available: ${Boolean(webgl)}`)
-    }, [])
+    // To hide Excalidraw's watermark, we can inject a small CSS override globally here
+    useEffect(() => {
+        const style = document.createElement('style');
+        style.innerHTML = `
+            .excalidraw .layer-ui__wrapper .FixedSideContainer--bottom-right {
+                display: none !important;
+                opacity: 0 !important;
+                visibility: hidden !important;
+                pointer-events: none !important;
+            }
+            .excalidraw .excalidraw__canvas {
+                background: white !important;
+            }
+        `;
+        document.head.appendChild(style);
+        return () => {
+            document.head.removeChild(style);
+        };
+    }, []);
 
-    return null
-}
-
-export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     return (
         <div className="absolute inset-0 z-[100] flex flex-col bg-[#080810]">
             <div className="h-14 border-b border-[#222] bg-[#111] flex items-center justify-between px-4 shrink-0 relative z-[200]">
@@ -128,7 +159,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 </div>
                 <div className="flex items-center gap-4">
                     <button 
-                        onClick={() => window.dispatchEvent(new CustomEvent('tldraw-save'))} 
+                        onClick={handleSave} 
                         className="p-2 bg-[var(--accent)] text-black hover:brightness-110 rounded-lg transition-all flex items-center gap-2 text-sm font-bold" 
                         title="Save Image"
                     >
@@ -137,18 +168,13 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 </div>
             </div>
             
-            <div className="relative min-h-0 flex-1 overflow-hidden bg-white tldraw-wrapper">
+            <div className="relative min-h-0 flex-1 overflow-hidden bg-white">
                 <CanvasErrorBoundary>
                     <div className="absolute inset-0 h-full w-full">
-                        <Tldraw
-                            hideUi={false}
-                            onMount={(editor) => {
-                                console.log("[StandaloneCanvas] Tldraw mounted successfully!")
-                            }}
-                        >
-                            <CanvasDiagnostics />
-                            <SyncEngine peerId={peerId} />
-                        </Tldraw>
+                        <Excalidraw
+                            excalidrawAPI={(api) => { excalidrawAPIRef.current = api; }}
+                            onChange={onChange}
+                        />
                     </div>
                 </CanvasErrorBoundary>
             </div>

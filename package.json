@@ -179,6 +179,7 @@
     "email": "admin@letscollab.com"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@google/genai": "^2.15.0",
     "@google/generative-ai": "^0.24.1",
     "@mediapipe/camera_utils": "^0.3.1675466862",
@@ -195,7 +196,6 @@
     "framer-motion": "^12.42.2",
     "monaco-editor": "^0.56.0",
     "three": "^0.185.1",
-    "tldraw": "^5.3.0",
     "y-monaco": "^0.1.6",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.32",
