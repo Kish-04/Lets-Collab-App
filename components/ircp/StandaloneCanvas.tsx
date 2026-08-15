@@ -162,96 +162,38 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
     const injectBulletList = () => {
         if (!excalidrawAPIRef.current) return;
-        const appState = excalidrawAPIRef.current.getAppState();
-        const currentElements = excalidrawAPIRef.current.getSceneElements();
         excalidrawAPIRef.current.updateScene({
-            elements: [...currentElements, {
-                type: 'text',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: `text-${Date.now()}`,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 50,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 40,
-                text: "• First Item\n• Second Item\n• Third Item",
-                fontSize: 20,
-                fontFamily: 1,
-                textAlign: "left",
-                verticalAlign: "top",
-                strokeColor: appState.currentItemStrokeColor || '#000000',
-                backgroundColor: 'transparent',
-                width: 150,
-                height: 80,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [],
-                updated: Date.now(),
-                locked: false
-            }]
+            appState: {
+                activeTool: { type: "text", customType: null },
+                currentItemFontFamily: 1,
+                currentItemTextAlign: "left"
+            }
         });
         setActiveMenu(null);
     }
     
     const injectCodeSnippet = () => {
         if (!excalidrawAPIRef.current) return;
-        const appState = excalidrawAPIRef.current.getAppState();
-        const currentElements = excalidrawAPIRef.current.getSceneElements();
         excalidrawAPIRef.current.updateScene({
-            elements: [...currentElements, {
-                type: 'text',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: `code-${Date.now()}`,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 100,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 40,
-                text: "function awesomeFeature() {\n  console.log('Deploying via ircp');\n}",
-                fontSize: 16,
-                fontFamily: 3, // 3 is Monospace in Excalidraw
-                textAlign: "left",
-                verticalAlign: "top",
-                strokeColor: theme === 'dark' ? '#f08c00' : '#d9480f',
-                backgroundColor: 'transparent',
-                width: 250,
-                height: 80,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [],
-                updated: Date.now(),
-                locked: false
-            }]
+            appState: {
+                activeTool: { type: "text", customType: null },
+                currentItemFontFamily: 3,
+                currentItemStrokeColor: '#d9480f'
+            }
         });
         setActiveMenu(null);
     }
 
     const injectStickyNote = () => {
         if (!excalidrawAPIRef.current) return;
-        const appState = excalidrawAPIRef.current.getAppState();
-        const currentElements = excalidrawAPIRef.current.getSceneElements();
         excalidrawAPIRef.current.updateScene({
-            elements: [...currentElements, {
-                type: 'rectangle',
-                version: 1,
-                versionNonce: Math.floor(Math.random() * 1000000000),
-                isDeleted: false,
-                id: `sticky-${Date.now()}`,
-                x: (appState.scrollX * -1) + (appState.width / 2) - 75,
-                y: (appState.scrollY * -1) + (appState.height / 2) - 75,
-                strokeColor: '#1e1e1e',
-                backgroundColor: stickyColor,
-                fillStyle: 'solid',
-                strokeWidth: 1,
-                strokeStyle: 'solid',
-                roughness: 1,
-                opacity: 100,
-                width: 150,
-                height: 150,
-                seed: Math.floor(Math.random() * 1000000000),
-                groupIds: [],
-                boundElements: [],
-                updated: Date.now(),
-                locked: false
-            }]
+            appState: {
+                activeTool: { type: "rectangle", customType: null },
+                currentItemFillStyle: 'solid',
+                currentItemBackgroundColor: stickyColor,
+                currentItemStrokeWidth: 0,
+                currentItemRoughness: 0
+            }
         });
         setActiveMenu(null);
     }

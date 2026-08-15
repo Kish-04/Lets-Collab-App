@@ -61,8 +61,8 @@ export function getBackendUrl() {
     if (isLocalOrPrivateHost(hostname)) {
       return `http://${hostname}:${backendPort}`
     }
-    if (window.location.protocol === 'file:') {
-      return `http://localhost:${backendPort}`
+    if (window.location.protocol === 'file:' || window.location.protocol === 'app:') {
+      return window.electronConfig?.backendUrl || `http://localhost:${backendPort}`
     }
     return window.location.origin
   }

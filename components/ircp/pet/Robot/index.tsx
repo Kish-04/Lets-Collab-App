@@ -16,13 +16,15 @@ function InteractionCatcher({
   onClick,
   onDoubleClick,
   onPointerMove,
-  onPointerDown
+  onPointerDown,
+  onPointerUp
 }: {
   onHover: (v: boolean) => void
   onClick: () => void
   onDoubleClick: (e: any) => void
   onPointerMove: (e: any) => void
   onPointerDown?: (e: any) => void
+  onPointerUp?: (e: any) => void
 }) {
   return (
     <mesh
@@ -31,6 +33,8 @@ function InteractionCatcher({
       onPointerOut={() => onHover(false)}
       onPointerMove={onPointerMove}
       onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerUpOutside={onPointerUp}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
@@ -198,6 +202,48 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     setEmotion('Idle')
   }, [setEmotion])
 
+  const [isDraggingBody, setIsDraggingBody] = useState(false)
+  const lastScreenPos = useRef({ x: 0, y: 0 })
+  const dragControls = useDragControls()
+
+  const handlePointerDown = useCallback((e: any) => {
+    if (!isStandalone) {
+      dragControls.start(e)
+    } else {
+      setIsDraggingBody(true)
+      lastScreenPos.current = { x: e.nativeEvent.screenX, y: e.nativeEvent.screenY }
+      if (e.target && e.pointerId !== undefined) {
+        e.target.setPointerCapture(e.pointerId)
+      }
+    }
+  }, [dragControls, isStandalone])
+
+  const handlePointerUp = useCallback((e: any) => {
+    if (isStandalone) {
+      setIsDraggingBody(false)
+      if (e.target && e.pointerId !== undefined && e.target.hasPointerCapture(e.pointerId)) {
+        e.target.releasePointerCapture(e.pointerId)
+      }
+    }
+  }, [isStandalone])
+
+  const handlePointerMove = useCallback((e: any) => {
+    if (isStandalone && isDraggingBody) {
+      const dx = e.nativeEvent.screenX - lastScreenPos.current.x
+      const dy = e.nativeEvent.screenY - lastScreenPos.current.y
+      if (dx !== 0 || dy !== 0) {
+        if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
+          (window as any).ipcRenderer.send('move-pet-window', { x: dx, y: dy })
+        }
+        lastScreenPos.current = { x: e.nativeEvent.screenX, y: e.nativeEvent.screenY }
+      }
+    } else if (emotion !== 'Sleep') {
+      const px = (e.clientX / window.innerWidth) * 2 - 1
+      const py = -(e.clientY / window.innerHeight) * 2 + 1
+      setTargetLook(px * 12, py * 8 + 2, 8)
+    }
+  }, [isStandalone, isDraggingBody, emotion, setTargetLook])
+
   const handleDoubleClick = useCallback((e: any) => {
     e.stopPropagation?.()
     import('./Sounds').then(m => m.playBlip(600))
@@ -233,17 +279,38 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       setTimeout(() => setEmotion('Thinking'), 1000)
 
       const backendUrl = getBackendUrl()
-      const reply = await fetch(`${backendUrl}/api/pet`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg })
-      }).then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Request failed with status ${response.status}`)
+      let reply: string | null = null;
+      
+      try {
+        reply = await fetch(`${backendUrl}/api/pet`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: userMsg })
+        }).then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Request failed with status ${response.status}`)
+          }
+          const data = await response.json()
+          return data.text || "I didn't get that."
+        })
+      } catch (err) {
+        // Fallback to Next.js API route if backend fails (e.g. old backend, CORS)
+        if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+          reply = await fetch(`/api/pet`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: userMsg })
+          }).then(async (response) => {
+            if (!response.ok) {
+              throw new Error(`Request failed with status ${response.status}`)
+            }
+            const data = await response.json()
+            return data.text || "I didn't get that."
+          })
+        } else {
+          throw err;
         }
-        const data = await response.json()
-        return data.text || "I didn't get that."
-      })
+      }
 
       setEmotion('Reasoning')
       setTimeout(() => {
@@ -273,15 +340,6 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     }
   }
 
-  const handlePointerMove = (e: any) => {
-    if (emotion === 'Sleep') return // Don't track cursor while sleeping
-    const px = (e.clientX / window.innerWidth) * 2 - 1
-    const py = -(e.clientY / window.innerHeight) * 2 + 1
-    setTargetLook(px * 12, py * 8 + 2, 8)
-  }
-
-
-
   const handleDrag = useCallback(
     (_: unknown, info: { velocity: { x: number; y: number }, delta: { x: number; y: number } }) => {
       if (!isStandalone) {
@@ -310,8 +368,6 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     [rotate, setEmotion, setDragVelocity]
   )
 
-  const dragControls = useDragControls()
-
   return (
     <>
       <motion.div
@@ -333,7 +389,8 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
             onClick={handleClick} 
             onDoubleClick={handleDoubleClick} 
             onPointerMove={handlePointerMove}
-            onPointerDown={(e) => dragControls.start(e.nativeEvent)} 
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
           />
         </Canvas>
       </motion.div>
