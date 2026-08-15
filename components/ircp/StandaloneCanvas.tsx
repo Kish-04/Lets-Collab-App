@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket, Code, Moon, Sun, Type } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket, Code, Moon, Sun, Type, Circle, Square, Diamond } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -301,6 +301,13 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             locked: false
         };
         
+        if (['ellipse', 'rectangle', 'diamond'].includes(shapeType)) {
+            excalidrawAPIRef.current.updateScene({ 
+                elements: [...currentElements, { ...baseElement, type: shapeType }] 
+            });
+            return;
+        }
+        
         let points: number[][] = [];
         if (shapeType === 'triangle') points = [[0, 100], [50, 0], [100, 100], [0, 100]];
         else if (shapeType === 'star') points = [[50,0],[61,35],[98,35],[68,57],[79,91],[50,70],[21,91],[32,57],[2,35],[39,35],[50,0]];
@@ -320,6 +327,13 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         else if (shapeType === 'lightning') points = [[60,0], [20,60], [50,60], [40,100], [80,40], [50,40], [60,0]];
         else if (shapeType === 'cross') points = [[30,0], [70,0], [70,30], [100,30], [100,70], [70,70], [70,100], [30,100], [30,70], [0,70], [0,30], [30,30], [30,0]];
         else if (shapeType === 'ribbon') points = [[0,20], [20,20], [20,0], [80,0], [80,20], [100,20], [90,50], [100,80], [80,80], [80,100], [20,100], [20,80], [0,80], [10,50], [0,20]];
+        else if (shapeType === 'semiCircle') {
+            for (let i = 0; i <= 10; i++) {
+                const angle = Math.PI - (Math.PI * (i / 10));
+                points.push([50 + 50 * Math.cos(angle), 100 - 100 * Math.sin(angle)]);
+            }
+            points.push([100, 100], [0, 100]);
+        }
 
         excalidrawAPIRef.current.updateScene({ 
             elements: [...currentElements, { ...baseElement, type: 'line', points }] 
@@ -603,8 +617,12 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                     <>
                                         <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Basic Geometries</div>
                                         <div className="grid grid-cols-6 gap-2 mb-5">
+                                            <button onClick={() => { injectShape('rectangle'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Rectangle"><Square className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('ellipse'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Ellipse/Circle"><Circle className="w-5 h-5"/></button>
+                                            <button onClick={() => { injectShape('diamond'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Diamond"><Diamond className="w-5 h-5"/></button>
                                             <button onClick={() => { injectShape('triangle'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Triangle"><Triangle className="w-5 h-5"/></button>
                                             <button onClick={() => { injectShape('parallelogram'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Parallelogram"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="4 20 8 4 20 4 16 20 4 20"></polygon></svg></button>
+                                            <button onClick={() => { injectShape('semiCircle'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Semi Circle"><svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 18a8 8 0 0 1 16 0z" /></svg></button>
                                             <button onClick={() => { injectShape('pentagon'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Pentagon"><Pentagon className="w-5 h-5"/></button>
                                             <button onClick={() => { injectShape('hexagon'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Hexagon"><Hexagon className="w-5 h-5"/></button>
                                             <button onClick={() => { injectShape('octagon'); setActiveMenu(null); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Octagon"><Octagon className="w-5 h-5"/></button>
