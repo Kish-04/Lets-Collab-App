@@ -56,6 +56,16 @@ export default function PetWidgetPage() {
                   onPointerDown={onPointerDown}
                   onPointerMove={onPointerMove}
                   onPointerUp={onPointerUp}
+                  onMouseEnter={() => {
+                      if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
+                          (window as any).ipcRenderer.send('set-ignore-mouse-events', false)
+                      }
+                  }}
+                  onMouseLeave={() => {
+                      if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
+                          (window as any).ipcRenderer.send('set-ignore-mouse-events', true)
+                      }
+                  }}
                   className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-12 h-6 bg-neutral-800/80 hover:bg-neutral-700 rounded-full cursor-move z-[9999] backdrop-blur-sm transition-colors text-[var(--text-primary)]/ hover:text-[var(--text-primary)] border border-[var(--border-bright)] shadow-lg" 
                   title="Drag to move"
                 >

@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('api', {
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels
-    const validChannels = ['execute-input', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'start-drag', 'set-pet-enabled'];
+    const validChannels = ['execute-input', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'start-drag', 'set-pet-enabled', 'set-ignore-mouse-events'];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
     }

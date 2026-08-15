@@ -163,6 +163,13 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
   }, [petState, setEmotion])
 
   useEffect(() => {
+    if (isStandalone && typeof window !== 'undefined' && (window as any).ipcRenderer) {
+      const shouldBeInteractive = hovered || chatOpen || detailsOpen;
+      (window as any).ipcRenderer.send('set-ignore-mouse-events', !shouldBeInteractive)
+    }
+  }, [hovered, chatOpen, detailsOpen, isStandalone])
+
+  useEffect(() => {
     if (petMessage) {
       setChatOpen(false); // Force speech bubble outside chat
       setAiResponse(petMessage);

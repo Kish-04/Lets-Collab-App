@@ -162,6 +162,7 @@ function createWindow() {
   loadURL(petWindow).then(() => {
     petWindow.loadURL('app://-/pet.html');
     petWindow.hide();
+    petWindow.setIgnoreMouseEvents(true, { forward: true });
   });
 
   // Window Events
@@ -261,6 +262,12 @@ ipcMain.on('move-pet-window', (event, { x, y }) => {
   if (petWindow && !petWindow.isDestroyed()) {
     const [currentX, currentY] = petWindow.getPosition();
     petWindow.setPosition(Math.round(currentX + x), Math.round(currentY + y));
+  }
+});
+
+ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.setIgnoreMouseEvents(ignore, { forward: true });
   }
 });
 
