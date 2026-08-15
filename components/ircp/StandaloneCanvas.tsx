@@ -516,7 +516,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                         loadScene: false,
                                         export: false,
                                         saveToActiveFile: false,
-                                        theme: false
+                                        toggleTheme: false
                                     }
                                 }}
                             >
