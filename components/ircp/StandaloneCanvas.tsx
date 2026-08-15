@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useRef, useEffect } from 'react'
-import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
+import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
 import { X, Download } from 'lucide-react'
@@ -48,7 +48,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     const isApplyingRemoteUpdateRef = useRef(false);
     const lastSentElementsVersionRef = useRef<number>(0);
 
-    // Calculate a naive version hash for elements to avoid sending redundant updates
     const getElementsVersion = (elements: any[]) => {
         return elements.reduce((acc, el) => acc + (el.version || 0), 0);
     }
@@ -82,18 +81,15 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 
                 isApplyingRemoteUpdateRef.current = true;
                 
-                // Excalidraw handles merging elements based on version/versionNonce automatically
                 excalidrawAPIRef.current.updateScene({
                     elements: payload.elements
                 });
                 
-                // Update our local version tracker so we don't echo back
                 lastSentElementsVersionRef.current = getElementsVersion(payload.elements);
                 
             } catch (e) {
                 console.error("Failed to decrypt or apply remote draw", e);
             } finally {
-                // Slight delay to allow Excalidraw's internal React updates to settle
                 setTimeout(() => {
                     isApplyingRemoteUpdateRef.current = false;
                 }, 50);
@@ -129,7 +125,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         }
     };
 
-    // To hide Excalidraw's watermark, we can inject a small CSS override globally here
     useEffect(() => {
         const style = document.createElement('style');
         style.innerHTML = `
@@ -139,8 +134,8 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 visibility: hidden !important;
                 pointer-events: none !important;
             }
-            .excalidraw .excalidraw__canvas {
-                background: white !important;
+            .excalidraw .layer-ui__wrapper .HelpIcon {
+                display: none !important;
             }
         `;
         document.head.appendChild(style);
@@ -175,7 +170,16 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                         <Excalidraw
                             excalidrawAPI={(api) => { excalidrawAPIRef.current = api; }}
                             onChange={onChange}
-                        />
+                            UIOptions={{ canvasActions: { loadScene: false, export: false, saveAsImage: false } }}
+                        >
+                            <MainMenu>
+                                <MainMenu.DefaultItems.ClearCanvas />
+                                <MainMenu.DefaultItems.ChangeCanvasBackground />
+                            </MainMenu>
+                            <WelcomeScreen>
+                                <WelcomeScreen.Hints.ToolbarHint />
+                            </WelcomeScreen>
+                        </Excalidraw>
                     </div>
                 </CanvasErrorBoundary>
             </div>
