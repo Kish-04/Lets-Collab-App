@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table, BarChart2 } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table, BarChart2, Square, Circle, Minus, MoveRight, ArrowLeftRight, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -149,21 +149,11 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     const injectShape = (shapeType: string) => {
         if (!excalidrawAPIRef.current) return;
         const appState = excalidrawAPIRef.current.getAppState();
-        
-        let points: number[][] = [];
-        if (shapeType === 'triangle') points = [[0, 100], [50, 0], [100, 100], [0, 100]];
-        else if (shapeType === 'star') points = [[50,0],[61,35],[98,35],[68,57],[79,91],[50,70],[21,91],[32,57],[2,35],[39,35],[50,0]];
-        else if (shapeType === 'hexagon') points = [[50,0],[100,25],[100,75],[50,100],[0,75],[0,25],[50,0]];
-        else if (shapeType === 'octagon') points = [[30,0],[70,0],[100,30],[100,70],[70,100],[30,100],[0,70],[0,30],[30,0]];
-        else if (shapeType === 'pentagon') points = [[50,0],[100,38],[81,100],[19,100],[0,38],[50,0]];
-        else if (shapeType === 'heart') points = [[50,90],[20,60],[5,40],[5,20],[20,5],[40,5],[50,25],[60,5],[80,5],[95,20],[95,40],[80,60],[50,90]];
-        else if (shapeType === 'arrowRight') points = [[20,40],[60,40],[60,20],[90,50],[60,80],[60,60],[20,60],[20,40]];
-        else if (shapeType === 'document') points = [[20,20],[80,20],[80,80],[60,90],[40,80],[20,90],[20,20]];
-        else if (shapeType === 'database') points = [[20,30],[50,20],[80,30],[50,40],[20,30],[20,80],[50,90],[80,80],[80,30]];
-        else if (shapeType === 'cloud') points = [[20,80],[10,60],[20,40],[40,20],[60,20],[80,40],[90,60],[80,80],[20,80]];
+        const startX = (appState.scrollX * -1) + (appState.width / 2) - 50;
+        const startY = (appState.scrollY * -1) + (appState.height / 2) - 50;
+        const currentElements = excalidrawAPIRef.current.getSceneElements();
 
-        const newElement = {
-            type: 'line',
+        const baseElement = {
             version: 1,
             versionNonce: Math.floor(Math.random() * 1000000000),
             isDeleted: false,
@@ -174,8 +164,8 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             roughness: appState.currentItemRoughness || 1,
             opacity: appState.currentItemOpacity || 100,
             angle: 0,
-            x: (appState.scrollX * -1) + (appState.width / 2) - 50,
-            y: (appState.scrollY * -1) + (appState.height / 2) - 50,
+            x: startX,
+            y: startY,
             strokeColor: appState.currentItemStrokeColor || '#000000',
             backgroundColor: appState.currentItemBackgroundColor || 'transparent',
             width: 100,
@@ -184,12 +174,49 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             groupIds: [],
             boundElements: [],
             updated: Date.now(),
-            locked: false,
-            points
+            locked: false
         };
 
-        const currentElements = excalidrawAPIRef.current.getSceneElements();
-        excalidrawAPIRef.current.updateScene({ elements: [...currentElements, newElement] });
+        if (['rectangle', 'ellipse', 'diamond'].includes(shapeType)) {
+            excalidrawAPIRef.current.updateScene({ 
+                elements: [...currentElements, { ...baseElement, type: shapeType }] 
+            });
+            return;
+        }
+
+        if (['line', 'arrow'].includes(shapeType)) {
+            excalidrawAPIRef.current.updateScene({ 
+                elements: [...currentElements, { 
+                    ...baseElement, 
+                    type: shapeType, 
+                    height: 0, 
+                    points: [[0,0], [100,0]],
+                    startArrowhead: shapeType === 'arrow' ? null : null,
+                    endArrowhead: shapeType === 'arrow' ? 'arrow' : null,
+                }] 
+            });
+            return;
+        }
+        
+        let points: number[][] = [];
+        if (shapeType === 'triangle') points = [[0, 100], [50, 0], [100, 100], [0, 100]];
+        else if (shapeType === 'star') points = [[50,0],[61,35],[98,35],[68,57],[79,91],[50,70],[21,91],[32,57],[2,35],[39,35],[50,0]];
+        else if (shapeType === 'hexagon') points = [[50,0],[100,25],[100,75],[50,100],[0,75],[0,25],[50,0]];
+        else if (shapeType === 'octagon') points = [[30,0],[70,0],[100,30],[100,70],[70,100],[30,100],[0,70],[0,30],[30,0]];
+        else if (shapeType === 'pentagon') points = [[50,0],[100,38],[81,100],[19,100],[0,38],[50,0]];
+        else if (shapeType === 'heart') points = [[50,90],[20,60],[5,40],[5,20],[20,5],[40,5],[50,25],[60,5],[80,5],[95,20],[95,40],[80,60],[50,90]];
+        else if (shapeType === 'arrowRight') points = [[20,40],[60,40],[60,20],[90,50],[60,80],[60,60],[20,60],[20,40]];
+        else if (shapeType === 'arrowLeft') points = [[80,40],[40,40],[40,20],[10,50],[40,80],[40,60],[80,60],[80,40]];
+        else if (shapeType === 'arrowUp') points = [[40,80],[40,40],[20,40],[50,10],[80,40],[60,40],[60,80],[40,80]];
+        else if (shapeType === 'arrowDown') points = [[40,20],[40,60],[20,60],[50,90],[80,60],[60,60],[60,20],[40,20]];
+        else if (shapeType === 'document') points = [[20,20],[80,20],[80,80],[60,90],[40,80],[20,90],[20,20]];
+        else if (shapeType === 'database') points = [[20,30],[50,20],[80,30],[50,40],[20,30],[20,80],[50,90],[80,80],[80,30]];
+        else if (shapeType === 'cloud') points = [[20,80],[10,60],[20,40],[40,20],[60,20],[80,40],[90,60],[80,80],[20,80]];
+        else if (shapeType === 'parallelogram') points = [[20,100], [40,0], [100,0], [80,100], [20,100]];
+
+        excalidrawAPIRef.current.updateScene({ 
+            elements: [...currentElements, { ...baseElement, type: 'line', points }] 
+        });
     }
 
     const insertTable = (rows: number, cols: number) => {
@@ -445,16 +472,41 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                         </button>
 
                         {isShapesMenuOpen && (
-                            <div className="absolute left-full ml-2 top-0 bg-white border border-gray-200 shadow-2xl rounded-xl p-5 w-[320px] max-h-[80vh] overflow-y-auto custom-scrollbar">
+                            <div className="absolute left-full ml-2 top-0 bg-white border border-gray-200 shadow-2xl rounded-xl p-5 w-[360px] max-h-[85vh] overflow-y-auto custom-scrollbar">
                                 
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Lines & Arrows</div>
+                                <div className="grid grid-cols-6 gap-2 mb-5">
+                                    <button onClick={() => { injectShape('line'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Line"><Minus className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('arrow'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow"><MoveRight className="w-5 h-5"/></button>
+                                </div>
+
                                 <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Basic Shapes</div>
-                                <div className="grid grid-cols-5 gap-2 mb-6">
+                                <div className="grid grid-cols-6 gap-2 mb-5">
+                                    <button onClick={() => { injectShape('rectangle'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Rectangle"><Square className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('ellipse'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Ellipse"><Circle className="w-5 h-5"/></button>
                                     <button onClick={() => { injectShape('triangle'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Triangle"><Triangle className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('diamond'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Diamond"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 22 12 12 22 2 12 12 2"></polygon></svg></button>
+                                    <button onClick={() => { injectShape('parallelogram'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Parallelogram"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="4 20 8 4 20 4 16 20 4 20"></polygon></svg></button>
                                     <button onClick={() => { injectShape('pentagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Pentagon"><Pentagon className="w-5 h-5"/></button>
                                     <button onClick={() => { injectShape('hexagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Hexagon"><Hexagon className="w-5 h-5"/></button>
                                     <button onClick={() => { injectShape('octagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Octagon"><Octagon className="w-5 h-5"/></button>
                                     <button onClick={() => { injectShape('star'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Star"><Star className="w-5 h-5"/></button>
                                     <button onClick={() => { injectShape('heart'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-500 transition-colors" title="Heart"><Heart className="w-5 h-5"/></button>
+                                </div>
+
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Block Arrows</div>
+                                <div className="grid grid-cols-6 gap-2 mb-5">
+                                    <button onClick={() => { injectShape('arrowRight'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Right"><ArrowRight className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('arrowLeft'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Left"><ArrowLeft className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('arrowUp'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Up"><ArrowUp className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('arrowDown'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Arrow Down"><ArrowDown className="w-5 h-5"/></button>
+                                </div>
+
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Flowchart</div>
+                                <div className="grid grid-cols-6 gap-2 mb-6">
+                                    <button onClick={() => { injectShape('database'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Database"><Database className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('cloud'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Cloud"><Cloud className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('document'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Document"><FileText className="w-5 h-5"/></button>
                                 </div>
 
                                 <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Data & Charts</div>
@@ -467,8 +519,8 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                     </button>
                                 </div>
                                 
-                                <div className="mt-6 text-[10px] text-gray-400 text-center italic">
-                                    For 100+ Professional Network & UI Icons, click the <b className="text-gray-500">Library</b> button in the top right.
+                                <div className="mt-6 text-[10px] text-gray-400 text-center italic border-t border-gray-100 pt-3">
+                                    For 1,000+ Professional Network & UI Icons, click the <b className="text-gray-500">Library button</b> in the top right.
                                 </div>
                             </div>
                         )}
