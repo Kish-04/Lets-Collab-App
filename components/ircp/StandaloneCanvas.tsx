@@ -140,7 +140,12 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             <div className="relative min-h-0 flex-1 overflow-hidden bg-white tldraw-wrapper">
                 <CanvasErrorBoundary>
                     <div className="absolute inset-0 h-full w-full">
-                        <Tldraw>
+                        <Tldraw
+                            hideUi={false}
+                            onMount={(editor) => {
+                                console.log("[StandaloneCanvas] Tldraw mounted successfully!")
+                            }}
+                        >
                             <CanvasDiagnostics />
                             <SyncEngine peerId={peerId} />
                         </Tldraw>
