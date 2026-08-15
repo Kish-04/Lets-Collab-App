@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -50,6 +50,9 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     const [pageNames, setPageNames] = useState<Record<string, string>>({ 'page-1': 'Page 1' });
     const [activePageId, setActivePageId] = useState('page-1');
     const [editingPageId, setEditingPageId] = useState<string | null>(null);
+
+    // Shapes Menu State
+    const [isShapesMenuOpen, setIsShapesMenuOpen] = useState(false);
 
     const getElementsVersion = (elements: any[]) => {
         return elements.reduce((acc, el) => acc + (el.version || 0), 0);
@@ -103,7 +106,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         setEditingPageId(null);
     }
 
-    const injectShape = (shapeType: 'triangle' | 'star' | 'hexagon') => {
+    const injectShape = (shapeType: 'triangle' | 'star' | 'hexagon' | 'octagon' | 'heart') => {
         if (!excalidrawAPIRef.current) return;
         const appState = excalidrawAPIRef.current.getAppState();
         
@@ -111,6 +114,8 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         if (shapeType === 'triangle') points = [[0, 100], [50, 0], [100, 100], [0, 100]];
         else if (shapeType === 'star') points = [[50,0],[61,35],[98,35],[68,57],[79,91],[50,70],[21,91],[32,57],[2,35],[39,35],[50,0]];
         else if (shapeType === 'hexagon') points = [[50,0],[100,25],[100,75],[50,100],[0,75],[0,25],[50,0]];
+        else if (shapeType === 'octagon') points = [[30,0],[70,0],[100,30],[100,70],[70,100],[30,100],[0,70],[0,30],[30,0]];
+        else if (shapeType === 'heart') points = [[50,90],[20,60],[5,40],[5,20],[20,5],[40,5],[50,25],[60,5],[80,5],[95,20],[95,40],[80,60],[50,90]];
 
         const newElement = {
             type: 'line',
@@ -151,19 +156,27 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         pagesMapRef.current[activePageId] = [...elements];
 
         const payload = { type: 'excalidraw-sync', pageId: activePageId, elements };
-        const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
+        const roomId = newSearchParams().get('room') || 'default-secret';
         
         CryptoUtil.encrypt(JSON.stringify(payload), roomId).then(encrypted => {
             dataChannelManager.send('ircp-excalidraw', { encrypted }, peerId)
         }).catch(err => console.error("Encryption failed for Excalidraw payload:", err));
     };
 
+    const newSearchParams = () => {
+        try {
+            return new URLSearchParams(window.location.search);
+        } catch(e) {
+            return new URLSearchParams('');
+        }
+    }
+
     useEffect(() => {
         const handleRemoteDraw = async (payloadWrapper: any) => {
             if (!excalidrawAPIRef.current) return;
             
             try {
-                const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
+                const roomId = newSearchParams().get('room') || 'default-secret';
                 let payload = payloadWrapper;
                 if (payloadWrapper.encrypted) {
                     const decrypted = await CryptoUtil.decrypt(payloadWrapper.encrypted, roomId);
@@ -252,6 +265,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
     return (
         <div className="absolute inset-0 z-[100] flex flex-col bg-[#080810]">
+            {/* Top Bar */}
             <div className="h-14 border-b border-[#222] bg-[#111] flex items-center justify-between px-4 shrink-0 relative z-[200]">
                 <div className="flex items-center gap-4">
                     <button onClick={onClose} className="p-2 hover:bg-[#222] rounded-lg transition-colors text-[var(--text-dim)] shadow-sm">
@@ -260,44 +274,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                     <span className="font-bold tracking-widest text-[var(--text-dim)]">CANVAS MODE</span>
                 </div>
                 
-                {/* Custom Pages UI */}
-                <div className="flex-1 max-w-2xl mx-8 flex items-center gap-1 overflow-x-auto bg-[#1a1a24] p-1 rounded-lg border border-[#333] custom-scrollbar">
-                    {Object.entries(pageNames).map(([id, name]) => (
-                        <div 
-                            key={id} 
-                            onClick={() => switchPage(id)}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer transition-all min-w-max text-sm ${
-                                activePageId === id 
-                                ? 'bg-[var(--accent)] text-black font-bold shadow-md' 
-                                : 'text-gray-400 hover:bg-[#2a2a35] hover:text-white'
-                            }`}
-                        >
-                            {editingPageId === id ? (
-                                <input 
-                                    autoFocus
-                                    className="bg-transparent border-none outline-none text-black w-24"
-                                    defaultValue={name}
-                                    onBlur={(e) => renamePage(id, e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && renamePage(id, e.currentTarget.value)}
-                                />
-                            ) : (
-                                <span onDoubleClick={() => setEditingPageId(id)}>{name}</span>
-                            )}
-                            {Object.keys(pageNames).length > 1 && (
-                                <button 
-                                    onClick={(e) => deletePage(id, e)} 
-                                    className={`p-1 rounded-full opacity-60 hover:opacity-100 ${activePageId === id ? 'hover:bg-black/20' : 'hover:bg-white/10'}`}
-                                >
-                                    <Trash2 className="w-3 h-3" />
-                                </button>
-                            )}
-                        </div>
-                    ))}
-                    <button onClick={addPage} className="p-1.5 ml-2 rounded-md hover:bg-[#2a2a35] text-gray-400 hover:text-white transition-colors" title="Add Page">
-                        <Plus className="w-4 h-4" />
-                    </button>
-                </div>
-
                 <div className="flex items-center gap-4">
                     <button 
                         onClick={handleSave} 
@@ -309,42 +285,111 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 </div>
             </div>
             
-            <div className="relative min-h-0 flex-1 overflow-hidden bg-white flex">
-                {/* Custom Shapes Sidebar */}
-                <div className="w-16 bg-[#fafafa] border-r border-[#e5e5e5] flex flex-col items-center py-4 gap-4 z-[201] shadow-sm">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Shapes</div>
-                    <button onClick={() => injectShape('triangle')} className="p-2.5 rounded-xl hover:bg-[#ececec] text-gray-700 transition-all group relative" title="Add Triangle">
-                        <Triangle className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    </button>
-                    <button onClick={() => injectShape('star')} className="p-2.5 rounded-xl hover:bg-[#ececec] text-gray-700 transition-all group relative" title="Add Star">
-                        <Star className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    </button>
-                    <button onClick={() => injectShape('hexagon')} className="p-2.5 rounded-xl hover:bg-[#ececec] text-gray-700 transition-all group relative" title="Add Hexagon">
-                        <Hexagon className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    </button>
-                    <div className="w-8 h-px bg-gray-300 my-2"></div>
-                    <button className="p-2.5 rounded-xl text-gray-400 cursor-not-allowed" title="More shapes in Excalidraw Library">
-                        <Component className="w-5 h-5" />
-                    </button>
+            {/* Canvas Area */}
+            <div className="relative min-h-0 flex-1 flex flex-col overflow-hidden bg-white">
+                <div className="flex-1 relative flex">
+                    {/* Custom Shapes Sidebar */}
+                    <div className="w-16 bg-[#fafafa] border-r border-[#e5e5e5] flex flex-col items-center py-4 gap-4 z-[201] shadow-sm relative">
+                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Tools</div>
+                        
+                        <button 
+                            onClick={() => setIsShapesMenuOpen(!isShapesMenuOpen)} 
+                            className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${isShapesMenuOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} 
+                            title="Shapes Library"
+                        >
+                            <Component className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        </button>
+
+                        {isShapesMenuOpen && (
+                            <div className="absolute left-full ml-2 top-10 bg-white border border-gray-200 shadow-xl rounded-xl p-4 w-[280px] grid grid-cols-3 gap-2">
+                                <div className="col-span-3 text-xs font-bold text-gray-400 mb-2 px-1 uppercase">Custom Shapes</div>
+                                
+                                <button onClick={() => { injectShape('triangle'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
+                                    <Triangle className="w-6 h-6"/>
+                                    <span className="text-[10px] font-medium">Triangle</span>
+                                </button>
+                                
+                                <button onClick={() => { injectShape('star'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
+                                    <Star className="w-6 h-6"/>
+                                    <span className="text-[10px] font-medium">Star</span>
+                                </button>
+                                
+                                <button onClick={() => { injectShape('hexagon'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
+                                    <Hexagon className="w-6 h-6"/>
+                                    <span className="text-[10px] font-medium">Hexagon</span>
+                                </button>
+                                
+                                <button onClick={() => { injectShape('octagon'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
+                                    <Octagon className="w-6 h-6"/>
+                                    <span className="text-[10px] font-medium">Octagon</span>
+                                </button>
+                                
+                                <button onClick={() => { injectShape('heart'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-red-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-red-500 transition-colors">
+                                    <Heart className="w-6 h-6"/>
+                                    <span className="text-[10px] font-medium">Heart</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    <CanvasErrorBoundary>
+                        <div className="flex-1 relative h-full">
+                            <Excalidraw
+                                excalidrawAPI={(api) => { excalidrawAPIRef.current = api; }}
+                                onChange={onChange}
+                                UIOptions={{ canvasActions: { loadScene: false, export: false, saveAsImage: false } }}
+                            >
+                                <MainMenu>
+                                    <MainMenu.DefaultItems.ClearCanvas />
+                                    <MainMenu.DefaultItems.ChangeCanvasBackground />
+                                </MainMenu>
+                                <WelcomeScreen>
+                                    <WelcomeScreen.Hints.ToolbarHint />
+                                </WelcomeScreen>
+                            </Excalidraw>
+                        </div>
+                    </CanvasErrorBoundary>
                 </div>
 
-                <CanvasErrorBoundary>
-                    <div className="flex-1 relative h-full">
-                        <Excalidraw
-                            excalidrawAPI={(api) => { excalidrawAPIRef.current = api; }}
-                            onChange={onChange}
-                            UIOptions={{ canvasActions: { loadScene: false, export: false, saveAsImage: false } }}
-                        >
-                            <MainMenu>
-                                <MainMenu.DefaultItems.ClearCanvas />
-                                <MainMenu.DefaultItems.ChangeCanvasBackground />
-                            </MainMenu>
-                            <WelcomeScreen>
-                                <WelcomeScreen.Hints.ToolbarHint />
-                            </WelcomeScreen>
-                        </Excalidraw>
+                {/* Custom Pages Footer */}
+                <div className="h-12 border-t border-[#333] bg-[#1a1a24] flex items-center px-4 shrink-0 relative z-[200]">
+                    <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar flex-1">
+                        {Object.entries(pageNames).map(([id, name]) => (
+                            <div 
+                                key={id} 
+                                onClick={() => switchPage(id)}
+                                className={`flex items-center gap-2 px-4 py-1.5 rounded-md cursor-pointer transition-all min-w-max text-sm ${
+                                    activePageId === id 
+                                    ? 'bg-[var(--accent)] text-black font-bold shadow-md' 
+                                    : 'text-gray-400 hover:bg-[#2a2a35] hover:text-white'
+                                }`}
+                            >
+                                {editingPageId === id ? (
+                                    <input 
+                                        autoFocus
+                                        className="bg-transparent border-none outline-none text-black w-24 placeholder-black/50"
+                                        defaultValue={name}
+                                        onBlur={(e) => renamePage(id, e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && renamePage(id, e.currentTarget.value)}
+                                    />
+                                ) : (
+                                    <span onDoubleClick={() => setEditingPageId(id)}>{name}</span>
+                                )}
+                                {Object.keys(pageNames).length > 1 && (
+                                    <button 
+                                        onClick={(e) => deletePage(id, e)} 
+                                        className={`p-1 rounded-full opacity-60 hover:opacity-100 ${activePageId === id ? 'hover:bg-black/20' : 'hover:bg-white/10'}`}
+                                    >
+                                        <Trash2 className="w-3 h-3" />
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+                        <button onClick={addPage} className="p-1.5 ml-2 rounded-md hover:bg-[#2a2a35] text-gray-400 hover:text-white transition-colors flex items-center gap-1" title="Add Page">
+                            <Plus className="w-4 h-4" /> <span className="text-sm">New Page</span>
+                        </button>
                     </div>
-                </CanvasErrorBoundary>
+                </div>
             </div>
         </div>
     )
