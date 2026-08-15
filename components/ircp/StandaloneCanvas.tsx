@@ -550,13 +550,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 
                 <div className="flex items-center gap-4">
                     <button 
-                        onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} 
-                        className="p-2 bg-[#222] text-gray-300 hover:text-white hover:bg-[#333] rounded-lg transition-all flex items-center justify-center shadow-sm" 
-                        title="Toggle Dark Mode"
-                    >
-                        {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
-                    </button>
-                    <button 
                         onClick={handleSave} 
                         className="p-2 bg-[var(--accent)] text-black hover:brightness-110 rounded-lg transition-all flex items-center gap-2 text-sm font-bold" 
                         title="Save Image"
