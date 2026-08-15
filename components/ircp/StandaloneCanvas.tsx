@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -98,7 +98,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         pagesMapRef.current[newId] = clonedElements;
         setPageNames(prev => ({ ...prev, [newId]: newName }));
         
-        // Insert duplicated page right after the original
         const currentIndex = pageOrder.indexOf(id);
         const newOrder = [...pageOrder];
         newOrder.splice(currentIndex + 1, 0, newId);
@@ -147,7 +146,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         setEditingPageId(null);
     }
 
-    const injectShape = (shapeType: 'triangle' | 'star' | 'hexagon' | 'octagon' | 'heart' | 'pentagon') => {
+    const injectShape = (shapeType: string) => {
         if (!excalidrawAPIRef.current) return;
         const appState = excalidrawAPIRef.current.getAppState();
         
@@ -158,6 +157,10 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         else if (shapeType === 'octagon') points = [[30,0],[70,0],[100,30],[100,70],[70,100],[30,100],[0,70],[0,30],[30,0]];
         else if (shapeType === 'pentagon') points = [[50,0],[100,38],[81,100],[19,100],[0,38],[50,0]];
         else if (shapeType === 'heart') points = [[50,90],[20,60],[5,40],[5,20],[20,5],[40,5],[50,25],[60,5],[80,5],[95,20],[95,40],[80,60],[50,90]];
+        else if (shapeType === 'arrowRight') points = [[20,40],[60,40],[60,20],[90,50],[60,80],[60,60],[20,60],[20,40]];
+        else if (shapeType === 'document') points = [[20,20],[80,20],[80,80],[60,90],[40,80],[20,90],[20,20]];
+        else if (shapeType === 'database') points = [[20,30],[50,20],[80,30],[50,40],[20,30],[20,80],[50,90],[80,80],[80,30]];
+        else if (shapeType === 'cloud') points = [[20,80],[10,60],[20,40],[40,20],[60,20],[80,40],[90,60],[80,80],[20,80]];
 
         const newElement = {
             type: 'line',
@@ -304,6 +307,13 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             .excalidraw .layer-ui__wrapper .HelpIcon {
                 display: none !important;
             }
+            .excalidraw .layer-ui__library-button,
+            .excalidraw .App-toolbar__extra-tools {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
         `;
         document.head.appendChild(style);
         return () => { document.head.removeChild(style); };
@@ -347,45 +357,28 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                         </button>
 
                         {isShapesMenuOpen && (
-                            <div className="absolute left-full ml-2 top-10 bg-white border border-gray-200 shadow-xl rounded-xl p-4 w-[280px] grid grid-cols-3 gap-2">
-                                <div className="col-span-3 text-xs font-bold text-gray-400 mb-2 px-1 uppercase flex justify-between items-center">
-                                    <span>Custom Shapes</span>
+                            <div className="absolute left-full ml-2 top-0 bg-white border border-gray-200 shadow-2xl rounded-xl p-5 w-[320px] max-h-[80vh] overflow-y-auto custom-scrollbar">
+                                
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Basic Shapes</div>
+                                <div className="grid grid-cols-5 gap-2 mb-6">
+                                    <button onClick={() => { injectShape('triangle'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Triangle"><Triangle className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('pentagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Pentagon"><Pentagon className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('hexagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Hexagon"><Hexagon className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('octagon'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Octagon"><Octagon className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('star'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Star"><Star className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('heart'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-500 transition-colors" title="Heart"><Heart className="w-5 h-5"/></button>
                                 </div>
-                                
-                                <button onClick={() => { injectShape('triangle'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
-                                    <Triangle className="w-6 h-6"/>
-                                    <span className="text-[10px] font-medium">Triangle</span>
-                                </button>
-                                
-                                <button onClick={() => { injectShape('pentagon'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
-                                    <Pentagon className="w-6 h-6"/>
-                                    <span className="text-[10px] font-medium">Pentagon</span>
-                                </button>
 
-                                <button onClick={() => { injectShape('hexagon'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
-                                    <Hexagon className="w-6 h-6"/>
-                                    <span className="text-[10px] font-medium">Hexagon</span>
-                                </button>
-                                
-                                <button onClick={() => { injectShape('octagon'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
-                                    <Octagon className="w-6 h-6"/>
-                                    <span className="text-[10px] font-medium">Octagon</span>
-                                </button>
-                                
-                                <button onClick={() => { injectShape('star'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-indigo-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-indigo-600 transition-colors">
-                                    <Star className="w-6 h-6"/>
-                                    <span className="text-[10px] font-medium">Star</span>
-                                </button>
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Block Arrows & Flowchart</div>
+                                <div className="grid grid-cols-5 gap-2 mb-6">
+                                    <button onClick={() => { injectShape('arrowRight'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Block Arrow"><ArrowRight className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('document'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Document"><FileText className="w-5 h-5"/></button>
+                                </div>
 
-                                <button onClick={() => { injectShape('heart'); setIsShapesMenuOpen(false); }} className="p-3 hover:bg-red-50 rounded-lg flex flex-col items-center gap-2 text-gray-700 hover:text-red-500 transition-colors">
-                                    <Heart className="w-6 h-6"/>
-                                    <span className="text-[10px] font-medium">Heart</span>
-                                </button>
-                                
-                                <div className="col-span-3 mt-2 pt-2 border-t border-gray-100">
-                                    <p className="text-[10px] text-gray-400 leading-tight">
-                                        For UML, Network, and Flowchart diagrams, click the <b>Library icon</b> inside the Excalidraw toolbar.
-                                    </p>
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Network & UML</div>
+                                <div className="grid grid-cols-5 gap-2 mb-2">
+                                    <button onClick={() => { injectShape('database'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Database"><Database className="w-5 h-5"/></button>
+                                    <button onClick={() => { injectShape('cloud'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Cloud"><Cloud className="w-5 h-5"/></button>
                                 </div>
                             </div>
                         )}
