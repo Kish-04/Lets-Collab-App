@@ -80,6 +80,52 @@ app.post('/api/upload-evidence-video', uploadVideo.single('video'), (req, res) =
     res.json({ url });
 });
 
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+app.post('/api/pet', async (req, res) => {
+  try {
+    const { message, imageBase64 } = req.body;
+    const geminiApiKey = process.env.GEMINI_API_KEY || '';
+    if (!geminiApiKey) {
+      return res.json({ text: "I'm offline! Please add GEMINI_API_KEY to your .env file." });
+    }
+
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+    
+    const prompt = `You are an AI Pet Assistant in a remote desktop collaboration app called "Let's Collab".
+You are a friendly robot pet without a tail, so do not mention wagging a tail or anything about a tail.
+Your goal is to help the Host and Controller debug code or use the app. Keep your answers concise, friendly, and helpful.
+IMPORTANT: You MUST start every single answer with a funny robotic sound word like *Beep Bop*, *Bzzzzt*, or *Whirr*. Do not forget this.
+The user said: "${message}"`;
+
+    if (imageBase64) {
+      const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+      const result = await model.generateContent([
+        prompt,
+        { inlineData: { data: base64Data, mimeType: 'image/jpeg' } },
+      ]);
+      const response = await result.response;
+      return res.json({ text: response.text() });
+    }
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return res.json({ text: response.text() });
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    const errorMsg = String(error.message || error);
+    if (errorMsg.includes('401') || errorMsg.includes('invalid authentication credentials')) {
+      const casualResponses = [
+        "Hmm, I'm having trouble connecting to my central knowledge base right now. But I'm here if you need to test the UI!",
+        "My cognitive circuits are offline at the moment due to an API issue, but your interface looks great!",
+        "I'd love to help with that, but I'm currently running in limited mode. Everything else is looking good though!"
+      ];
+      return res.json({ text: casualResponses[Math.floor(Math.random() * casualResponses.length)] });
+    }
+    return res.json({ text: "API Error: " + errorMsg });
+  }
+});
+
 app.post('/api/profile', protectAuthenticated, async (req, res) => {
   try {
     const { name, newPassword } = req.body;

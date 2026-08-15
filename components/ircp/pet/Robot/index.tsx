@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
+import { getBackendUrl } from '@/lib/utils'
 import { Canvas } from '@react-three/fiber'
 import * as THREE from 'three'
 import { motion, AnimatePresence, useMotionValue, animate, useDragControls } from 'framer-motion'
@@ -224,20 +225,18 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     try {
       setTimeout(() => setEmotion('Thinking'), 1000)
 
-      const askGemini = (window as Window & { api?: { askGemini?: (prompt: string) => Promise<string> } }).api?.askGemini
-      const reply = askGemini
-        ? await askGemini(userMsg)
-        : await fetch('/api/pet', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: userMsg })
-          }).then(async (response) => {
-            if (!response.ok) {
-              throw new Error(`Request failed with status ${response.status}`)
-            }
-            const data = await response.json()
-            return data.text || "I didn't get that."
-          })
+      const backendUrl = getBackendUrl()
+      const reply = await fetch(`${backendUrl}/api/pet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMsg })
+      }).then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`)
+        }
+        const data = await response.json()
+        return data.text || "I didn't get that."
+      })
 
       setEmotion('Reasoning')
       setTimeout(() => {
