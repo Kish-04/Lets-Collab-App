@@ -214,7 +214,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       if (e.target && e.pointerId !== undefined) {
         e.target.setPointerCapture(e.pointerId)
       }
-      import('./Sounds').then(m => m.playMoveStart())
+      import('./Sounds').then(m => m.playHoverBeep())
       setEmotion('Walking')
     }
   }, [dragControls, isStandalone, setEmotion])
@@ -225,9 +225,9 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       if (e.target && e.pointerId !== undefined && e.target.hasPointerCapture(e.pointerId)) {
         e.target.releasePointerCapture(e.pointerId)
       }
-      import('./Sounds').then(m => m.playMoveEnd())
+      import('./Sounds').then(m => m.playHoverBeep())
       setEmotion('Idle')
-      setDragVelocity({ x: 0, y: 0 })
+      setDragVelocity(0, 0)
     }
   }, [isStandalone, setEmotion, setDragVelocity])
 
@@ -241,10 +241,9 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         }
         lastScreenPos.current = { x: e.nativeEvent.screenX, y: e.nativeEvent.screenY }
         
-        const velocity = { x: dx * 20, y: dy * 20 }
-        setDragVelocity(velocity)
-        if (Math.abs(velocity.x) > 200 || Math.abs(velocity.y) > 200) {
-          setEmotion('Surprised')
+        setDragVelocity(dx * 20, dy * 20)
+        if (Math.abs(dx * 20) > 200 || Math.abs(dy * 20) > 200) {
+          setEmotion('Confused')
         }
       }
     } else if (emotion !== 'Sleep') {
