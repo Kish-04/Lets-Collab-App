@@ -107,7 +107,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         if (!excalidrawAPIRef.current) return;
         const appState = excalidrawAPIRef.current.getAppState();
         
-        let points = [];
+        let points: number[][] = [];
         if (shapeType === 'triangle') points = [[0, 100], [50, 0], [100, 100], [0, 100]];
         else if (shapeType === 'star') points = [[50,0],[61,35],[98,35],[68,57],[79,91],[50,70],[21,91],[32,57],[2,35],[39,35],[50,0]];
         else if (shapeType === 'hexagon') points = [[50,0],[100,25],[100,75],[50,100],[0,75],[0,25],[50,0]];
