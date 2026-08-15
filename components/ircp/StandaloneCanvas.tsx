@@ -251,7 +251,6 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             seed: Math.floor(Math.random() * 1000000000),
             groupIds: [],
             boundElements: [],
-            containerId: rectId,
             updated: Date.now(),
             locked: false
         };
@@ -260,7 +259,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             elements: [...currentElements, newRect as any, newText as any],
             appState: {
                 activeTool: { type: 'selection', customType: null },
-                selectedElementIds: { [newRect.id]: true }
+                selectedElementIds: { [newText.id]: true }
             }
         });
         setActiveMenu(null);
@@ -293,7 +292,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             height: 200,
             seed: Math.floor(Math.random() * 1000000000),
             groupIds: [],
-            boundElements: [{ id: textId, type: 'text' }],
+            boundElements: [],
             updated: Date.now(),
             locked: false
         };
@@ -304,21 +303,20 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             versionNonce: Math.floor(Math.random() * 1000000000),
             isDeleted: false,
             id: textId,
-            x: (appState.scrollX * -1) + (appState.width / 2) - 90,
-            y: (appState.scrollY * -1) + (appState.height / 2) - 90,
+            x: (appState.scrollX * -1) + (appState.width / 2) - 80,
+            y: (appState.scrollY * -1) + (appState.height / 2) - 80,
             text: "Type here...",
             fontSize: 20,
-            fontFamily: 1, // Normal font
+            fontFamily: 1,
             textAlign: "center",
             verticalAlign: "middle",
             strokeColor: '#000000',
             backgroundColor: 'transparent',
-            width: 180,
-            height: 180,
+            width: 160,
+            height: 160,
             seed: Math.floor(Math.random() * 1000000000),
             groupIds: [],
             boundElements: [],
-            containerId: rectId,
             updated: Date.now(),
             locked: false
         };
@@ -327,7 +325,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             elements: [...currentElements, newRect as any, newText as any],
             appState: {
                 activeTool: { type: 'selection', customType: null },
-                selectedElementIds: { [newRect.id]: true }
+                selectedElementIds: { [newText.id]: true }
             }
         });
         setActiveMenu(null);
@@ -337,11 +335,12 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         if (!excalidrawAPIRef.current) return;
         excalidrawAPIRef.current.updateScene({
             appState: {
-                activeTool: { type: "freedraw", customType: null },
+                activeTool: { type: 'freedraw', customType: 'pen' },
                 currentItemStrokeColor: highlighterColor,
+                currentItemBackgroundColor: highlighterColor,
                 currentItemStrokeWidth: highlighterSize,
-                currentItemOpacity: 50,
-                currentItemRoughness: 0
+                currentItemRoughness: 0,
+                currentItemOpacity: 50
             }
         });
         setActiveMenu(null);
@@ -393,8 +392,8 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         };
         
         if (['ellipse', 'rectangle', 'diamond'].includes(shapeType)) {
-            excalidrawAPIRef.current.updateScene({ 
-                elements: [...currentElements, { ...baseElement, type: shapeType }] 
+            excalidrawAPIRef.current.updateScene({
+                appState: { activeTool: { type: shapeType, customType: null } }
             });
             return;
         }
@@ -426,8 +425,13 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             points.push([100, 100], [0, 100]);
         }
 
+        const newShape = { ...baseElement, type: 'line', points };
         excalidrawAPIRef.current.updateScene({ 
-            elements: [...currentElements, { ...baseElement, type: 'line', points }] 
+            elements: [...currentElements, newShape],
+            appState: {
+                activeTool: { type: 'selection', customType: null },
+                selectedElementIds: { [newShape.id]: true }
+            }
         });
     }
 
