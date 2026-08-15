@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket, Code, Moon, Sun } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -52,7 +52,8 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     const [activePageId, setActivePageId] = useState('page-1');
     const [editingPageId, setEditingPageId] = useState<string | null>(null);
 
-    // Shapes Menu State
+    // Theme & Shapes Menu State
+    const [theme, setTheme] = useState<'light' | 'dark'>('light');
     const [isShapesMenuOpen, setIsShapesMenuOpen] = useState(false);
     
     // Custom Modals State (To bypass Electron native dialog limits)
@@ -176,6 +177,37 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 strokeColor: appState.currentItemStrokeColor || '#000000',
                 backgroundColor: 'transparent',
                 width: 150,
+                height: 80,
+                seed: Math.floor(Math.random() * 1000000000),
+                groupIds: [],
+                boundElements: [],
+                updated: Date.now(),
+                locked: false
+            }]
+        });
+        setIsShapesMenuOpen(false);
+    }
+    
+    const injectCodeSnippet = () => {
+        if (!excalidrawAPIRef.current) return;
+        const appState = excalidrawAPIRef.current.getAppState();
+        const currentElements = excalidrawAPIRef.current.getSceneElements();
+        excalidrawAPIRef.current.updateScene({
+            elements: [...currentElements, {
+                type: 'text',
+                version: 1,
+                versionNonce: Math.floor(Math.random() * 1000000000),
+                id: `code-${Date.now()}`,
+                x: (appState.scrollX * -1) + (appState.width / 2) - 100,
+                y: (appState.scrollY * -1) + (appState.height / 2) - 40,
+                text: "function awesomeFeature() {\n  console.log('Deploying via ircp');\n}",
+                fontSize: 16,
+                fontFamily: 3, // 3 is Monospace in Excalidraw
+                textAlign: "left",
+                verticalAlign: "top",
+                strokeColor: theme === 'dark' ? '#f08c00' : '#d9480f',
+                backgroundColor: 'transparent',
+                width: 250,
                 height: 80,
                 seed: Math.floor(Math.random() * 1000000000),
                 groupIds: [],
@@ -518,6 +550,13 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 
                 <div className="flex items-center gap-4">
                     <button 
+                        onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} 
+                        className="p-2 bg-[#222] text-gray-300 hover:text-white hover:bg-[#333] rounded-lg transition-all flex items-center justify-center shadow-sm" 
+                        title="Toggle Dark Mode"
+                    >
+                        {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+                    </button>
+                    <button 
                         onClick={handleSave} 
                         className="p-2 bg-[var(--accent)] text-black hover:brightness-110 rounded-lg transition-all flex items-center gap-2 text-sm font-bold" 
                         title="Save Image"
@@ -580,12 +619,13 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                 </div>
 
                                 <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Text & Annotations</div>
-                                <div className="grid grid-cols-5 gap-2 mb-6">
+                                <div className="grid grid-cols-6 gap-2 mb-6">
                                     <button onClick={injectBulletList} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Bullet List"><List className="w-5 h-5"/></button>
                                     <button onClick={() => injectStickyNote('#fef08a')} className="p-2 bg-yellow-100 hover:bg-yellow-200 rounded-lg flex items-center justify-center text-yellow-800 transition-colors shadow-sm" title="Yellow Sticky Note"><StickyNote className="w-5 h-5"/></button>
                                     <button onClick={() => injectStickyNote('#fbcfe8')} className="p-2 bg-pink-100 hover:bg-pink-200 rounded-lg flex items-center justify-center text-pink-800 transition-colors shadow-sm" title="Pink Sticky Note"><StickyNote className="w-5 h-5"/></button>
                                     <button onClick={() => setHighlighter('#fef08a')} className="p-2 hover:bg-yellow-50 rounded-lg flex items-center justify-center text-yellow-500 hover:text-yellow-600 transition-colors" title="Yellow Highlighter"><Highlighter className="w-5 h-5"/></button>
                                     <button onClick={() => setHighlighter('#bbf7d0')} className="p-2 hover:bg-green-50 rounded-lg flex items-center justify-center text-green-500 hover:text-green-600 transition-colors" title="Green Highlighter"><Highlighter className="w-5 h-5"/></button>
+                                    <button onClick={injectCodeSnippet} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center text-gray-800 transition-colors border border-gray-300" title="Code Snippet Block"><Code className="w-5 h-5"/></button>
                                 </div>
 
                                 <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Smart Tools & Data</div>
@@ -614,6 +654,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                     <CanvasErrorBoundary>
                         <div className="flex-1 relative h-full">
                             <Excalidraw 
+                                theme={theme}
                                 excalidrawAPI={(api) => excalidrawAPIRef.current = api}
                                 onChange={onChange}
                                 UIOptions={{
