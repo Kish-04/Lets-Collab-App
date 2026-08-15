@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table, BarChart2 } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -192,6 +192,60 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         excalidrawAPIRef.current.updateScene({ elements: [...currentElements, newElement] });
     }
 
+    const insertTable = (rows: number, cols: number) => {
+        if (!excalidrawAPIRef.current) return;
+        const appState = excalidrawAPIRef.current.getAppState();
+        const startX = (appState.scrollX * -1) + (appState.width / 2) - ((cols * 120) / 2);
+        const startY = (appState.scrollY * -1) + (appState.height / 2) - ((rows * 40) / 2);
+    
+        const newElements = [];
+        const groupId = `table-group-${Date.now()}`;
+        
+        for(let r = 0; r < rows; r++) {
+            for(let c = 0; c < cols; c++) {
+                newElements.push({
+                    type: 'rectangle',
+                    version: 1,
+                    versionNonce: Math.floor(Math.random() * 1000000000),
+                    isDeleted: false,
+                    id: `table-cell-${Date.now()}-${r}-${c}`,
+                    fillStyle: 'solid',
+                    strokeWidth: 1,
+                    strokeStyle: 'solid',
+                    roughness: 0, // perfect straight lines for tables
+                    opacity: 100,
+                    angle: 0,
+                    x: startX + (c * 120),
+                    y: startY + (r * 40),
+                    strokeColor: '#000000',
+                    backgroundColor: 'transparent',
+                    width: 120,
+                    height: 40,
+                    seed: Math.floor(Math.random() * 1000000000),
+                    groupIds: [groupId],
+                    boundElements: [],
+                    updated: Date.now(),
+                    locked: false
+                });
+            }
+        }
+        const currentElements = excalidrawAPIRef.current.getSceneElements();
+        excalidrawAPIRef.current.updateScene({ elements: [...currentElements, ...newElements] });
+    }
+
+    const handleInsertTable = () => {
+        const input = window.prompt("Enter table size (RowsxCols, e.g. 3x3):", "3x3");
+        if (!input) return;
+        const [rows, cols] = input.split('x').map(n => parseInt(n));
+        if (rows > 0 && cols > 0) insertTable(rows, cols);
+        setIsShapesMenuOpen(false);
+    }
+    
+    const handleInsertChart = () => {
+        window.alert("To insert a Chart:\n\n1. Copy CSV data or cells from Excel.\n2. Paste (Ctrl+V) directly onto the canvas.\n\nExcalidraw will automatically detect the data and generate a gorgeous vector Bar or Line chart for you!");
+        setIsShapesMenuOpen(false);
+    }
+
     const onChange = (elements: readonly any[], appState: any) => {
         if (isApplyingRemoteUpdateRef.current) return;
         
@@ -295,6 +349,42 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         }
     };
 
+    // Pre-load bundled libraries
+    useEffect(() => {
+        const loadLibraries = async () => {
+            if (!excalidrawAPIRef.current) return;
+            try {
+                // Fetch our bundled local libraries
+                const results = await Promise.allSettled([
+                    fetch('/libraries/pack0.json').then(res => res.json()),
+                    fetch('/libraries/pack1.json').then(res => res.json()),
+                    fetch('/libraries/pack2.json').then(res => res.json())
+                ]);
+                
+                let combinedItems: any[] = [];
+                results.forEach((res: any) => {
+                    if (res.status === 'fulfilled' && res.value?.libraryItems) {
+                        combinedItems = [...combinedItems, ...res.value.libraryItems];
+                    }
+                });
+                
+                if (combinedItems.length > 0) {
+                    excalidrawAPIRef.current.updateLibrary({
+                        libraryItems: combinedItems,
+                        prompt: false,
+                        merge: true
+                    });
+                }
+            } catch (err) {
+                console.error("Failed to load local libraries", err);
+            }
+        };
+
+        // Give Excalidraw a second to mount fully before injecting massive libraries
+        const timer = setTimeout(loadLibraries, 1500);
+        return () => clearTimeout(timer);
+    }, []);
+
     useEffect(() => {
         const style = document.createElement('style');
         style.innerHTML = `
@@ -307,14 +397,8 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             .excalidraw .layer-ui__wrapper .HelpIcon {
                 display: none !important;
             }
-            .excalidraw .layer-ui__library-button,
-            .excalidraw .App-toolbar__extra-tools {
-                display: none !important;
-                visibility: hidden !important;
-                opacity: 0 !important;
-                pointer-events: none !important;
-            }
         `;
+        // Notice we removed the CSS rule hiding .layer-ui__library-button so users can access the bundled shapes!
         document.head.appendChild(style);
         return () => { document.head.removeChild(style); };
     }, []);
@@ -351,7 +435,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                         <button 
                             onClick={() => setIsShapesMenuOpen(!isShapesMenuOpen)} 
                             className={`p-2.5 rounded-xl transition-all group relative shadow-sm ${isShapesMenuOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-white hover:bg-gray-100 text-gray-700'}`} 
-                            title="Shapes Library"
+                            title="Shapes & Tables"
                         >
                             <Component className="w-5 h-5 group-hover:scale-110 transition-transform" />
                         </button>
@@ -369,16 +453,18 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                     <button onClick={() => { injectShape('heart'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-500 transition-colors" title="Heart"><Heart className="w-5 h-5"/></button>
                                 </div>
 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Block Arrows & Flowchart</div>
-                                <div className="grid grid-cols-5 gap-2 mb-6">
-                                    <button onClick={() => { injectShape('arrowRight'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Block Arrow"><ArrowRight className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('document'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Document"><FileText className="w-5 h-5"/></button>
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Data & Charts</div>
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                    <button onClick={handleInsertTable} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Table">
+                                        <Table className="w-4 h-4 mr-2"/> Table
+                                    </button>
+                                    <button onClick={handleInsertChart} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Chart">
+                                        <BarChart2 className="w-4 h-4 mr-2"/> Chart
+                                    </button>
                                 </div>
-
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Network & UML</div>
-                                <div className="grid grid-cols-5 gap-2 mb-2">
-                                    <button onClick={() => { injectShape('database'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Database"><Database className="w-5 h-5"/></button>
-                                    <button onClick={() => { injectShape('cloud'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Cloud"><Cloud className="w-5 h-5"/></button>
+                                
+                                <div className="mt-6 text-[10px] text-gray-400 text-center italic">
+                                    For 100+ Professional Network & UI Icons, click the <b className="text-gray-500">Library</b> button in the top right.
                                 </div>
                             </div>
                         )}
