@@ -371,7 +371,17 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                     fetch('/libraries/pack3.json').then(res => res.json()),
                     fetch('/libraries/pack4.json').then(res => res.json()),
                     fetch('/libraries/pack5.json').then(res => res.json()),
-                    fetch('/libraries/pack6.json').then(res => res.json())
+                    fetch('/libraries/pack6.json').then(res => res.json()),
+                    fetch('/libraries/pack7.json').then(res => res.json()),
+                    fetch('/libraries/pack8.json').then(res => res.json()),
+                    fetch('/libraries/pack9.json').then(res => res.json()),
+                    fetch('/libraries/pack10.json').then(res => res.json()),
+                    fetch('/libraries/pack11.json').then(res => res.json()),
+                    fetch('/libraries/pack12.json').then(res => res.json()),
+                    fetch('/libraries/pack13.json').then(res => res.json()),
+                    fetch('/libraries/pack14.json').then(res => res.json()),
+                    fetch('/libraries/pack15.json').then(res => res.json()),
+                    fetch('/libraries/pack16.json').then(res => res.json())
                 ]);
                 
                 let combinedItems: any[] = [];
