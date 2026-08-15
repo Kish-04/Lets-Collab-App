@@ -195,7 +195,7 @@ function createWindow() {
       if (!chosen && sources.length > 0) chosen = sources.find(s => s.id.startsWith('screen:')) || sources[0];
       
       if (chosen) {
-        const response: any = { video: chosen };
+        const response = { video: chosen };
         if (request.audioRequested) response.audio = 'loopback';
         callback(response);
       } else {
