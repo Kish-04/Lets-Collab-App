@@ -103,6 +103,19 @@ function SyncEngine({ peerId }: { peerId?: string }) {
     return null
 }
 
+function CanvasDiagnostics() {
+    React.useEffect(() => {
+        const canvas = document.createElement('canvas')
+        const webgl =
+            canvas.getContext('webgl2') ||
+            canvas.getContext('webgl') ||
+            canvas.getContext('experimental-webgl')
+        console.info(`[CanvasDiagnostics] WebGL available: ${Boolean(webgl)}`)
+    }, [])
+
+    return null
+}
+
 export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     return (
         <div className="absolute inset-0 z-[100] flex flex-col bg-[#080810]">
@@ -124,15 +137,18 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 </div>
             </div>
             
-            <div className="relative flex-1 overflow-hidden tldraw-wrapper">
+            <div className="relative min-h-0 flex-1 overflow-hidden bg-white tldraw-wrapper">
                 <CanvasErrorBoundary>
-                    <Tldraw 
-                        components={{
-                            SharePanel: () => null
-                        }}
-                    >
-                        <SyncEngine peerId={peerId} />
-                    </Tldraw>
+                    <div className="absolute inset-0 h-full w-full">
+                        <Tldraw 
+                            components={{
+                                SharePanel: () => null
+                            }}
+                        >
+                            <CanvasDiagnostics />
+                            <SyncEngine peerId={peerId} />
+                        </Tldraw>
+                    </div>
                 </CanvasErrorBoundary>
             </div>
         </div>

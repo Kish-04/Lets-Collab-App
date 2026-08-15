@@ -633,16 +633,16 @@ function SessionContent() {
         addLog('anticheat', `Malpractice detected: ${reason}`)
     }, [addLog, recordFederatedSample])
 
-    const getLocalMediaStreamIds = useCallback(() => ({
+    const getLocalMediaStreamIds = () => ({
         screen: screenStreamRef.current?.id || null,
         camera: activeLocalStreamRef.current?.id || localStreamRef.current?.id || null,
-    }), [])
+    })
 
-    const assignVideoStream = useCallback((video: HTMLVideoElement | null, stream: MediaStream) => {
+    const assignVideoStream = (video: HTMLVideoElement | null, stream: MediaStream) => {
         if (!video) return
         if (video.srcObject !== stream) video.srcObject = stream
         video.play().catch(() => { })
-    }, [])
+    }
 
     useEffect(() => {
         if (sessionMode !== 'supervised' || connectionState !== 'connected') return

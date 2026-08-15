@@ -62,6 +62,10 @@ function isOriginAllowed(origin, allowedOrigins) {
   if (!origin) return true;
   if (allowedOrigins.includes('*')) return true;
   if (allowedOrigins.includes(origin)) return true;
+
+  if (origin === 'app://-') {
+    return true;
+  }
   
   // Always allow the desktop app (which uses random ports on localhost)
   if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {

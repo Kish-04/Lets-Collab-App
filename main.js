@@ -80,7 +80,7 @@ function getConfiguredBackendUrl() {
       }
     } catch (e) {}
   }
-  return 'https://letscollab.vercel.app'; // Fallback
+  return 'https://let-s-collab-tjwc.onrender.com'; // Fallback
 }
 
 function isTrustedRendererUrl(value) {
@@ -118,10 +118,19 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: false,
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
     }
   });
+
+  // Spoof the Origin header to bypass CORS on older backend deployments
+  mainWindow.webContents.session.webRequest.onBeforeSendHeaders(
+    (details, callback) => {
+      details.requestHeaders['Origin'] = 'http://localhost:8081';
+      callback({ cancel: false, requestHeaders: details.requestHeaders });
+    }
+  );
 
   // Load the app through electron-serve (app://-/app.html)
   loadURL(mainWindow).then(() => {

@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronConfig', {
   backendUrl
 });
 
+contextBridge.exposeInMainWorld('__LETSCOLLAB_BACKEND_URL__', backendUrl);
+
 const existingApi = window.api || {};
 contextBridge.exposeInMainWorld('api', {
   ...existingApi,
