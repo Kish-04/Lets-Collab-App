@@ -2524,7 +2524,7 @@ function SessionContent() {
                         )}
                         
                         {/* PiP / Remote Camera Container */}
-                        <div className="absolute bottom-4 right-4 flex flex-col gap-3 z-50 pointer-events-none">
+                        <div className="absolute bottom-4 right-4 flex flex-col gap-3 z-[500] pointer-events-none">
                             {role === 'host' ? (
                                 participants
                                     .filter(participant => remoteCameraStreams[participant.id])
@@ -2587,7 +2587,7 @@ function SessionContent() {
                 <motion.div 
                     drag 
                     dragMomentum={false}
-                    className="absolute right-4 top-20 z-40 transition-shadow duration-300 shadow-[0_0_20px_rgba(0,0,0,0.5)] rounded-2xl bg-[var(--surface)] backdrop-blur-2xl border border-[var(--border)] overflow-hidden flex flex-col"
+                    className="absolute right-4 top-20 z-[500] transition-shadow duration-300 shadow-[0_0_20px_rgba(0,0,0,0.5)] rounded-2xl bg-[var(--surface)] backdrop-blur-2xl border border-[var(--border)] overflow-hidden flex flex-col"
                     style={{ width: '32rem', height: 'calc(100vh - 120px)' }}
                 >
                     <div className="w-full h-full flex flex-col">
@@ -2606,7 +2606,7 @@ function SessionContent() {
             )}
 
             {role === 'controller' && sessionMode === 'supervised' && examQuestions.length > 0 && (
-                <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center">
+                <div className="absolute inset-0 z-[500] pointer-events-none flex items-center justify-center">
                     <div className="pointer-events-auto w-full h-full max-w-4xl">
                         <ExamControllerOverlay 
                             questions={examQuestions} 
@@ -2625,7 +2625,7 @@ function SessionContent() {
                 </main>
 
             {chatOpen && (
-                <div className="fixed right-4 top-16 z-[90] flex h-[min(560px,calc(100vh-5rem))] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
+                <div className="fixed right-4 top-16 z-[500] flex h-[min(560px,calc(100vh-5rem))] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
                     <div className="flex h-12 items-center justify-between border-b border-[var(--border)] px-4">
                         <div className="flex items-center gap-2">
                             <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
