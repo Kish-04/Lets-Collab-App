@@ -286,33 +286,39 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
 
       const backendUrl = getBackendUrl()
       let reply = ""
-      if (typeof window !== 'undefined' && (window as any).api && (window as any).api.askGemini) {
-           // Desktop Mode: Call Gemini IPC directly
-           reply = await (window as any).api.askGemini(userMsg)
+      
+      try {
+        // Try backend first
+        reply = await fetch(`${backendUrl}/api/pet`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: userMsg })
+        }).then(async (res) => {
+          if (!res.ok) throw new Error("Backend failed")
+          const data = await res.json()
+          return data.text || "I didn't get that."
+        })
+      } catch (err) {
+        // If backend fails, check if we're in Electron and can use IPC
+        if (typeof window !== 'undefined' && (window as any).api && (window as any).api.askGemini) {
+          reply = await (window as any).api.askGemini(userMsg)
         } else {
-           // Web Mode: Try backend, then fallback to Next.js API
-           try {
-             reply = await fetch(`${backendUrl}/api/pet`, {
-               method: 'POST',
-               headers: { 'Content-Type': 'application/json' },
-               body: JSON.stringify({ message: userMsg })
-             }).then(async (res) => {
-               if (!res.ok) throw new Error("Backend failed")
-               const data = await res.json()
-               return data.text || "I didn't get that."
-             })
-           } catch(err) {
-             reply = await fetch('/api/pet', {
-               method: 'POST',
-               headers: { 'Content-Type': 'application/json' },
-               body: JSON.stringify({ message: userMsg })
-             }).then(async (res) => {
-               if (!res.ok) throw new Error("Next.js fallback failed")
-               const data = await res.json()
-               return data.text || "I didn't get that."
-             })
-           }
+          // If not in Electron, fallback to local Next.js API route
+          try {
+            reply = await fetch('/api/pet', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: userMsg })
+            }).then(async (res) => {
+              if (!res.ok) throw new Error("Next.js fallback failed")
+              const data = await res.json()
+              return data.text || "I didn't get that."
+            })
+          } catch (fallbackErr) {
+            throw fallbackErr
+          }
         }
+      }
 
       setEmotion('Reasoning')
       setTimeout(() => {
