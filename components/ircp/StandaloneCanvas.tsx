@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -60,6 +60,10 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     const [tableRows, setTableRows] = useState(3);
     const [tableCols, setTableCols] = useState(3);
     const [chartAlertOpen, setChartAlertOpen] = useState(false);
+    
+    // New Feature Modals
+    const [markdownModalOpen, setMarkdownModalOpen] = useState(false);
+    const [autofillModalOpen, setAutofillModalOpen] = useState(false);
 
     const getElementsVersion = (elements: any[]) => {
         return elements.reduce((acc, el) => acc + (el.version || 0), 0);
@@ -150,6 +154,82 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         setPageNames(prev => ({ ...prev, [id]: newName }));
         broadcastWorkspaceEvent('RENAME_PAGE', { targetId: id, newName });
         setEditingPageId(null);
+    }
+
+    const injectBulletList = () => {
+        if (!excalidrawAPIRef.current) return;
+        const appState = excalidrawAPIRef.current.getAppState();
+        const currentElements = excalidrawAPIRef.current.getSceneElements();
+        excalidrawAPIRef.current.updateScene({
+            elements: [...currentElements, {
+                type: 'text',
+                version: 1,
+                versionNonce: Math.floor(Math.random() * 1000000000),
+                id: `text-${Date.now()}`,
+                x: (appState.scrollX * -1) + (appState.width / 2) - 50,
+                y: (appState.scrollY * -1) + (appState.height / 2) - 40,
+                text: "• First Item\n• Second Item\n• Third Item",
+                fontSize: 20,
+                fontFamily: 1,
+                textAlign: "left",
+                verticalAlign: "top",
+                strokeColor: appState.currentItemStrokeColor || '#000000',
+                backgroundColor: 'transparent',
+                width: 150,
+                height: 80,
+                seed: Math.floor(Math.random() * 1000000000),
+                groupIds: [],
+                boundElements: [],
+                updated: Date.now(),
+                locked: false
+            }]
+        });
+        setIsShapesMenuOpen(false);
+    }
+
+    const injectStickyNote = (color: string) => {
+        if (!excalidrawAPIRef.current) return;
+        const appState = excalidrawAPIRef.current.getAppState();
+        const currentElements = excalidrawAPIRef.current.getSceneElements();
+        excalidrawAPIRef.current.updateScene({
+            elements: [...currentElements, {
+                type: 'rectangle',
+                version: 1,
+                versionNonce: Math.floor(Math.random() * 1000000000),
+                id: `sticky-${Date.now()}`,
+                x: (appState.scrollX * -1) + (appState.width / 2) - 75,
+                y: (appState.scrollY * -1) + (appState.height / 2) - 75,
+                strokeColor: '#1e1e1e',
+                backgroundColor: color,
+                fillStyle: 'solid',
+                strokeWidth: 1,
+                strokeStyle: 'solid',
+                roughness: 1,
+                opacity: 100,
+                width: 150,
+                height: 150,
+                seed: Math.floor(Math.random() * 1000000000),
+                groupIds: [],
+                boundElements: [],
+                updated: Date.now(),
+                locked: false
+            }]
+        });
+        setIsShapesMenuOpen(false);
+    }
+
+    const setHighlighter = (color: string) => {
+        if (!excalidrawAPIRef.current) return;
+        excalidrawAPIRef.current.updateScene({
+            appState: {
+                activeTool: { type: "freedraw", customType: null },
+                currentItemStrokeColor: color,
+                currentItemStrokeWidth: 15,
+                currentItemOpacity: 50,
+                currentItemRoughness: 0
+            }
+        });
+        setIsShapesMenuOpen(false);
     }
 
     const injectShape = (shapeType: string) => {
@@ -499,13 +579,28 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                     <button onClick={() => { injectShape('heart'); setIsShapesMenuOpen(false); }} className="p-2 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-500 transition-colors" title="Heart"><Heart className="w-5 h-5"/></button>
                                 </div>
 
-                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Data & Charts</div>
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Text & Annotations</div>
+                                <div className="grid grid-cols-5 gap-2 mb-6">
+                                    <button onClick={injectBulletList} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors" title="Bullet List"><List className="w-5 h-5"/></button>
+                                    <button onClick={() => injectStickyNote('#fef08a')} className="p-2 bg-yellow-100 hover:bg-yellow-200 rounded-lg flex items-center justify-center text-yellow-800 transition-colors shadow-sm" title="Yellow Sticky Note"><StickyNote className="w-5 h-5"/></button>
+                                    <button onClick={() => injectStickyNote('#fbcfe8')} className="p-2 bg-pink-100 hover:bg-pink-200 rounded-lg flex items-center justify-center text-pink-800 transition-colors shadow-sm" title="Pink Sticky Note"><StickyNote className="w-5 h-5"/></button>
+                                    <button onClick={() => setHighlighter('#fef08a')} className="p-2 hover:bg-yellow-50 rounded-lg flex items-center justify-center text-yellow-500 hover:text-yellow-600 transition-colors" title="Yellow Highlighter"><Highlighter className="w-5 h-5"/></button>
+                                    <button onClick={() => setHighlighter('#bbf7d0')} className="p-2 hover:bg-green-50 rounded-lg flex items-center justify-center text-green-500 hover:text-green-600 transition-colors" title="Green Highlighter"><Highlighter className="w-5 h-5"/></button>
+                                </div>
+
+                                <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Smart Tools & Data</div>
                                 <div className="grid grid-cols-2 gap-2 mb-2">
                                     <button onClick={() => setTablePromptOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Table">
                                         <TableIcon className="w-4 h-4 mr-2"/> Table
                                     </button>
                                     <button onClick={() => setChartAlertOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Chart">
                                         <BarChart2 className="w-4 h-4 mr-2"/> Chart
+                                    </button>
+                                    <button onClick={() => setMarkdownModalOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Markdown Guide">
+                                        <FileText className="w-4 h-4 mr-2"/> Markdown
+                                    </button>
+                                    <button onClick={() => setAutofillModalOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Autofill Shapes">
+                                        <PaintBucket className="w-4 h-4 mr-2"/> Autofill
                                     </button>
                                 </div>
                                 
@@ -637,6 +732,46 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                         </div>
                         <div className="flex justify-end">
                             <button onClick={() => setChartAlertOpen(false)} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">Got it!</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {markdownModalOpen && (
+                <div className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 w-[420px]">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><FileText className="w-5 h-5 mr-2 text-indigo-600"/> Markdown Parsing</h3>
+                        <div className="text-gray-600 space-y-3 mb-6">
+                            <p>Excalidraw natively parses Markdown text for you!</p>
+                            <p>Simply copy any Markdown text containing bold `**text**`, italic `*text*`, headings `# Heading`, or lists, and press <b>Ctrl+V</b> on the canvas.</p>
+                            <div className="bg-gray-100 p-3 rounded text-sm font-mono border border-gray-200">
+                                # Architecture<br/>
+                                - React Frontend<br/>
+                                - Node Backend
+                            </div>
+                        </div>
+                        <div className="flex justify-end">
+                            <button onClick={() => setMarkdownModalOpen(false)} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {autofillModalOpen && (
+                <div className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 w-[400px]">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><PaintBucket className="w-5 h-5 mr-2 text-indigo-600"/> Shape Autofill</h3>
+                        <div className="text-gray-600 space-y-3 mb-6">
+                            <p>To fill shapes with solid colors, patterns, or sketch styles:</p>
+                            <ol className="list-decimal pl-5 space-y-1">
+                                <li>Select any drawn shape on the canvas.</li>
+                                <li>Look at the <b>left properties panel</b> that appears.</li>
+                                <li>Under <b>Background</b>, pick a color.</li>
+                                <li>Under <b>Fill</b>, choose Solid, Hachure, or Cross-hatch!</li>
+                            </ol>
+                        </div>
+                        <div className="flex justify-end">
+                            <button onClick={() => setAutofillModalOpen(false)} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">Got it!</button>
                         </div>
                     </div>
                 </div>
