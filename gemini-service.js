@@ -1,10 +1,34 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const path = require('path');
+const fs = require('fs');
+const { app } = require('electron');
 require('dotenv').config();
 
+function getConfiguredApiKey() {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  
+  const configPaths = [
+    path.join(__dirname, 'app-config.json'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'app-config.json') : null,
+  ];
+  try { configPaths.push(path.join(app.getPath('userData'), 'app-config.json')); } catch(e){}
+  
+  for (const configPath of configPaths) {
+    try {
+      if (configPath && fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        if (config.GEMINI_API_KEY) return config.GEMINI_API_KEY;
+        if (config.NEXT_PUBLIC_GEMINI_API_KEY) return config.NEXT_PUBLIC_GEMINI_API_KEY;
+      }
+    } catch(e){}
+  }
+  return '';
+}
+
 async function generateReply(prompt) {
-  const geminiApiKey = process.env.GEMINI_API_KEY || '';
+  const geminiApiKey = getConfiguredApiKey();
   if (!geminiApiKey) {
-    return "I'm offline! Please add GEMINI_API_KEY to your .env file.";
+    return "I'm offline! Please add GEMINI_API_KEY to your .env file or app-config.json.";
   }
 
   try {

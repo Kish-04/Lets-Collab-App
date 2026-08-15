@@ -1162,11 +1162,11 @@ function SessionContent() {
         socket.on('room-created', ({ roomCode: rc }: { roomCode: string }) => { setRoomCode(rc); setConnectionState('waiting') })
         socket.on('session-error', (err: any) => {
             alert('Session Error: ' + (err.message || err.reason || 'Unknown error'));
-            window.location.href = '/app';
+            router.push('/app');
         })
         socket.on('removed-from-session', (data: any) => {
             alert('You have been removed: ' + (data.reason || 'No reason provided'));
-            window.location.href = '/app';
+            router.push('/app');
         })
         socket.on('connect_error', (err: any) => {
             console.error('Socket connection error:', err);
@@ -1315,7 +1315,7 @@ function SessionContent() {
         })
         socket.on('kill-session', () => {
             alert('The session has ended.')
-            window.location.href = '/app'
+            router.push('/app')
         })
         socket.on('stats-update', (data: any) => {
             if (data) {
@@ -1701,7 +1701,7 @@ function SessionContent() {
             
             alert(`Session Terminated: ${reason}`);
             socketRef.current?.emit('leave-session');
-            window.location.href = '/app';
+            router.push('/app');
         };
 
         const onBlur = () => {
@@ -1946,7 +1946,7 @@ function SessionContent() {
             tabSwitchCountRef.current += 1;
             if (tabSwitchCountRef.current >= 2) {
                 reportMalpractice('App Focus Fatal: Multiple app switches detected. Session terminated.', 100, [1, 0, 0]);
-                window.location.href = '/app?terminated=tab_switch';
+                router.push('/app?terminated=tab_switch');
             } else if (tabSwitchCountRef.current === 1) {
                 const message = 'App switch detected! Please keep this window active. A second violation will terminate your session.';
                 reportMalpractice(`App Switch: ${message}`, 50, [1, 0, 0]);
@@ -2771,7 +2771,7 @@ function SessionContent() {
                             <button onClick={() => setShowKillConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
                             <button onClick={() => {
                                 socketRef.current?.emit('kill-session', roomCode);
-                                window.location.href = '/app';
+                                router.push('/app');
                             }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">End Now</button>
                         </div>
                     </div>
@@ -2788,7 +2788,7 @@ function SessionContent() {
                             <button onClick={() => setShowLeaveConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
                             <button onClick={() => {
                                 socketRef.current?.emit('leave-session', roomCode);
-                                window.location.href = '/app';
+                                router.push('/app');
                             }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">Leave Now</button>
                         </div>
                     </div>
