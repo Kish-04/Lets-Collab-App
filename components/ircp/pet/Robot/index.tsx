@@ -301,21 +301,21 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         })
       } catch (err) {
         // Fallback to Next.js API route if backend fails (e.g. old backend, CORS)
-        if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
-          reply = await fetch(`/api/pet`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: userMsg })
-          }).then(async (response) => {
-            if (!response.ok) {
-              throw new Error(`Request failed with status ${response.status}`)
-            }
-            const data = await response.json()
-            return data.text || "I didn't get that."
-          })
-        } else {
-          throw err;
-        }
+        const fallbackUrl = (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) 
+          ? '/api/pet' 
+          : 'http://localhost:3000/api/pet'; // Fallback for Electron dev mode
+          
+        reply = await fetch(fallbackUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: userMsg })
+        }).then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Request failed with status ${response.status}`)
+          }
+          const data = await response.json()
+          return data.text || "I didn't get that."
+        })
       }
 
       setEmotion('Reasoning')
@@ -410,7 +410,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8, y: 10 }}
             className={isStandalone
-              ? "absolute bottom-8 left-4 right-4 z-[160] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-neutral-100 p-3 rounded-2xl shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
+              ? "absolute bottom-8 right-4 w-64 z-[160] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-neutral-100 p-3 rounded-2xl shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
               : "fixed bottom-[340px] right-24 z-[160] max-w-[250px] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-neutral-100 p-3 rounded-2xl rounded-br-sm shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
             }
           >
@@ -431,8 +431,8 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.96 }}
             className={isStandalone
-              ? "absolute bottom-4 left-4 right-4 z-[160] rounded-xl bg-neutral-900 text-neutral-100 shadow-2xl p-3 border border-neutral-700"
-              : "fixed bottom-72 right-6 z-[160] w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-neutral-900 text-neutral-100 shadow-2xl p-3"
+              ? "absolute bottom-4 right-4 w-[250px] z-[160] rounded-xl bg-neutral-900 text-neutral-100 shadow-2xl p-3 border border-neutral-700"
+              : "fixed bottom-72 right-6 z-[160] w-[250px] max-w-[calc(100vw-2rem)] rounded-xl bg-neutral-900 text-neutral-100 shadow-2xl p-3"
             }
           >
             <div className="flex items-center justify-between mb-2">
