@@ -85,8 +85,10 @@ function getConfiguredBackendUrl() {
 
 function isTrustedRendererUrl(value) {
   try {
-    const origin = new URL(value).origin;
-    return origin === 'app://-' || origin.includes('localhost') || origin.includes('127.0.0.1');
+    const urlObj = new URL(value);
+    const isApp = urlObj.protocol === 'app:';
+    const isLocalhost = urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1';
+    return isApp || isLocalhost;
   } catch (e) {
     return false;
   }
