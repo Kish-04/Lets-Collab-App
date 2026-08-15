@@ -2,6 +2,7 @@
 
 import React, { useRef, useEffect } from 'react'
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
+import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
 import { X, Download } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
