@@ -31,3 +31,4 @@ dist/
 dist-fixed/
 
 .vercel
+.env*
