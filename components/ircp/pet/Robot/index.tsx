@@ -34,7 +34,6 @@ function InteractionCatcher({
       onPointerMove={onPointerMove}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
-      onPointerUpOutside={onPointerUp}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
