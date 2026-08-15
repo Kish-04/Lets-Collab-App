@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
 import { dataChannelManager } from '@/lib/DataChannelManager'
-import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react'
+import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react'
 import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
@@ -54,6 +54,12 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
     // Shapes Menu State
     const [isShapesMenuOpen, setIsShapesMenuOpen] = useState(false);
+    
+    // Custom Modals State (To bypass Electron native dialog limits)
+    const [tablePromptOpen, setTablePromptOpen] = useState(false);
+    const [tableRows, setTableRows] = useState(3);
+    const [tableCols, setTableCols] = useState(3);
+    const [chartAlertOpen, setChartAlertOpen] = useState(false);
 
     const getElementsVersion = (elements: any[]) => {
         return elements.reduce((acc, el) => acc + (el.version || 0), 0);
@@ -243,16 +249,9 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         excalidrawAPIRef.current.updateScene({ elements: [...currentElements, ...newElements] });
     }
 
-    const handleInsertTable = () => {
-        const input = window.prompt("Enter table size (RowsxCols, e.g. 3x3):", "3x3");
-        if (!input) return;
-        const [rows, cols] = input.split('x').map(n => parseInt(n));
-        if (rows > 0 && cols > 0) insertTable(rows, cols);
-        setIsShapesMenuOpen(false);
-    }
-    
-    const handleInsertChart = () => {
-        window.alert("To insert a Chart:\n\n1. Copy CSV data or cells from Excel.\n2. Paste (Ctrl+V) directly onto the canvas.\n\nExcalidraw will automatically detect the data and generate a gorgeous vector Bar or Line chart for you!");
+    const handleConfirmTable = () => {
+        if (tableRows > 0 && tableCols > 0) insertTable(tableRows, tableCols);
+        setTablePromptOpen(false);
         setIsShapesMenuOpen(false);
     }
 
@@ -492,10 +491,10 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
                                 <div className="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider border-b border-gray-100 pb-2">Data & Charts</div>
                                 <div className="grid grid-cols-2 gap-2 mb-2">
-                                    <button onClick={handleInsertTable} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Table">
-                                        <Table className="w-4 h-4 mr-2"/> Table
+                                    <button onClick={() => setTablePromptOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Table">
+                                        <TableIcon className="w-4 h-4 mr-2"/> Table
                                     </button>
-                                    <button onClick={handleInsertChart} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Chart">
+                                    <button onClick={() => setChartAlertOpen(true)} className="p-2 hover:bg-indigo-50 rounded-lg flex items-center justify-center text-gray-600 hover:text-indigo-600 transition-colors border border-gray-200" title="Insert Chart">
                                         <BarChart2 className="w-4 h-4 mr-2"/> Chart
                                     </button>
                                 </div>
@@ -509,53 +508,61 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
 
                     <CanvasErrorBoundary>
                         <div className="flex-1 relative h-full">
-                            <Excalidraw
-                                excalidrawAPI={(api) => { excalidrawAPIRef.current = api; }}
+                            <Excalidraw 
+                                excalidrawAPI={(api) => excalidrawAPIRef.current = api}
                                 onChange={onChange}
-                                UIOptions={{ canvasActions: { loadScene: false, export: false, saveAsImage: false } }}
+                                UIOptions={{
+                                    canvasActions: {
+                                        loadScene: false,
+                                        export: false,
+                                        saveToActiveFile: false,
+                                        theme: false
+                                    }
+                                }}
                             >
                                 <MainMenu>
                                     <MainMenu.DefaultItems.ClearCanvas />
-                                    <MainMenu.DefaultItems.ChangeCanvasBackground />
+                                    <MainMenu.DefaultItems.Export />
+                                    <MainMenu.DefaultItems.SaveAsImage />
+                                    <MainMenu.DefaultItems.Help />
                                 </MainMenu>
                                 <WelcomeScreen>
+                                    <WelcomeScreen.Hints.MenuHint />
                                     <WelcomeScreen.Hints.ToolbarHint />
+                                    <WelcomeScreen.Hints.HelpHint />
                                 </WelcomeScreen>
                             </Excalidraw>
                         </div>
                     </CanvasErrorBoundary>
                 </div>
-
-                {/* Custom Pages Footer */}
-                <div className="h-12 border-t border-[#333] bg-[#1a1a24] flex items-center px-4 shrink-0 relative z-[200]">
-                    <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar flex-1">
-                        {pageOrder.map((id, index) => {
-                            const name = pageNames[id];
-                            return (
+                
+                {/* Multi-Page Navigation Bar */}
+                <div className="h-12 border-t border-[#e5e5e5] bg-[#fafafa] flex items-center px-2 shrink-0 overflow-x-auto custom-scrollbar z-[200]">
+                    <div className="flex items-center gap-1 shrink-0">
+                        {pageOrder.map((id, index) => (
                             <div 
                                 key={id} 
-                                onClick={() => switchPage(id)}
-                                className={`flex items-center gap-1 px-3 py-1.5 rounded-md cursor-pointer transition-all min-w-max text-sm ${
+                                className={`group flex items-center px-3 py-1.5 rounded-md text-sm border-2 cursor-pointer transition-colors ${
                                     activePageId === id 
-                                    ? 'bg-[var(--accent)] text-black font-bold shadow-md' 
-                                    : 'text-gray-400 hover:bg-[#2a2a35] hover:text-white'
+                                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700 font-bold' 
+                                    : 'border-transparent text-gray-600 hover:bg-gray-100'
                                 }`}
+                                onClick={() => switchPage(id)}
                             >
                                 {editingPageId === id ? (
                                     <input 
                                         autoFocus
-                                        className="bg-transparent border-none outline-none text-black w-24 placeholder-black/50 px-1"
-                                        defaultValue={name}
-                                        onBlur={(e) => renamePage(id, e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && renamePage(id, e.currentTarget.value)}
+                                        type="text" 
+                                        defaultValue={pageNames[id]} 
+                                        onBlur={(e) => renamePage(id, e.target.value || `Page ${index + 1}`)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') renamePage(id, (e.target as HTMLInputElement).value || `Page ${index + 1}`);
+                                            if (e.key === 'Escape') setEditingPageId(null);
+                                        }}
+                                        className="bg-white border border-indigo-300 rounded px-1 w-24 text-sm text-black outline-none"
+                                        onClick={(e) => e.stopPropagation()}
                                     />
                                 ) : (
-                                    <span className="px-1" onDoubleClick={() => setEditingPageId(id)}>{name}</span>
-                                )}
-                                
-                                {/* Advanced Page Controls */}
-                                {activePageId === id && (
-                                    <div className="flex items-center ml-2 border-l border-white/20 pl-1">
                                         <button onClick={(e) => duplicatePage(id, e)} className="p-1 rounded hover:bg-white/20 text-white/70 hover:text-white" title="Duplicate Page">
                                             <Copy className="w-3.5 h-3.5" />
                                         </button>
