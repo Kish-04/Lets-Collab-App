@@ -357,7 +357,12 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                 // Fetch our bundled local libraries
                 const results = await Promise.allSettled([
                     fetch('/libraries/pack0.json').then(res => res.json()),
-                    fetch('/libraries/pack1.json').then(res => res.json())
+                    fetch('/libraries/pack1.json').then(res => res.json()),
+                    fetch('/libraries/pack2.json').then(res => res.json()),
+                    fetch('/libraries/pack3.json').then(res => res.json()),
+                    fetch('/libraries/pack4.json').then(res => res.json()),
+                    fetch('/libraries/pack5.json').then(res => res.json()),
+                    fetch('/libraries/pack6.json').then(res => res.json())
                 ]);
                 
                 let combinedItems: any[] = [];
