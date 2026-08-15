@@ -247,7 +247,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
             }
         `;
         document.head.appendChild(style);
-        return () => document.head.removeChild(style);
+        return () => { document.head.removeChild(style); };
     }, []);
 
     return (
