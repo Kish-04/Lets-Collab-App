@@ -563,32 +563,74 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                                         onClick={(e) => e.stopPropagation()}
                                     />
                                 ) : (
-                                        <button onClick={(e) => duplicatePage(id, e)} className="p-1 rounded hover:bg-white/20 text-white/70 hover:text-white" title="Duplicate Page">
-                                            <Copy className="w-3.5 h-3.5" />
-                                        </button>
-                                        <div className="flex mx-1">
-                                            <button onClick={(e) => movePage(id, 'left', e)} disabled={index === 0} className="p-0.5 rounded hover:bg-white/20 text-white/70 hover:text-white disabled:opacity-30">
-                                                <ChevronLeft className="w-3 h-3" />
+                                    <>
+                                        <span onDoubleClick={(e) => { e.stopPropagation(); setEditingPageId(id); }}>{pageNames[id]}</span>
+                                        <div className="ml-2 flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={(e) => duplicatePage(id, e)} className="p-1 hover:bg-gray-200 rounded text-gray-500" title="Duplicate Page">
+                                                <Copy className="w-3 h-3" />
                                             </button>
-                                            <button onClick={(e) => movePage(id, 'right', e)} disabled={index === pageOrder.length - 1} className="p-0.5 rounded hover:bg-white/20 text-white/70 hover:text-white disabled:opacity-30">
-                                                <ChevronRight className="w-3 h-3" />
-                                            </button>
+                                            {pageOrder.length > 1 && (
+                                                <button onClick={(e) => deletePage(id, e)} className="p-1 hover:bg-red-100 rounded text-red-500" title="Delete Page">
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                            )}
                                         </div>
-                                        {pageOrder.length > 1 && (
-                                            <button onClick={(e) => deletePage(id, e)} className="p-1 rounded hover:bg-red-500/20 text-red-400 hover:text-red-500" title="Delete Page">
-                                                <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                        )}
-                                    </div>
+                                    </>
                                 )}
                             </div>
-                        )})}
-                        <button onClick={addPage} className="p-1.5 ml-2 rounded-md hover:bg-[#2a2a35] text-gray-400 hover:text-white transition-colors flex items-center gap-1" title="Add Page">
-                            <Plus className="w-4 h-4" /> <span className="text-sm">New Page</span>
-                        </button>
+                        ))}
                     </div>
+                    
+                    <button 
+                        onClick={addPage} 
+                        className="ml-2 p-1.5 bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-md shadow-sm flex items-center gap-1 text-xs font-semibold shrink-0 transition-colors"
+                    >
+                        <Plus className="w-3 h-3" /> New Page
+                    </button>
                 </div>
             </div>
+            
+            {/* Custom React Modals to bypass Electron window dialog restrictions */}
+            {tablePromptOpen && (
+                <div className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 w-[300px]">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><TableIcon className="w-5 h-5 mr-2 text-indigo-600"/> Insert Table</h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-600 mb-1">Rows</label>
+                                <input type="number" min="1" max="20" value={tableRows} onChange={(e) => setTableRows(parseInt(e.target.value) || 1)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-800" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-600 mb-1">Columns</label>
+                                <input type="number" min="1" max="20" value={tableCols} onChange={(e) => setTableCols(parseInt(e.target.value) || 1)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-800" />
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2 mt-6">
+                            <button onClick={() => setTablePromptOpen(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-medium">Cancel</button>
+                            <button onClick={handleConfirmTable} className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">Insert</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {chartAlertOpen && (
+                <div className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 w-[400px]">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><BarChart2 className="w-5 h-5 mr-2 text-indigo-600"/> How to Insert Charts</h3>
+                        <div className="text-gray-600 space-y-3 mb-6">
+                            <p>Excalidraw natively supports data chart generation via clipboard.</p>
+                            <ol className="list-decimal pl-5 space-y-1">
+                                <li>Copy CSV text or highlight and copy cells from Microsoft Excel / Google Sheets.</li>
+                                <li>Simply press <b>Ctrl+V</b> (or Cmd+V) directly onto the canvas.</li>
+                            </ol>
+                            <p className="text-sm bg-blue-50 text-blue-800 p-3 rounded-lg border border-blue-100">The canvas will instantly parse your clipboard and render a beautiful vector Bar or Line chart.</p>
+                        </div>
+                        <div className="flex justify-end">
+                            <button onClick={() => setChartAlertOpen(false)} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">Got it!</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
