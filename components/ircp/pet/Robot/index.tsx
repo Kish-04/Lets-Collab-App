@@ -214,8 +214,10 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       if (e.target && e.pointerId !== undefined) {
         e.target.setPointerCapture(e.pointerId)
       }
+      import('./Sounds').then(m => m.playMoveStart())
+      setEmotion('Walking')
     }
-  }, [dragControls, isStandalone])
+  }, [dragControls, isStandalone, setEmotion])
 
   const handlePointerUp = useCallback((e: any) => {
     if (isStandalone) {
@@ -223,8 +225,11 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       if (e.target && e.pointerId !== undefined && e.target.hasPointerCapture(e.pointerId)) {
         e.target.releasePointerCapture(e.pointerId)
       }
+      import('./Sounds').then(m => m.playMoveEnd())
+      setEmotion('Idle')
+      setDragVelocity({ x: 0, y: 0 })
     }
-  }, [isStandalone])
+  }, [isStandalone, setEmotion, setDragVelocity])
 
   const handlePointerMove = useCallback((e: any) => {
     if (isStandalone && isDraggingBody) {
@@ -235,13 +240,19 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
           (window as any).ipcRenderer.send('move-pet-window', { x: dx, y: dy })
         }
         lastScreenPos.current = { x: e.nativeEvent.screenX, y: e.nativeEvent.screenY }
+        
+        const velocity = { x: dx * 20, y: dy * 20 }
+        setDragVelocity(velocity)
+        if (Math.abs(velocity.x) > 200 || Math.abs(velocity.y) > 200) {
+          setEmotion('Surprised')
+        }
       }
     } else if (emotion !== 'Sleep') {
       const px = (e.clientX / window.innerWidth) * 2 - 1
       const py = -(e.clientY / window.innerHeight) * 2 + 1
       setTargetLook(px * 12, py * 8 + 2, 8)
     }
-  }, [isStandalone, isDraggingBody, emotion, setTargetLook])
+  }, [isStandalone, isDraggingBody, emotion, setTargetLook, setEmotion, setDragVelocity])
 
   const handleDoubleClick = useCallback((e: any) => {
     e.stopPropagation?.()
