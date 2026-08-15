@@ -1132,21 +1132,6 @@ function SessionContent() {
         pc.onconnectionstatechange = () => {
             if (['connected', 'completed'].includes(pc.connectionState)) setConnectionState('connected')
         }
-        pc.onnegotiationneeded = async () => {
-            try {
-                if (currentRoleRef.current === 'host') {
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    socketRef.current?.emit('webrtc-offer', offer, targetId, roomCodeRef.current, { screen: screenStreamRef.current?.id, camera: cameraStreamRef.current?.id });
-                } else {
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    socketRef.current?.emit('webrtc-offer', offer, null, roomCodeRef.current, {});
-                }
-            } catch (err) {
-                console.warn('Renegotiation failed:', err);
-            }
-        };
         startStats(pc)
         startQualityStats(pc, targetId || 'primary')
         return pc
