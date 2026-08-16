@@ -683,6 +683,7 @@ export default function LandingPage() {
                   os="Linux"
                   status="Version 0.1.14 • Stable"
                   link={linuxDownloadUrl}
+                  active={true}
                   icon={
                     <img 
                       src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" 
