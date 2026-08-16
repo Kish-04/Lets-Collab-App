@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
+const isElectronBuild = process.env.IS_ELECTRON === 'true' && !process.env.VERCEL
+
 const nextConfig = {
-  output: process.env.IS_ELECTRON ? 'export' : undefined,
+  output: isElectronBuild ? 'export' : undefined,
   images: {
     unoptimized: true,
   },
