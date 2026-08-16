@@ -11,8 +11,8 @@ import { ShowcaseShaderMask } from '@/components/landing/ShowcaseShaderMask'
 import Link from 'next/link'
 
 const winDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab.Setup.0.1.14.exe"
-const macDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/latest" // Update with .dmg later
-const linuxDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/latest" // Update with .AppImage or .deb later
+const macDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/Let.s.Collab-0.1.14-mac.zip"
+const linuxDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v1.0.0/let-s-collab_0.1.14_amd64.deb"
 
 export default function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null)

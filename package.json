@@ -1,5 +1,6 @@
 {
   "name": "lets-collab",
+  "description": "Collaborative remote desktop workspace with federated AI tooling",
   "version": "0.1.14",
   "private": true,
   "main": "main.js",
@@ -22,6 +23,7 @@
   "build": {
     "appId": "com.letscollab.app",
     "productName": "Let's Collab",
+    "icon": "public/logo",
     "extraResources": [
       {
         "from": "build/ViGEmBusSetup_x64.msi",
@@ -76,11 +78,11 @@
       "target": [
         "zip"
       ],
-      "icon": "public/logo.ico"
+      "icon": "public/logo"
     },
     "win": {
       "target": "nsis",
-      "icon": "public/logo.ico"
+      "icon": "public/logo"
     },
     "nsis": {
       "include": "build/installer.nsh",
@@ -97,6 +99,7 @@
         "tar.gz",
         "deb"
       ],
+      "icon": "public/logo",
       "executableName": "lets-collab"
     }
   },
