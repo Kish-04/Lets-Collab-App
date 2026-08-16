@@ -7,8 +7,6 @@ on:
 
 permissions:
   contents: write # Needed to upload files to your GitHub Release
-  packages: read
-  metadata: read
 
 jobs:
   build:
