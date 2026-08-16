@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write # Needed to upload files to your GitHub Release
+  packages: read
+  metadata: read
 
 jobs:
   build:
@@ -24,6 +26,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches all history for all tags and branches so electron-builder doesn't fail
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
