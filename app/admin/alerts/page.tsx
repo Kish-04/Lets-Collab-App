@@ -320,9 +320,9 @@ export default function AlertsPage() {
         </div>
       </div>
 
-      <div className="flex gap-6">
+      <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-140px)]">
         {/* Left — Alert Table */}
-        <div className="flex-[0.65] h-[calc(100vh-140px)]">
+        <div className="flex-1 min-w-0 h-full">
           <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl overflow-hidden flex flex-col h-full">
             <div className="p-5 border-b border-[var(--border)]/60 flex flex-shrink-0 items-center gap-4 bg-[var(--elevated)]/60">
               <div className="flex gap-2">
@@ -426,7 +426,7 @@ export default function AlertsPage() {
         </div>
 
         {/* Right — Charts */}
-        <div className="flex-[0.35] space-y-6">
+        <div className="w-full lg:w-[350px] shrink-0 space-y-6 overflow-y-auto pb-4 pr-2">
           <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6 hover:border-[var(--border-bright)] transition-colors">
             <h2 className="font-display font-bold text-lg text-[var(--text-primary)] mb-4">Behavioral Trends</h2>
             <div className="space-y-4">
