@@ -55,8 +55,8 @@ async function loadAuthenticatedUser(req, res) {
       : mockStore.findUserById(decoded.id);
 
     if (!user || user.banned) {
-      if (decoded.id === 'admin-id' || decoded.email === 'kishankarthiks222@gmail.com') {
-        const emailToUse = decoded.email || 'kishankarthiks222@gmail.com';
+      if (decoded.id === 'admin-id' || decoded.email === 'kishankarthiks222@gmail.com' || decoded.email === 'admin@letscollab.com') {
+        const emailToUse = decoded.email || 'admin@letscollab.com';
         if (!global.dbConnected) {
           const mockStore = require('./mockStore');
           user = mockStore.createUser({
