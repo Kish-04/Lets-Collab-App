@@ -385,6 +385,29 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.get('/me', async (req, res) => {
+  try {
+    const token = req.cookies.auth_token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+    
+    const decoded = verifyToken(token);
+    const user = global.dbConnected
+      ? await User.findById(decoded.id)
+      : mockStore.findUserById(decoded.id);
+
+    if (!user) {
+      if (decoded.id === 'admin-id') {
+         return res.json({ _id: 'admin-id', role: 'admin', name: 'System Administrator', email: decoded.email });
+      }
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json({ _id: user._id, role: user.role, name: user.name, email: user.email });
+  } catch {
+    res.status(401).json({ message: 'Invalid token' });
+  }
+});
+
 router.post('/forgot-password', otpSendLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);

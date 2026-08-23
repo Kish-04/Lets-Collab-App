@@ -15,10 +15,6 @@ export default function AdminOverviewPage() {
       headers: getAuthHeaders(),
     })
       .then(res => {
-        if (res.status === 401 || res.status === 403) {
-          window.location.href = '/admin/login'
-          return null
-        }
         if (!res.ok) throw new Error("Failed to load")
         return res.json()
       })

@@ -57,9 +57,14 @@ export function getBackendUrl() {
 
   const backendPort = process.env.NEXT_PUBLIC_BACKEND_PORT || '8081'
   if (typeof window !== 'undefined') {
+    // If we are on Vercel and NEXT_PUBLIC_BACKEND_URL is missing, fallback to the known Render URL
+    // instead of the Vercel origin (which would cause 404s).
+    if (window.location.hostname.includes('vercel.app')) {
+      return 'https://let-s-collab-tjwc.onrender.com'
+    }
     const hostname = window.location.hostname
     if (isLocalOrPrivateHost(hostname)) {
-      return `http://${hostname}:${backendPort}`
+      return `${window.location.protocol}//${hostname}:${backendPort}`
     }
     if (window.location.protocol === 'file:' || window.location.protocol === 'app:') {
       return window.electronConfig?.backendUrl || `http://localhost:${backendPort}`

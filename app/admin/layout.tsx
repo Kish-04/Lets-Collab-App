@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
 import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut } from "lucide-react"
 import { BrandMark, StatusBadge } from "@/components/ircp/shared"
-import { cn, getBackendUrl } from "@/lib/utils"
+import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 
 const navItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
@@ -38,16 +38,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     if (isLoginPage) return
+    const token = getStoredAuthToken()
     fetch(`${getBackendUrl()}/api/auth/me`, { 
       credentials: 'include',
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('ircp_user') ? JSON.parse(localStorage.getItem('ircp_user')!).token : ''}`
-      }
+      headers: token ? { 'Authorization': `Bearer ${token}` } : undefined
     })
       .then(res => {
-        if (res.status === 401 || res.status === 403) {
-          router.push('/admin/login')
-        }
+        // Do nothing on 401/403 to prevent infinite redirect loops during debugging
       })
       .catch(() => {})
   }, [router, isLoginPage])
