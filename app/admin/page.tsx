@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { Activity, ShieldAlert, Users, LayoutDashboard } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts"
 import { getAuthHeaders, getBackendUrl } from "@/lib/utils"
+import { ActivityHeatmap } from "@/components/ircp/shared"
 
 export default function AdminOverviewPage() {
   const [data, setData] = useState<any>(null)
@@ -105,6 +106,14 @@ export default function AdminOverviewPage() {
                </LineChart>
              </ResponsiveContainer>
            </div>
+         </div>
+      </div>
+
+      <div className="mt-6 p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl hover:border-[var(--border-bright)] transition-colors">
+         <h3 className="font-display font-bold text-xl mb-2 text-[var(--text-primary)]">System Activity History</h3>
+         <p className="text-sm font-mono text-[var(--text-dim)] mb-6">Daily event density over the last 90 days</p>
+         <div className="flex justify-center">
+           <ActivityHeatmap />
          </div>
       </div>
     </div>

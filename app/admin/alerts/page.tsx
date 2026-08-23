@@ -428,45 +428,19 @@ export default function AlertsPage() {
         {/* Right — Charts */}
         <div className="w-full lg:w-[350px] shrink-0 space-y-6 overflow-y-auto pb-4 pr-2">
           <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6 hover:border-[var(--border-bright)] transition-colors">
-            <h2 className="font-display font-bold text-lg text-[var(--text-primary)] mb-4">Behavioral Trends</h2>
-            <div className="space-y-4">
-              <div className="p-4 rounded-xl bg-gradient-to-br from-[var(--red)]/10 to-transparent border border-[var(--red)]/20">
-                 <p className="text-xs font-mono text-[var(--red)] mb-1 uppercase tracking-wider">Top Violation</p>
-                 <p className="text-sm text-[var(--text-primary)]">
-                    <span className="font-bold text-[var(--red)]">{pieData[0]?.name || "None"}</span> accounts for most cheating events today.
-                 </p>
-              </div>
-              <div className="p-4 rounded-xl bg-gradient-to-br from-[var(--amber)]/10 to-transparent border border-[var(--amber)]/20">
-                 <p className="text-xs font-mono text-[var(--amber)] mb-1 uppercase tracking-wider">Action Needed</p>
-                 <p className="text-sm text-[var(--text-primary)]">
-                    Consider enabling stricter pre-room checks for {topOffenders[0]?.room || "high-risk rooms"}.
-                 </p>
-              </div>
-            </div>
-          </div>
             {pieData.length === 0 ? (
               <div className="h-48 flex items-center justify-center text-[var(--text-dim)] font-mono text-sm">No data yet</div>
             ) : (
-              <>
-                <div className="h-48">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={pieData} cx="50%" cy="50%" outerRadius={70} dataKey="value">
-                        {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                      </Pie>
-                      <Tooltip itemStyle={{ color: 'var(--text-primary)' }} labelStyle={{ color: 'var(--text-primary)' }} contentStyle={{ backgroundColor: 'var(--surface)', backdropFilter: 'blur(12px)', borderColor: 'var(--border-bright)', borderRadius: '12px', color: 'var(--text-primary)', fontSize: "12px" }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="flex flex-wrap justify-center gap-3 mt-2">
-                  {pieData.map(item => (
-                    <div key={item.name} className="flex items-center gap-1.5 text-xs text-[var(--text-primary)]">
-                      <span className="w-2 h-2 rounded-full shadow-[0_0_5px_rgba(255,255,255,0.5)]" style={{ backgroundColor: item.color }} />
-                      {item.name}
-                    </div>
-                  ))}
-                </div>
-              </>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={pieData} cx="50%" cy="50%" outerRadius={70} dataKey="value">
+                      {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                    </Pie>
+                    <Tooltip itemStyle={{ color: 'var(--text-primary)' }} labelStyle={{ color: 'var(--text-primary)' }} contentStyle={{ backgroundColor: 'var(--surface)', backdropFilter: 'blur(12px)', borderColor: 'var(--border-bright)', borderRadius: '12px', color: 'var(--text-primary)', fontSize: "12px" }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </div>
 
