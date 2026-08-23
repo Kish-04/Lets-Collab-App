@@ -36,6 +36,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setUserInitials(name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase())
   }, [router, pathname, isLoginPage])
 
+  useEffect(() => {
+    if (isLoginPage) return
+    fetch(`${getBackendUrl()}/api/auth/me`, { 
+      credentials: 'include',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('ircp_user') ? JSON.parse(localStorage.getItem('ircp_user')!).token : ''}`
+      }
+    })
+      .then(res => {
+        if (res.status === 401 || res.status === 403) {
+          router.push('/admin/login')
+        }
+      })
+      .catch(() => {})
+  }, [router, isLoginPage])
+
   const handleLogout = async () => {
     try {
       await fetch(`${getBackendUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' })
