@@ -1,4 +1,5 @@
 {
+  "name": "letscollab",
   "installCommand": "npm install --ignore-scripts",
   "framework": "nextjs"
 }

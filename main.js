@@ -154,6 +154,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: false,
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
     }

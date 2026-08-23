@@ -1432,9 +1432,19 @@ function SessionContent() {
                 });
             } catch (mediaErr) {
                 console.warn('[DEBUG] getDisplayMedia with audio/high-framerate failed, falling back to basic video only', mediaErr);
-                screen = await navigator.mediaDevices.getDisplayMedia({ 
-                    video: true 
-                });
+                try {
+                    screen = await navigator.mediaDevices.getDisplayMedia({ 
+                        video: true 
+                    });
+                } catch (fallbackErr) {
+                    console.error('[DEBUG] Fallback getDisplayMedia failed', fallbackErr);
+                    addLog('system', `Screen sharing failed or was cancelled`);
+                    return;
+                }
+            }
+            
+            if (!screen) {
+                return;
             }
             console.log('[DEBUG] getDisplayMedia SUCCESS!');
             
