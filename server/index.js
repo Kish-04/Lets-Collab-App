@@ -1476,6 +1476,15 @@ io.on('connection', (socket) => {
     removeController(roomId, targetId, 'Controller removed from session by administrator');
   });
 
+  socket.on('admin-warn-user', async ({ roomId, message = "Warning from administrator: Please return your attention to the session." }) => {
+    const room = rooms.get(roomId);
+    if (!room || !await isAdminSocket(socket)) return;
+    io.to(roomId).emit('system-warning', message);
+    pushEvent(roomId, 'warning', `Administrator warning: ${message}`);
+    const targetEmail = room.hostEmail || '';
+    anchorEvent(roomId, 'ADMIN_WARNING', { by: 'admin', message }, room.hostEmail, targetEmail);
+  });
+
   socket.on('admin-ban-participant', async ({ roomId, target = 'controller', targetId } = {}) => {
     const room = rooms.get(roomId);
     if (!room || !await isAdminSocket(socket)) return;

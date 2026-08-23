@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, RefreshControl } from 'react-native';
 import { useApi } from '../context/ApiContext';
+import { useTheme } from '../context/ThemeContext';
 
 export default function SessionsScreen() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const { client } = useApi();
+  const { theme } = useTheme();
 
   const fetchReports = async () => {
     try {
@@ -29,9 +31,9 @@ export default function SessionsScreen() {
   };
 
   const renderItem = ({ item }: { item: any }) => (
-    <View className="bg-card p-4 rounded-xl border border-white/5 mb-3">
+    <View style={{ backgroundColor: theme.card, borderColor: 'rgba(255,255,255,0.05)', borderWidth: 1 }} className="p-4 rounded-xl mb-3">
       <View className="flex-row justify-between items-center mb-2">
-        <Text className="text-white font-black text-xl tracking-widest">{item.roomCode}</Text>
+        <Text style={{ color: theme.text }} className="font-black text-xl tracking-widest">{item.roomCode}</Text>
         <View className={`px-2 py-1 rounded ${item.endedAt ? 'bg-zinc-800' : 'bg-emerald-500/20'}`}>
           <Text className={`text-xs font-bold uppercase ${item.endedAt ? 'text-zinc-400' : 'text-emerald-400'}`}>
             {item.endedAt ? 'Completed' : 'Active'}
@@ -47,17 +49,17 @@ export default function SessionsScreen() {
       <View className="flex-row justify-between border-t border-white/5 pt-3">
         <View className="items-center">
           <Text className="text-zinc-400 text-xs font-bold uppercase">Users</Text>
-          <Text className="text-white font-bold">{item.participantCount}</Text>
+          <Text style={{ color: theme.text }} className="font-bold">{item.participantCount}</Text>
         </View>
         <View className="items-center">
           <Text className="text-zinc-400 text-xs font-bold uppercase">Alerts</Text>
-          <Text className={`${item.alertCount > 0 ? 'text-rose-400' : 'text-white'} font-bold`}>
+          <Text style={{ color: item.alertCount > 0 ? '#f43f5e' : theme.text }} className="font-bold">
             {item.alertCount}
           </Text>
         </View>
         <View className="items-center">
           <Text className="text-zinc-400 text-xs font-bold uppercase">Evidence</Text>
-          <Text className={`${item.evidenceCount > 0 ? 'text-amber-400' : 'text-white'} font-bold`}>
+          <Text style={{ color: item.evidenceCount > 0 ? '#fbbf24' : theme.text }} className="font-bold">
             {item.evidenceCount}
           </Text>
         </View>
@@ -66,13 +68,13 @@ export default function SessionsScreen() {
   );
 
   return (
-    <View className="flex-1 bg-background px-4 pt-4">
-      <Text className="text-3xl font-black text-white mb-6">Sessions</Text>
+    <View style={{ backgroundColor: theme.background }} className="flex-1 px-4 pt-4">
+      <Text style={{ color: theme.text }} className="text-3xl font-black mb-6">Sessions</Text>
       <FlatList
         data={sessions}
         keyExtractor={(item, idx) => item.roomCode + idx}
         renderItem={renderItem}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00d4ff" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
         contentContainerStyle={{ paddingBottom: 20 }}
       />
     </View>

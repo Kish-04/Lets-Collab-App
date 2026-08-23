@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { createPortal } from "react-dom"
 import { useRouter } from "next/navigation"
 import { io, Socket } from "socket.io-client"
 import { Search, X, Shield, ShieldOff, UserCheck, UserX, Clock } from "lucide-react"
@@ -43,10 +44,16 @@ function UserDetailDrawer({
   onBan: (id: string) => void
   onRoleChange: (id: string, role: "user" | "admin") => void
 }) {
-  if (!user) return null
+  const [mounted, setMounted] = useState(false)
+  
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!user || !mounted) return null
   const initials = user.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()
 
-  return (
+  return createPortal(
     <>
       <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
       <div className="fixed inset-0 bg-[var(--bg)]/90 backdrop-blur-sm z-40" onClick={onClose} />
@@ -87,7 +94,7 @@ function UserDetailDrawer({
             </div>
             {user.banned && (
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono bg-[var(--red)]/20 text-[var(--red)] border border-[var(--red)]/30 drop-shadow-[0_0_5px_rgba(244,63,94,0.3)]">
-                <ShieldOff className="w-3 h-3" /> BANNED
+                <ShieldOff className="w-3 h-3" /> BLOCKED
               </div>
             )}
           </div>
@@ -136,11 +143,12 @@ function UserDetailDrawer({
         <div className="p-6 flex gap-3 bg-[var(--elevated)]/60">
           <GlowButton variant="ghost" className="flex-1 border-[var(--border)]/60" onClick={onClose}>Close</GlowButton>
           <DangerButton className="flex-1" onClick={() => onBan(user._id)}>
-            {user.banned ? "Unban User" : "Ban User"}
+            {user.banned ? "Unblock User" : "Block User"}
           </DangerButton>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   )
 }
 
@@ -232,7 +240,7 @@ export default function UsersPage() {
   const filterTabs: { key: typeof filter; label: string; count: number }[] = [
     { key: "all", label: "All", count: users.length },
     { key: "online", label: "Online", count: onlineCount },
-    { key: "banned", label: "Banned", count: bannedCount },
+    { key: "banned", label: "Blocked", count: bannedCount },
     { key: "unverified", label: "Unverified", count: users.filter(u => !u.isVerified).length },
   ]
 
@@ -323,7 +331,7 @@ export default function UsersPage() {
                   <td className="px-5 py-4 font-mono text-xs text-[var(--text-dim)]">{formatRelative(user.lastSeen)}</td>
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-2 flex-wrap">
-                      {user.banned && <span className="px-2 py-0.5 rounded-md text-[9px] font-mono bg-[var(--red)]/20 text-[var(--red)] border border-[var(--red)]/30 drop-shadow-[0_0_5px_rgba(244,63,94,0.3)]">BANNED</span>}
+                      {user.banned && <span className="px-2 py-0.5 rounded-md text-[9px] font-mono bg-[var(--red)]/20 text-[var(--red)] border border-[var(--red)]/30 drop-shadow-[0_0_5px_rgba(244,63,94,0.3)]">BLOCKED</span>}
                       {!user.isVerified && <span className="px-2 py-0.5 rounded-md text-[9px] font-mono bg-[var(--amber)]/20 text-[var(--amber)] border border-[var(--amber)]/30 drop-shadow-[0_0_5px_rgba(251,191,36,0.3)]">UNVERIFIED</span>}
                       {user.isVerified && !user.banned && <span className="px-2 py-0.5 rounded-md text-[9px] font-mono bg-[var(--emerald)]/20 text-[var(--emerald)] border border-[var(--emerald)]/30 drop-shadow-[0_0_5px_rgba(16,185,129,0.3)]">ACTIVE</span>}
                     </div>

@@ -54,13 +54,21 @@ export default function DashboardScreen() {
   };
 
   const userActivityData = {
-    labels: data.userActivity?.slice(0, 5).map((u: any) => u.name.split(' ')[0]) || [],
-    datasets: [{ data: data.userActivity?.slice(0, 5).map((u: any) => u.sessionCount) || [] }]
+    labels: data.userActivity?.length > 0 ? data.userActivity.slice(0, 5).map((u: any) => (u.name || 'User').split(' ')[0]) : ['No Data'],
+    datasets: [{ data: data.userActivity?.length > 0 ? data.userActivity.slice(0, 5).map((u: any) => u.sessionCount || 0) : [0] }]
   };
 
+  const alertData = (data.alerts || []).reduce((acc: any, a: any) => {
+    const d = new Date(a.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const ev = acc.find((e: any) => e.time === d);
+    if (ev) ev.alerts += 1;
+    else acc.push({ time: d, alerts: 1 });
+    return acc;
+  }, []).slice(-6); // ChartKit works better with fewer labels
+
   const lineChartData = {
-    labels: ['12pm', '1pm', '2pm', '3pm', '4pm', '5pm'],
-    datasets: [{ data: [0, Math.floor(Math.random()*10), Math.floor(Math.random()*20), Math.floor(Math.random()*5), Math.floor(Math.random()*15), Math.floor(Math.random()*30)] }]
+    labels: alertData.length > 0 ? alertData.map((d: any) => d.time) : ['Now'],
+    datasets: [{ data: alertData.length > 0 ? alertData.map((d: any) => d.alerts) : [0] }]
   };
 
   return (

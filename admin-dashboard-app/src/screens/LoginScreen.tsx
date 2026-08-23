@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useApi } from '../context/ApiContext';
+import { useTheme } from '../context/ThemeContext';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -8,6 +9,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { client, login } = useApi();
+  const { theme } = useTheme();
 
   const handleLogin = async () => {
     if (!email || !password) return setError('Email and password required');
@@ -33,43 +35,49 @@ export default function LoginScreen() {
   };
 
   return (
-    <View className="flex-1 justify-center items-center px-6" style={{ backgroundColor: '#0a101f' }}>
-      <View className="w-full max-w-md p-8 bg-[#111827] rounded-xl border border-white/10 shadow-2xl">
-        <Text className="text-blue-500 text-xs font-bold tracking-widest mb-2 uppercase">Administrator Sign In</Text>
-        <Text className="text-3xl font-bold text-white mb-2">Welcome back</Text>
-        <Text className="text-gray-400 text-sm mb-8">Use an administrator account to continue.</Text>
+    <View className="flex-1 justify-center items-center px-6" style={{ backgroundColor: theme.background }}>
+      <View 
+        className="w-full max-w-md p-8 rounded-xl border shadow-2xl"
+        style={{ backgroundColor: theme.card, borderColor: 'rgba(255,255,255,0.05)' }}
+      >
+        <Text style={{ color: theme.accent }} className="text-xs font-bold tracking-widest mb-2 uppercase">Administrator Sign In</Text>
+        <Text style={{ color: theme.text }} className="text-3xl font-bold mb-2">Welcome back</Text>
+        <Text style={{ color: theme.textMuted }} className="text-sm mb-8">Use an administrator account to continue.</Text>
 
-        {error ? <Text className="text-red-500 text-sm mb-4">{error}</Text> : null}
+        {error ? <Text className="text-rose-500 text-sm mb-4">{error}</Text> : null}
 
-        <Text className="text-gray-400 text-xs font-medium mb-2 ml-1">Administrator ID</Text>
+        <Text style={{ color: theme.textMuted }} className="text-xs font-medium mb-2 ml-1">Administrator ID</Text>
         <TextInput
-          className="w-full h-12 bg-[#ebf3ff] border-0 rounded-md px-4 text-gray-900 font-medium mb-6"
+          className="w-full h-12 border-0 rounded-md px-4 font-medium mb-6"
+          style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: theme.text }}
           placeholder="admin@letscollab.com"
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={theme.textMuted}
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
         />
         
-        <Text className="text-gray-400 text-xs font-medium mb-2 ml-1">Password</Text>
+        <Text style={{ color: theme.textMuted }} className="text-xs font-medium mb-2 ml-1">Password</Text>
         <TextInput
-          className="w-full h-12 bg-[#ebf3ff] border-0 rounded-md px-4 text-gray-900 font-medium mb-8"
+          className="w-full h-12 border-0 rounded-md px-4 font-medium mb-8"
+          style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: theme.text }}
           placeholder="••••••••"
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={theme.textMuted}
           secureTextEntry
           value={password}
           onChangeText={setPassword}
         />
 
         <TouchableOpacity 
-          className="w-full h-12 bg-blue-500 rounded-md justify-center items-center shadow-lg"
+          className="w-full h-12 rounded-md justify-center items-center shadow-lg"
+          style={{ backgroundColor: theme.accent }}
           onPress={handleLogin}
           disabled={loading}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={theme.background} />
           ) : (
-            <Text className="text-white font-bold text-base">Enter Console</Text>
+            <Text style={{ color: theme.background }} className="font-bold text-base">Enter Console</Text>
           )}
         </TouchableOpacity>
       </View>

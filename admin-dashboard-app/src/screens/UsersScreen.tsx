@@ -41,6 +41,21 @@ export default function UsersScreen() {
     }
   };
 
+  const confirmToggleBan = (id: string, currentlyBanned: boolean) => {
+    Alert.alert(
+      currentlyBanned ? 'Unblock User' : 'Block User',
+      currentlyBanned ? 'Are you sure you want to unblock this user?' : 'Are you sure you want to block this user? They will not be able to log in.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: currentlyBanned ? 'Unblock' : 'Block', 
+          style: currentlyBanned ? 'default' : 'destructive',
+          onPress: () => toggleBan(id, currentlyBanned)
+        }
+      ]
+    );
+  };
+
   const renderItem = ({ item }: { item: any }) => (
     <View 
       style={{ backgroundColor: theme.card, borderColor: 'rgba(255,255,255,0.05)', borderWidth: 1 }}
@@ -72,10 +87,10 @@ export default function UsersScreen() {
           borderColor: item.banned ? 'transparent' : 'rgba(244, 63, 94, 0.5)',
           borderWidth: item.banned ? 0 : 1
         }}
-        onPress={() => toggleBan(item._id, item.banned)}
+        onPress={() => confirmToggleBan(item._id, item.banned)}
       >
         <Text style={{ color: item.banned ? theme.textMuted : '#f43f5e', fontWeight: 'bold' }}>
-          {item.banned ? 'Unban' : 'Ban'}
+          {item.banned ? 'Unblock' : 'Block'}
         </Text>
       </TouchableOpacity>
     </View>

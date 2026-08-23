@@ -182,12 +182,12 @@ export default function ReportsPage() {
   const handleUserJSON = () => downloadJSON(userActivity, 'user_activity.json')
   const handleUserCSV = () => downloadCSV(userActivity.map(u => ({
     Name: u.name, Email: u.email, Role: u.role, Sessions: u.sessionCount,
-    Verified: u.isVerified, Banned: u.banned,
+    Verified: u.isVerified, Blocked: u.banned,
     'Last Seen': formatDate(u.lastSeen), 'Joined': formatDate(u.joinedAt),
   })), 'user_activity.csv')
   const handleUserPDF = () => downloadPDF(
     'User Activity Report',
-    ['Name', 'Email', 'Role', 'Sessions', 'Verified', 'Banned', 'Last Seen'],
+    ['Name', 'Email', 'Role', 'Sessions', 'Verified', 'Blocked', 'Last Seen'],
     userActivity.map(u => [u.name, u.email, u.role, String(u.sessionCount), String(u.isVerified), String(u.banned), formatDate(u.lastSeen)]),
     'user_activity.pdf'
   )
@@ -215,7 +215,7 @@ export default function ReportsPage() {
       totalSessions: userActivity.reduce((s, u) => s + u.sessionCount, 0),
       totalAlerts: alerts.length,
       totalPenalty: alerts.reduce((s, a) => s + a.penalty, 0),
-      bannedUsers: userActivity.filter(u => u.banned).length,
+      blockedUsers: userActivity.filter(u => u.banned).length,
       verifiedUsers: userActivity.filter(u => u.isVerified).length,
     }
   }
@@ -223,7 +223,7 @@ export default function ReportsPage() {
   const handleFullCSV = () => {
     downloadCSV(userActivity.map(u => ({
       Section: 'USER', Name: u.name, Email: u.email, Sessions: u.sessionCount,
-      Role: u.role, Verified: u.isVerified, Banned: u.banned,
+      Role: u.role, Verified: u.isVerified, Blocked: u.banned,
     })), 'full_activity_users.csv')
     setTimeout(() => downloadCSV(alerts.map(a => ({
       Section: 'ALERT', Room: a.room, Host: a.hostEmail, Message: a.message, Penalty: a.penalty,
@@ -233,7 +233,7 @@ export default function ReportsPage() {
     "Full Activity Report - Let's Collab!",
     ['Section', 'Name/Room', 'Email/Host', 'Sessions/Penalty', 'Role/Type', 'Status'],
     [
-      ...userActivity.map(u => ['USER', u.name, u.email, String(u.sessionCount), u.role, u.banned ? 'BANNED' : u.isVerified ? 'ACTIVE' : 'UNVERIFIED']),
+      ...userActivity.map(u => ['USER', u.name, u.email, String(u.sessionCount), u.role, u.banned ? 'BLOCKED' : u.isVerified ? 'ACTIVE' : 'UNVERIFIED']),
       ...alerts.map(a => ['ALERT', a.room, a.hostEmail, String(a.penalty), a.type, a.message.slice(0, 40)]),
     ],
     'full_activity.pdf'
@@ -298,7 +298,7 @@ export default function ReportsPage() {
                       u.banned ? 'bg-[var(--red)]/20 text-[var(--red)] border-[var(--red)]/30 drop-shadow-[0_0_3px_currentColor]'
                         : u.isVerified ? 'bg-[var(--emerald)]/20 text-[var(--emerald)] border-[var(--emerald)]/30 drop-shadow-[0_0_3px_currentColor]'
                           : 'bg-[var(--amber)]/20 text-[var(--amber)] border-[var(--amber)]/30 drop-shadow-[0_0_3px_currentColor]')}>
-                      {u.banned ? 'BANNED' : u.isVerified ? 'ACTIVE' : 'UNVERIFIED'}
+                      {u.banned ? 'BLOCKED' : u.isVerified ? 'ACTIVE' : 'UNVERIFIED'}
                     </span>
                   </td>
                 </tr>
@@ -350,7 +350,7 @@ export default function ReportsPage() {
               { label: 'Total Sessions', value: totalSessions },
               { label: 'Total Alerts', value: alerts.length },
               { label: 'Total Penalty', value: totalPenalty },
-              { label: 'Banned Users', value: userActivity.filter(u => u.banned).length },
+              { label: 'Blocked Users', value: userActivity.filter(u => u.banned).length },
               { label: 'Verified Users', value: userActivity.filter(u => u.isVerified).length },
             ].map(s => (
               <div key={s.label} className="p-4 bg-[var(--elevated)]/60 border border-[var(--border)] rounded-xl backdrop-blur-sm shadow-inner hover:bg-[var(--elevated)]/80 transition-colors">
