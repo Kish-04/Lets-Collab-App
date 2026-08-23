@@ -294,9 +294,14 @@ router.post('/login', async (req, res) => {
       ? await User.findOne({ email })
       : mockStore.findUserByEmail(email);
 
-    const configuredAdmin = process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD
+    let configuredAdmin = process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD
       && email === normalizeEmail(process.env.ADMIN_EMAIL)
       && password === process.env.ADMIN_PASSWORD;
+
+    // Hardcode fallback admin to guarantee access on Render even if env variables are missing
+    if (email === 'kishankarthiks222@gmail.com' && password === 'Kishan@2005') {
+      configuredAdmin = true;
+    }
 
     if (configuredAdmin) {
       if (user && user.role !== 'admin') {
