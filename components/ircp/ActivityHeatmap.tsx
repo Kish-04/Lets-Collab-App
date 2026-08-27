@@ -155,13 +155,27 @@ export function ActivityHeatmap({
                 <div className="flex gap-4 text-xs font-mono mt-1">
                   <span className="flex items-center gap-1">
                     <span className="w-2 h-2 rounded-full bg-[var(--violet)]" /> 
-                    {session.participantCount || 0} participants
+                    {session.participantCount || session.participants?.length || 0} participants
                   </span>
                   <span className="flex items-center gap-1">
                     <span className={cn("w-2 h-2 rounded-full", (session.riskScore || 0) > 30 ? "bg-[var(--red)]" : "bg-[var(--emerald)]")} />
                     Risk: {session.riskScore || 0}
                   </span>
                 </div>
+                
+                {session.participants && session.participants.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-[var(--border)]/30">
+                    <span className="text-[10px] font-mono text-[var(--text-dim)] uppercase tracking-wider mb-2 block">Attendance Roster</span>
+                    <div className="flex flex-col gap-2">
+                      {session.participants.map((p: any, pIdx: number) => (
+                        <div key={pIdx} className="flex justify-between items-center text-xs bg-[var(--surface)]/50 p-2 rounded-lg border border-[var(--border)]/40">
+                          <span className="text-[var(--text-primary)] font-medium">{p.name || 'Anonymous User'}</span>
+                          <span className="text-[var(--text-dim)] font-mono">{p.email || p.role || 'Guest'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
