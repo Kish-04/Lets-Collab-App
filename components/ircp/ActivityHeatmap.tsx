@@ -1,9 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { ChevronLeft, ChevronRight, Star } from "lucide-react"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { format, subDays, startOfDay, addWeeks, subWeeks, isAfter } from "date-fns"
 
@@ -16,12 +15,14 @@ export function ActivityHeatmap({
 }) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [selectedDay, setSelectedDay] = useState<any>(null)
+  
+  // Custom tooltip state
+  const [hoveredDay, setHoveredDay] = useState<{ day: any, x: number, y: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
-  // Determine the end date of the view based on weekOffset
+  // 12 weeks = 84 days
   const today = startOfDay(new Date())
   const viewEndDate = subWeeks(today, weekOffset)
-  
-  // We want to show 12 weeks (84 days)
   const daysToShow = 84
   const startDate = subDays(viewEndDate, daysToShow - 1)
 
@@ -34,7 +35,7 @@ export function ActivityHeatmap({
     return acc
   }, {})
 
-  // Build the grid data
+  // Build grid data
   const heatmapData = Array.from({ length: daysToShow }).map((_, i) => {
     const date = addDays(startDate, i)
     const time = date.getTime()
@@ -54,22 +55,28 @@ export function ActivityHeatmap({
 
   const getColor = (count: number) => {
     if (count === 0) return 'bg-[var(--surface)] border-[var(--border)]/50'
-    if (count < 3) return 'bg-[var(--emerald)]/20 border-[var(--emerald)]/30'
-    if (count < 8) return 'bg-[var(--emerald)]/50 border-[var(--emerald)]/60'
-    if (count < 12) return 'bg-[var(--emerald)]/80 border-[var(--emerald)]/90'
-    return 'bg-[var(--emerald)] border-[var(--emerald)] shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+    if (count < 3) return 'bg-[#0ea5e9]/30 border-[#0ea5e9]/40' // Sky 500
+    if (count < 8) return 'bg-[#3b82f6]/60 border-[#3b82f6]/70' // Blue 500
+    if (count < 12) return 'bg-[#2563eb]/90 border-[#2563eb]'   // Blue 600
+    return 'bg-[#1d4ed8] border-[#1e3a8a] shadow-[0_0_8px_rgba(37,99,235,0.6)]' // Blue 700
   }
 
-  const handleNext = () => {
-    if (weekOffset > 0) setWeekOffset(weekOffset - 1)
-  }
+  // Generate month labels
+  const monthLabels: { label: string, offset: number }[] = []
+  let currentMonth = -1
+  weeks.forEach((week, idx) => {
+    const month = week[0].date.getMonth()
+    if (month !== currentMonth) {
+      monthLabels.push({ label: format(week[0].date, 'MMM'), offset: idx })
+      currentMonth = month
+    }
+  })
 
-  const handlePrev = () => {
-    setWeekOffset(weekOffset + 1)
-  }
+  const handleNext = () => { if (weekOffset > 0) setWeekOffset(weekOffset - 1) }
+  const handlePrev = () => setWeekOffset(weekOffset + 1)
 
   return (
-    <div className={cn("flex flex-col items-center", className)}>
+    <div className={cn("flex flex-col items-center", className)} ref={containerRef}>
       <div className="flex items-center gap-4 mb-3">
         <button 
           onClick={handlePrev} 
@@ -89,47 +96,76 @@ export function ActivityHeatmap({
         </button>
       </div>
 
-      <TooltipProvider delayDuration={0}>
-        <div className="inline-flex gap-1.5 p-4 bg-[var(--surface)]/50 border border-[var(--border)]/60 rounded-xl overflow-x-auto items-end">
-          {weeks.map((week, wIdx) => (
-            <div key={wIdx} className="flex flex-col gap-1.5">
-              {week.map((day, dIdx) => (
-                <Tooltip key={dIdx}>
-                  <TooltipTrigger asChild>
-                    <div 
-                      onClick={() => { if (day.count > 0) setSelectedDay(day) }}
-                      className={cn(
-                        "w-3.5 h-3.5 rounded-sm border transition-all duration-300 hover:scale-150 cursor-pointer", 
-                        getColor(day.count),
-                        day.count === 0 && "cursor-default"
-                      )}
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent className="bg-[var(--elevated)] border-[var(--border-bright)] text-[var(--text-primary)] px-3 py-2 shadow-xl">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2 font-mono text-[10px] text-[var(--text-dim)] uppercase">
-                        <span>{format(day.date, 'EEEE')}</span>
-                        <span>•</span>
-                        <span className="text-[var(--accent)]">{format(day.date, 'MMM d, yyyy')}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 font-display text-sm font-bold">
-                        {day.count > 0 && <Star className="w-3 h-3 text-[var(--emerald)] fill-[var(--emerald)]" />}
-                        {day.count === 0 ? "No activity" : `${day.count} session${day.count === 1 ? '' : 's'}`}
-                      </div>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
-          ))}
+      <div className="flex gap-2 p-4 bg-[var(--surface)]/50 border border-[var(--border)]/60 rounded-xl overflow-x-auto relative">
+        {/* Days Y-axis */}
+        <div className="flex flex-col gap-1 mt-[22px] text-[10px] text-[var(--text-dim)] font-mono leading-none justify-between h-[100px] pb-1 pr-1">
+          <span>Mon</span>
+          <span>Wed</span>
+          <span>Fri</span>
         </div>
-      </TooltipProvider>
 
+        <div className="flex flex-col">
+          {/* Months X-axis */}
+          <div className="flex text-[10px] text-[var(--text-dim)] font-mono mb-1.5 relative h-4">
+            {monthLabels.map((m, idx) => (
+              <span key={idx} className="absolute" style={{ left: `${m.offset * 16}px` }}>
+                {m.label}
+              </span>
+            ))}
+          </div>
+
+          {/* Grid */}
+          <div className="flex gap-1">
+            {weeks.map((week, wIdx) => (
+              <div key={wIdx} className="flex flex-col gap-1">
+                {week.map((day, dIdx) => (
+                  <div 
+                    key={dIdx}
+                    onClick={() => { if (day.count > 0) setSelectedDay(day) }}
+                    onMouseEnter={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      setHoveredDay({ day, x: rect.left + window.scrollX + rect.width / 2, y: rect.top + window.scrollY - 10 })
+                    }}
+                    onMouseLeave={() => setHoveredDay(null)}
+                    className={cn(
+                      "w-[12px] h-[12px] rounded-[3px] border transition-all duration-200 cursor-pointer", 
+                      getColor(day.count),
+                      day.count === 0 ? "cursor-default hover:border-[var(--text-dim)]" : "hover:border-white hover:scale-125 hover:z-10 relative"
+                    )}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Custom Portal Tooltip */}
+      {hoveredDay && (
+        <div 
+          className="fixed z-[100] bg-[var(--elevated)] border border-[var(--border-bright)] text-[var(--text-primary)] px-3 py-2 shadow-xl rounded-md pointer-events-none transform -translate-x-1/2 -translate-y-full"
+          style={{ left: hoveredDay.x, top: hoveredDay.y }}
+        >
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2 font-mono text-[10px] text-[var(--text-dim)] uppercase">
+              <span>{format(hoveredDay.day.date, 'EEEE')}</span>
+              <span>•</span>
+              <span className="text-[#3b82f6]">{format(hoveredDay.day.date, 'MMM d, yyyy')}</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-display text-sm font-bold">
+              {hoveredDay.day.count > 0 && <Star className="w-3 h-3 text-[#3b82f6] fill-[#3b82f6]" />}
+              {hoveredDay.day.count === 0 ? "No activity" : `${hoveredDay.day.count} session${hoveredDay.day.count === 1 ? '' : 's'}`}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for Details */}
       <Dialog open={!!selectedDay} onOpenChange={(open) => !open && setSelectedDay(null)}>
         <DialogContent className="bg-[var(--surface)] border-[var(--border)] text-[var(--text-primary)] max-w-2xl">
           <DialogHeader>
             <DialogTitle className="font-display text-xl flex items-center gap-2">
-              <Star className="w-5 h-5 text-[var(--emerald)] fill-[var(--emerald)]" />
+              <Star className="w-5 h-5 text-[#3b82f6] fill-[#3b82f6]" />
               Activity on {selectedDay && format(selectedDay.date, 'MMMM d, yyyy')}
             </DialogTitle>
             <DialogDescription className="font-mono text-xs text-[var(--text-dim)]">
@@ -158,7 +194,7 @@ export function ActivityHeatmap({
                     {session.participantCount || session.participants?.length || 0} participants
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className={cn("w-2 h-2 rounded-full", (session.riskScore || 0) > 30 ? "bg-[var(--red)]" : "bg-[var(--emerald)]")} />
+                    <span className={cn("w-2 h-2 rounded-full", (session.riskScore || 0) > 30 ? "bg-[var(--red)]" : "bg-[#3b82f6]")} />
                     Risk: {session.riskScore || 0}
                   </span>
                 </div>

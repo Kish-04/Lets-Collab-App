@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { io, Socket } from "socket.io-client"
 import { Search, X, Shield, ShieldOff, UserCheck, UserX, Clock } from "lucide-react"
 import { DataCard, GlowButton, DangerButton } from "@/components/ircp/shared"
+import { UserActivityHeatmap } from "@/components/ircp/UserActivityHeatmap"
 import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 
 type AppUser = {
@@ -37,9 +38,10 @@ function formatDate(dateStr: string): string {
 }
 
 function UserDetailDrawer({
-  user, onClose, onBan, onRoleChange,
+  user, allSessions, onClose, onBan, onRoleChange,
 }: {
   user: AppUser | null
+  allSessions: any[]
   onClose: () => void
   onBan: (id: string) => void
   onRoleChange: (id: string, role: "user" | "admin") => void
@@ -107,20 +109,7 @@ function UserDetailDrawer({
         </div>
 
         <div className="p-6 border-b border-[var(--border)]/60 bg-[var(--elevated)]/40">
-          <h3 className="font-mono text-xs uppercase tracking-wider text-[var(--text-dim)] mb-4 flex items-center gap-2">
-            <Clock className="w-3.5 h-3.5" /> Session History
-          </h3>
-          {user.sessionCount === 0 ? (
-            <p className="text-xs text-[var(--text-dim)] font-mono">No sessions recorded</p>
-          ) : (
-            <div className="p-3 bg-[var(--elevated)]/60 border border-[var(--border)] rounded-lg backdrop-blur-sm shadow-inner">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-xs text-[var(--accent)]">Total Sessions</span>
-                <span className="font-mono text-xs text-[var(--text-secondary)]">{user.sessionCount}</span>
-              </div>
-              <p className="text-xs text-[var(--text-dim)]">Last active {formatRelative(user.lastSeen)}</p>
-            </div>
-          )}
+          <UserActivityHeatmap userEmail={user.email} allSessions={allSessions} />
         </div>
 
         <div className="p-6 border-b border-[var(--border)]/60 bg-[var(--elevated)]/40">
@@ -156,6 +145,7 @@ export default function UsersPage() {
   const router = useRouter()
   const [users, setUsers] = useState<AppUser[]>([])
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null)
+  const [allSessions, setAllSessions] = useState<any[]>([])
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<"all" | "online" | "banned" | "unverified">("all")
@@ -185,6 +175,15 @@ export default function UsersPage() {
       if (data.success) {
         setUsers(data.users)
         setSelectedUser(prev => prev ? (data.users.find((u: AppUser) => u._id === prev._id) || null) : null)
+      }
+      
+      const reportsRes = await fetch(`${getBackendUrl()}/api/admin/reports`, {
+        credentials: 'include',
+        headers: getAuthHeaders(),
+      })
+      const reportsData = await reportsRes.json()
+      if (reportsData.success) {
+        setAllSessions(reportsData.sessionHistory || [])
       }
     } catch (e) {
       console.error(e)
@@ -352,11 +351,12 @@ export default function UsersPage() {
         )}
       </div>
 
-      <UserDetailDrawer
-        user={selectedUser}
-        onClose={() => setSelectedUser(null)}
+      <UserDetailDrawer 
+        user={selectedUser} 
+        allSessions={allSessions}
+        onClose={() => setSelectedUser(null)} 
         onBan={handleBan}
-        onRoleChange={handleRoleChange}
+        onRoleChange={handleRoleChange} 
       />
     </div>
   )

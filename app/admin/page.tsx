@@ -52,41 +52,40 @@ export default function AdminOverviewPage() {
 
   return (
     <div className="p-8 lg:p-12 w-full max-w-7xl mx-auto space-y-8">
-      <div className="flex items-center gap-3 mb-8">
-        <div className="w-10 h-10 rounded-xl bg-[var(--accent)]/20 border border-[var(--accent)]/30 shadow-[0_0_15px_rgba(0,255,255,0.2)] flex items-center justify-center text-[var(--accent)]">
-          <LayoutDashboard className="w-5 h-5 drop-shadow-[0_0_5px_rgba(0,255,255,0.8)]"/>
-        </div>
-        <div>
-          <h1 className="font-display font-black text-2xl text-[var(--text-primary)]">Platform Overview</h1>
-          <p className="text-sm font-mono text-[var(--text-dim)] mt-1 uppercase tracking-wider">Real-time system health and intelligence</p>
-        </div>
-      </div>
-      
-      <div className="flex flex-col lg:flex-row gap-6">
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
-           <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--violet)]/50 hover:shadow-[0_8px_32px_rgba(139,92,246,0.15)] hover:-translate-y-1 transition-all duration-300 group">
-               <div className="p-4 rounded-xl bg-[var(--violet)]/20 border border-[var(--violet)]/30 text-[var(--violet)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(139,92,246,0.3)] transition-all duration-300"><Users className="w-8 h-8"/></div>
-               <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Total Users</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.length || 0}</p></div>
-           </div>
-           <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--red)]/50 hover:shadow-[0_8px_32px_rgba(244,63,94,0.15)] hover:-translate-y-1 transition-all duration-300 group">
-               <div className="p-4 rounded-xl bg-[var(--red)]/20 border border-[var(--red)]/30 text-[var(--red)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(244,63,94,0.3)] transition-all duration-300"><ShieldAlert className="w-8 h-8"/></div>
-               <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Active Alerts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.alerts?.length || 0}</p></div>
-           </div>
-           <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--emerald)]/50 hover:shadow-[0_8px_32px_rgba(16,185,129,0.15)] hover:-translate-y-1 transition-all duration-300 group">
-               <div className="p-4 rounded-xl bg-[var(--emerald)]/20 border border-[var(--emerald)]/30 text-[var(--emerald)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all duration-300"><Activity className="w-8 h-8"/></div>
-               <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Verified Accounts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.filter((u:any) => u.isVerified).length || 0}</p></div>
-           </div>
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-8 mb-8">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[var(--accent)]/20 border border-[var(--accent)]/30 shadow-[0_0_15px_rgba(0,255,255,0.2)] flex items-center justify-center text-[var(--accent)]">
+            <LayoutDashboard className="w-5 h-5 drop-shadow-[0_0_5px_rgba(0,255,255,0.8)]"/>
+          </div>
+          <div>
+            <h1 className="font-display font-black text-2xl text-[var(--text-primary)]">Platform Overview</h1>
+            <p className="text-sm font-mono text-[var(--text-dim)] mt-1 uppercase tracking-wider">Real-time system health and intelligence</p>
+          </div>
         </div>
 
-        <div className="w-full lg:w-auto shrink-0 p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl hover:border-[var(--border-bright)] transition-colors">
-           <div className="flex items-center justify-between mb-4">
+        <div className="w-full lg:w-auto shrink-0 p-4 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl hover:border-[var(--border-bright)] transition-colors">
+           <div className="flex items-center justify-between mb-2">
              <div>
-               <h3 className="font-display font-bold text-lg text-[var(--text-primary)]">System Activity History</h3>
-               <p className="text-xs font-mono text-[var(--text-dim)]">Daily event density</p>
+               <h3 className="font-display font-bold text-[15px] text-[var(--text-primary)]">System Activity History</h3>
              </div>
            </div>
            <ActivityHeatmap sessions={data.sessionHistory || []} />
         </div>
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+         <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--violet)]/50 hover:shadow-[0_8px_32px_rgba(139,92,246,0.15)] hover:-translate-y-1 transition-all duration-300 group">
+             <div className="p-4 rounded-xl bg-[var(--violet)]/20 border border-[var(--violet)]/30 text-[var(--violet)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(139,92,246,0.3)] transition-all duration-300"><Users className="w-8 h-8"/></div>
+             <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Total Users</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.length || 0}</p></div>
+         </div>
+         <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--red)]/50 hover:shadow-[0_8px_32px_rgba(244,63,94,0.15)] hover:-translate-y-1 transition-all duration-300 group">
+             <div className="p-4 rounded-xl bg-[var(--red)]/20 border border-[var(--red)]/30 text-[var(--red)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(244,63,94,0.3)] transition-all duration-300"><ShieldAlert className="w-8 h-8"/></div>
+             <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Active Alerts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.alerts?.length || 0}</p></div>
+         </div>
+         <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--emerald)]/50 hover:shadow-[0_8px_32px_rgba(16,185,129,0.15)] hover:-translate-y-1 transition-all duration-300 group">
+             <div className="p-4 rounded-xl bg-[var(--emerald)]/20 border border-[var(--emerald)]/30 text-[var(--emerald)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all duration-300"><Activity className="w-8 h-8"/></div>
+             <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Verified Accounts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.filter((u:any) => u.isVerified).length || 0}</p></div>
+         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
