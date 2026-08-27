@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Activity, ShieldAlert, Users, LayoutDashboard } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts"
 import { getAuthHeaders, getBackendUrl } from "@/lib/utils"
-import { ActivityHeatmap } from "@/components/ircp/shared"
+import { ActivityHeatmap } from "@/components/ircp/ActivityHeatmap"
 
 export default function AdminOverviewPage() {
   const [data, setData] = useState<any>(null)
@@ -62,19 +62,31 @@ export default function AdminOverviewPage() {
         </div>
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-         <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--violet)]/50 hover:shadow-[0_8px_32px_rgba(139,92,246,0.15)] hover:-translate-y-1 transition-all duration-300 group">
-             <div className="p-4 rounded-xl bg-[var(--violet)]/20 border border-[var(--violet)]/30 text-[var(--violet)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(139,92,246,0.3)] transition-all duration-300"><Users className="w-8 h-8"/></div>
-             <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Total Users</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.length || 0}</p></div>
-         </div>
-         <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--red)]/50 hover:shadow-[0_8px_32px_rgba(244,63,94,0.15)] hover:-translate-y-1 transition-all duration-300 group">
-             <div className="p-4 rounded-xl bg-[var(--red)]/20 border border-[var(--red)]/30 text-[var(--red)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(244,63,94,0.3)] transition-all duration-300"><ShieldAlert className="w-8 h-8"/></div>
-             <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Active Alerts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.alerts?.length || 0}</p></div>
-         </div>
-         <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--emerald)]/50 hover:shadow-[0_8px_32px_rgba(16,185,129,0.15)] hover:-translate-y-1 transition-all duration-300 group">
-             <div className="p-4 rounded-xl bg-[var(--emerald)]/20 border border-[var(--emerald)]/30 text-[var(--emerald)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all duration-300"><Activity className="w-8 h-8"/></div>
-             <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Verified Accounts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.filter((u:any) => u.isVerified).length || 0}</p></div>
-         </div>
+      <div className="flex flex-col lg:flex-row gap-6">
+        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
+           <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--violet)]/50 hover:shadow-[0_8px_32px_rgba(139,92,246,0.15)] hover:-translate-y-1 transition-all duration-300 group">
+               <div className="p-4 rounded-xl bg-[var(--violet)]/20 border border-[var(--violet)]/30 text-[var(--violet)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(139,92,246,0.3)] transition-all duration-300"><Users className="w-8 h-8"/></div>
+               <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Total Users</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.length || 0}</p></div>
+           </div>
+           <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--red)]/50 hover:shadow-[0_8px_32px_rgba(244,63,94,0.15)] hover:-translate-y-1 transition-all duration-300 group">
+               <div className="p-4 rounded-xl bg-[var(--red)]/20 border border-[var(--red)]/30 text-[var(--red)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(244,63,94,0.3)] transition-all duration-300"><ShieldAlert className="w-8 h-8"/></div>
+               <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Active Alerts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.alerts?.length || 0}</p></div>
+           </div>
+           <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl flex items-center gap-4 hover:border-[var(--emerald)]/50 hover:shadow-[0_8px_32px_rgba(16,185,129,0.15)] hover:-translate-y-1 transition-all duration-300 group">
+               <div className="p-4 rounded-xl bg-[var(--emerald)]/20 border border-[var(--emerald)]/30 text-[var(--emerald)] group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all duration-300"><Activity className="w-8 h-8"/></div>
+               <div><p className="text-[var(--text-dim)] font-mono text-sm uppercase tracking-widest mb-1">Verified Accounts</p><p className="font-display font-bold text-4xl leading-none text-[var(--text-primary)]">{data.userActivity?.filter((u:any) => u.isVerified).length || 0}</p></div>
+           </div>
+        </div>
+
+        <div className="w-full lg:w-auto shrink-0 p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl hover:border-[var(--border-bright)] transition-colors">
+           <div className="flex items-center justify-between mb-4">
+             <div>
+               <h3 className="font-display font-bold text-lg text-[var(--text-primary)]">System Activity History</h3>
+               <p className="text-xs font-mono text-[var(--text-dim)]">Daily event density</p>
+             </div>
+           </div>
+           <ActivityHeatmap sessions={data.sessionHistory || []} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
@@ -109,13 +121,6 @@ export default function AdminOverviewPage() {
          </div>
       </div>
 
-      <div className="mt-6 p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl hover:border-[var(--border-bright)] transition-colors">
-         <h3 className="font-display font-bold text-xl mb-2 text-[var(--text-primary)]">System Activity History</h3>
-         <p className="text-sm font-mono text-[var(--text-dim)] mb-6">Daily event density over the last 90 days</p>
-         <div className="flex justify-center">
-           <ActivityHeatmap />
-         </div>
-      </div>
     </div>
   )
 }
