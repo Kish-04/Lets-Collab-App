@@ -1,19 +1,65 @@
-const tintColorLight = '#2f95dc';
-const tintColorDark = '#fff';
-
-export default {
-  light: {
-    text: '#000',
-    background: '#fff',
-    tint: tintColorLight,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#fff',
-    background: '#000',
-    tint: tintColorDark,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorDark,
-  },
+export const lightTheme = {
+  bg: '#eceff6',
+  surface: '#ffffff',
+  elevated: '#f4f6fa',
+  border: '#d2d6e2',
+  borderBright: '#b8c0d2',
+  textPrimary: '#101223',
+  textSecondary: '#4a5168',
+  textDim: '#8b92aa',
+  accent: '#00d4ff',
+  accentHover: '#00b0d4',
+  red: '#ff3b5c',
+  emerald: '#00c48c',
+  amber: '#f0a500',
+  violet: '#6e3fff',
+  sky: '#0284c7',
+  blue: '#2563eb',
+  glassBg: 'rgba(255, 255, 255, 0.8)',
+  glassCard: 'rgba(255, 255, 255, 0.9)',
 };
+
+export const darkTheme = {
+  bg: '#080810',
+  surface: '#0f0f1a',
+  elevated: '#161625',
+  border: '#1e1e30',
+  borderBright: '#2a2a42',
+  textPrimary: '#e8eaf2',
+  textSecondary: '#8890a8',
+  textDim: '#454560',
+  accent: '#00d4ff',
+  accentHover: '#00b0d4',
+  red: '#ff3b5c',
+  emerald: '#00c48c',
+  amber: '#f0a500',
+  violet: '#6e3fff',
+  sky: '#0ea5e9',
+  blue: '#3b82f6',
+  glassBg: 'rgba(15, 15, 26, 0.85)',
+  glassCard: 'rgba(26, 26, 42, 0.95)',
+};
+
+export const glassmorphicTheme = {
+  bg: '#030308',
+  surface: 'rgba(15, 15, 26, 0.35)',
+  elevated: 'rgba(26, 26, 42, 0.45)',
+  border: 'rgba(30, 30, 48, 0.5)',
+  borderBright: 'rgba(42, 42, 66, 0.6)',
+  textPrimary: '#e8eaf2',
+  textSecondary: '#8890a8',
+  textDim: '#454560',
+  accent: '#00d4ff',
+  accentHover: '#00b0d4',
+  red: '#ff3b5c',
+  emerald: '#00c48c',
+  amber: '#f0a500',
+  violet: '#6e3fff',
+  sky: '#0ea5e9',
+  blue: '#3b82f6',
+  glassBg: 'rgba(15, 15, 26, 0.35)',
+  glassCard: 'rgba(26, 26, 42, 0.45)',
+};
+
+// Default export for files that haven't migrated to context yet
+export const Colors = darkTheme;
