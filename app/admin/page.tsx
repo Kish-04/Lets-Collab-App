@@ -51,8 +51,8 @@ export default function AdminOverviewPage() {
   }, []).slice(-15)
 
   return (
-    <div className="p-8 lg:p-12 w-full max-w-7xl mx-auto space-y-8">
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-8 mb-8">
+    <div className="p-6 lg:p-8 w-full max-w-7xl mx-auto space-y-6">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-6">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-[var(--accent)]/20 border border-[var(--accent)]/30 shadow-[0_0_15px_rgba(0,255,255,0.2)] flex items-center justify-center text-[var(--accent)]">
             <LayoutDashboard className="w-5 h-5 drop-shadow-[0_0_5px_rgba(0,255,255,0.8)]"/>
@@ -88,10 +88,10 @@ export default function AdminOverviewPage() {
          </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
          <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl hover:border-[var(--border-bright)] transition-colors">
-           <h3 className="font-display font-bold text-xl mb-6 text-[var(--text-primary)]">User Session Activity</h3>
-           <div className="h-72">
+           <h3 className="font-display font-bold text-xl mb-4 text-[var(--text-primary)]">User Session Activity</h3>
+           <div className="h-60">
              <ResponsiveContainer width="100%" height="100%">
                <BarChart data={activityData.length > 0 ? activityData : [{name: 'No Data', sessions: 0}]}>
                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
@@ -105,8 +105,8 @@ export default function AdminOverviewPage() {
          </div>
 
          <div className="p-6 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl hover:border-[var(--border-bright)] transition-colors">
-           <h3 className="font-display font-bold text-xl mb-6 text-[var(--text-primary)]">Anti-Cheat Alert Frequency</h3>
-           <div className="h-72">
+           <h3 className="font-display font-bold text-xl mb-4 text-[var(--text-primary)]">Anti-Cheat Alert Frequency</h3>
+           <div className="h-60">
              <ResponsiveContainer width="100%" height="100%">
                <LineChart data={alertData.length > 0 ? alertData : [{time: 'Now', alerts: 0}]}>
                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />

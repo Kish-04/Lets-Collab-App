@@ -53,12 +53,14 @@ function formatTime(dateStr: string): string {
 }
 
 function AlertDetailsModal({
-  alert, onClose, onFlag, onFalsePositive,
+  alert, onClose, onFlag, onFalsePositive, onWarnUser, onKillSession
 }: {
   alert: Alert | null
   onClose: () => void
   onFlag: (id: string, flagged: boolean) => void
   onFalsePositive: (id: string, fp: boolean) => void
+  onWarnUser: (roomId: string) => void
+  onKillSession: (roomId: string) => void
 }) {
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
@@ -110,7 +112,7 @@ function AlertDetailsModal({
              </div>
              <div className="p-6 flex flex-col items-center justify-center bg-[var(--bg)]/50 min-h-[160px] relative overflow-hidden">
                 {alert.evidenceUrl ? (
-                  <img src={alert.evidenceUrl} alt="Evidence Snapshot" className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                  <img src={alert.evidenceUrl.startsWith('http') ? alert.evidenceUrl : `${getBackendUrl()}${alert.evidenceUrl}`} alt="Evidence Snapshot" className="absolute inset-0 w-full h-full object-cover opacity-80" />
                 ) : (
                   <>
                     <div className="absolute bottom-0 left-0 w-full h-[60%] bg-gradient-to-t from-[var(--red)]/20 to-transparent pointer-events-none" />
@@ -122,7 +124,16 @@ function AlertDetailsModal({
                 <div className="absolute top-4 text-center bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">
                   <p className="text-sm text-white mb-0">Anomaly detected precisely at {alert.time}</p>
                 </div>
-             </div>
+              </div>
+           </div>
+
+          <div className="flex gap-4 mt-2">
+            <button onClick={() => { onWarnUser(alert.roomId); onClose(); }} className="flex-1 px-4 py-3 bg-[var(--amber)]/10 text-[var(--amber)] border border-[var(--amber)]/30 rounded-xl font-mono text-sm hover:bg-[var(--amber)] hover:text-black transition-colors flex items-center justify-center gap-2">
+              <AlertTriangle className="w-4 h-4" /> Warn User
+            </button>
+            <button onClick={() => { onKillSession(alert.roomId); onClose(); }} className="flex-1 px-4 py-3 bg-[var(--red)]/10 text-[var(--red)] border border-[var(--red)]/30 rounded-xl font-mono text-sm hover:bg-[var(--red)] hover:text-black transition-colors flex items-center justify-center gap-2">
+              <X className="w-4 h-4" /> Kill Session
+            </button>
           </div>
         </div>
 
@@ -309,6 +320,8 @@ export default function AlertsPage() {
         onClose={() => setSelectedAlert(null)} 
         onFlag={(id, f) => updateAlertStatus(id, { flagged: f })} 
         onFalsePositive={(id, fp) => updateAlertStatus(id, { falsePositive: fp })} 
+        onWarnUser={handleWarnUser}
+        onKillSession={handleKillSession}
       />
       <div className="p-6">
       <div className="flex items-center justify-between mb-6">

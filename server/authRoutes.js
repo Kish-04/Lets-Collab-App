@@ -2,7 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
 const User = require('./User');
-const { signJwt } = require('./config');
+const { signJwt, verifyJwt } = require('./config');
 const mockStore = require('./mockStore');
 
 const router = express.Router();
@@ -391,7 +391,7 @@ router.get('/me', async (req, res) => {
     const token = req.cookies.auth_token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
     if (!token) return res.status(401).json({ message: 'No token provided' });
     
-    const decoded = verifyToken(token);
+    const decoded = verifyJwt(token);
     const user = global.dbConnected
       ? await User.findById(decoded.id)
       : mockStore.findUserById(decoded.id);
