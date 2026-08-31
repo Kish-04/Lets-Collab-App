@@ -20,7 +20,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "package": "com.kishankarthikssteam.letscollab"
+      "package": "com.kishankarthikssteam.letscollab",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"
