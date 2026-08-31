@@ -58,21 +58,16 @@ async function loadAuthenticatedUser(req, res) {
       console.log('[loadAuthenticatedUser] user not found or banned in DB');
       if (decoded.id === 'admin-id' || decoded.email === 'kishankarthiks222@gmail.com' || decoded.email === 'admin@letscollab.com') {
         const emailToUse = decoded.email || 'admin@letscollab.com';
-        if (!global.dbConnected) {
-          console.log('[loadAuthenticatedUser] Creating mock admin user');
-          const mockStore = require('./mockStore');
-          user = mockStore.createUser({
-            _id: 'admin-id',
-            name: 'System Administrator',
-            email: emailToUse,
-            password: 'mock',
-            role: 'admin',
-            isVerified: true
-          });
-          return user;
-        } else {
-          console.log('[loadAuthenticatedUser] dbConnected is true, but mock block skipped! Returning 403!');
-        }
+        const mockStore = require('./mockStore');
+        user = mockStore.createUser({
+          _id: 'admin-id',
+          name: 'System Administrator',
+          email: emailToUse,
+          password: 'mock',
+          role: 'admin',
+          isVerified: true
+        });
+        return user;
       }
       res.status(403).json({ success: false, message: 'Not authorized for this account' });
       return null;

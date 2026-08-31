@@ -15,9 +15,19 @@ export default function AdminOverviewPage() {
       credentials: 'include',
       headers: getAuthHeaders(),
     })
-      .then(res => {
-        if (!res.ok) throw new Error("Failed to load")
-        return res.json()
+      .then(async response => {
+        if (response.status === 401 || response.status === 403) {
+          localStorage.removeItem('ircp_user')
+          localStorage.removeItem('ircp_name')
+          localStorage.removeItem('ircp_email')
+          localStorage.removeItem('ircp_role')
+          window.location.href = '/admin/login'
+          return
+        }
+        if (!response.ok) {
+          throw new Error("Failed to load")
+        }
+        return response.json()
       })
       .then(d => {
         if (!d) return // Handled by redirect
