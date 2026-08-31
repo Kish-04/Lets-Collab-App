@@ -170,6 +170,8 @@ export default function AlertsPage() {
   const [search, setSearch] = useState("")
   const [loaded, setLoaded] = useState(false)
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null)
+  const [warningRoomId, setWarningRoomId] = useState<string | null>(null)
+  const [warningMessage, setWarningMessage] = useState('')
   const socketRef = useRef<Socket | null>(null)
 
   useEffect(() => {
@@ -244,9 +246,16 @@ export default function AlertsPage() {
   }, [])
 
   const handleWarnUser = (roomId: string) => {
+    setWarningRoomId(roomId)
+    setWarningMessage('')
+  }
+
+  const submitWarning = async () => {
+    if (!warningRoomId) return
     if (socketRef.current) {
-      socketRef.current.emit('admin-warn-user', { roomId })
+      socketRef.current.emit('admin-warn-user', { roomId: warningRoomId, message: warningMessage })
     }
+    setWarningRoomId(null)
   }
 
   const handleKillSession = (roomId: string) => {
@@ -270,13 +279,12 @@ export default function AlertsPage() {
       })
       const data = await res.json()
       if (!data.success) {
-        fetchReports(); // revert on failure
+        console.log('Update failed')
       }
     } catch (e) {
       console.error('Failed to update alert', e)
-      fetchReports(); // revert on failure
+      console.log('Update failed')
     }
-  }
   }
 
   const exportCSV = () => {
@@ -525,5 +533,9 @@ export default function AlertsPage() {
     </>
   )
 }
+
+
+
+
 
 
