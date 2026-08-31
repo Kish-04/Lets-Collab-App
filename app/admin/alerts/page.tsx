@@ -256,6 +256,12 @@ export default function AlertsPage() {
   }
 
   const updateAlertStatus = async (id: string, updates: { flagged?: boolean, falsePositive?: boolean }) => {
+    // Optimistic UI updates
+    setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...updates } : a))
+    if (selectedAlert?._id === id) {
+      setSelectedAlert(prev => prev ? { ...prev, ...updates } : null)
+    }
+
     try {
       const res = await fetch(`${getBackendUrl()}/api/admin/alerts/${id}/status`, {
         method: 'POST',
@@ -263,15 +269,14 @@ export default function AlertsPage() {
         body: JSON.stringify(updates),
       })
       const data = await res.json()
-      if (data.success) {
-        setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...updates } : a))
-        if (selectedAlert?._id === id) {
-          setSelectedAlert(prev => prev ? { ...prev, ...updates } : null)
-        }
+      if (!data.success) {
+        fetchReports(); // revert on failure
       }
     } catch (e) {
       console.error('Failed to update alert', e)
+      fetchReports(); // revert on failure
     }
+  }
   }
 
   const exportCSV = () => {
@@ -520,3 +525,5 @@ export default function AlertsPage() {
     </>
   )
 }
+
+
