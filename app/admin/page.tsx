@@ -8,7 +8,7 @@ import { ActivityHeatmap } from "@/components/ircp/ActivityHeatmap"
 
 export default function AdminOverviewPage() {
   const [data, setData] = useState<any>(null)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | false>(false)
   
   useEffect(() => {
     fetch(`${getBackendUrl()}/api/admin/reports`, {
@@ -25,22 +25,25 @@ export default function AdminOverviewPage() {
           return
         }
         if (!response.ok) {
-          throw new Error("Failed to load")
+          throw new Error(`Server returned ${response.status} ${response.statusText}`)
         }
         return response.json()
       })
       .then(d => {
         if (!d) return // Handled by redirect
         if (d.success) setData(d)
-        else setError(true)
+        else setError("Failed to load analytics data")
       })
-      .catch(() => setError(true))
+      .catch((error: any) => {
+        console.error('Error fetching analytics:', error)
+        setError(`Error: ${error.message || String(error)}. URL: ${getBackendUrl()}`)
+      })
   }, [])
 
   if (error) {
     return (
       <div className="h-full flex items-center justify-center text-[var(--red)] font-mono p-8">
-        Error loading analytics from backend. Ensure the backend server is running.
+        {error}
       </div>
     )
   }
