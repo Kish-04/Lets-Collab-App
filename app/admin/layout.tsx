@@ -44,7 +44,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       headers: token ? { 'Authorization': `Bearer ${token}` } : undefined
     })
       .then(res => {
-        // Do nothing on 401/403 to prevent infinite redirect loops during debugging
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem('ircp_user')
+          localStorage.removeItem('ircp_name')
+          localStorage.removeItem('ircp_email')
+          localStorage.removeItem('ircp_role')
+          router.push('/admin/login')
+        }
       })
       .catch(() => {})
   }, [router, isLoginPage])

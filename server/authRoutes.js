@@ -388,7 +388,13 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', async (req, res) => {
   try {
-    const token = req.cookies.auth_token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+    let token = null;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+    if (!token && req.cookies && req.cookies.auth_token) {
+      token = req.cookies.auth_token;
+    }
     if (!token) return res.status(401).json({ message: 'No token provided' });
     
     const decoded = verifyJwt(token);
