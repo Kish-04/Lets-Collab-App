@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Key, ShieldCheck, User } from "lucide-react"
+import { ArrowLeft, Key, ShieldCheck, User, Eye, EyeOff } from "lucide-react"
 import { AppLogo, GlowButton } from "@/components/ircp/shared"
 import { getBackendUrl } from "@/lib/utils"
 
@@ -12,6 +12,7 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -85,8 +86,15 @@ export default function AdminLoginPage() {
               <span className="mb-2 block text-xs text-[var(--text-secondary)]">Password</span>
               <span className="relative block">
                 <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-dim)]" />
-                <input required type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password"
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] py-3 pl-10 pr-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
+                <input required type={showPassword ? "text" : "password"} value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password"
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] py-3 pl-10 pr-10 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </span>
             </label>
             

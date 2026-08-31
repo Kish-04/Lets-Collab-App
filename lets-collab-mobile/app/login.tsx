@@ -16,6 +16,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [focusedInput, setFocusedInput] = useState<'email' | 'password' | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Animation values
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -167,20 +168,28 @@ export default function LoginScreen() {
               />
 
               <Text style={[styles.label, { color: '#0f172a' }]}>PASSWORD</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  { backgroundColor: '#f8fafc', borderColor: '#cbd5e1', color: '#0f172a' },
-                  focusedInput === 'password' && { borderColor: '#1d4ed8', backgroundColor: '#eff6ff' }
-                ]}
-                placeholder="••••••••"
-                placeholderTextColor="#94a3b8"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                onFocus={() => setFocusedInput('password')}
-                onBlur={() => setFocusedInput(null)}
-              />
+              <View style={styles.passwordContainer}>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { flex: 1, backgroundColor: '#f8fafc', borderColor: '#cbd5e1', color: '#0f172a', marginBottom: 0 },
+                    focusedInput === 'password' && { borderColor: '#1d4ed8', backgroundColor: '#eff6ff' }
+                  ]}
+                  placeholder="••••••••"
+                  placeholderTextColor="#94a3b8"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  onFocus={() => setFocusedInput('password')}
+                  onBlur={() => setFocusedInput(null)}
+                />
+                <Pressable
+                  style={styles.eyeIconContainer}
+                  onPress={() => setShowPassword(!showPassword)}
+                >
+                  <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color="#94a3b8" />
+                </Pressable>
+              </View>
 
               {/* Animated Gradient Button */}
               <Animated.View style={{ transform: [{ scale: scaleAnim }], marginTop: 12, zIndex: 100 }}>
@@ -269,6 +278,17 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     fontSize: 14,
     fontFamily: 'Inter_500Medium', 
+  },
+  passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  eyeIconContainer: {
+    position: 'absolute',
+    right: 16,
+    height: '100%',
+    justifyContent: 'center',
   },
   button: {
     borderRadius: 8, 

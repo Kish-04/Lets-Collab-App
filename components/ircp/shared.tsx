@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils"
 import { Copy, ExternalLink } from "lucide-react"
 import { useState, useEffect } from "react"
+import { motion } from "framer-motion"
 
 async function copyToClipboard(value: string) {
   try {
@@ -151,23 +152,25 @@ export function GlowButton({
   }
   
   return (
-    <button
+    <motion.button
+      whileHover={{ scale: 1.05, y: -2 }}
+      whileTap={{ scale: 0.95, y: 0 }}
       className={cn(
-        "inline-flex items-center justify-center gap-2 font-semibold transition-all duration-150",
-        "active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center gap-2 font-semibold transition-colors duration-150",
+        "disabled:opacity-50 disabled:cursor-not-allowed",
         variantStyles[variant],
         sizeStyles[size],
         className
       )}
       disabled={loading || props.disabled}
-      {...props}
+      {...(props as any)}
     >
       {loading ? (
         <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
       ) : (
         children
       )}
-    </button>
+    </motion.button>
   )
 }
 
@@ -192,20 +195,22 @@ export function DangerButton({
   }
   
   return (
-    <button
+    <motion.button
+      whileHover={{ scale: 1.05, y: -2 }}
+      whileTap={{ scale: 0.95, y: 0 }}
       className={cn(
-        "inline-flex items-center justify-center gap-2 font-bold transition-all duration-150",
+        "inline-flex items-center justify-center gap-2 font-bold transition-colors duration-150",
         "border border-[var(--red)] text-[var(--red)] bg-transparent",
         "hover:bg-[var(--red)] hover:text-[var(--text-primary)] hover:shadow-[0_0_20px_rgba(255,59,92,0.4)]",
-        "active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed",
+        "disabled:opacity-50 disabled:cursor-not-allowed",
         pulsing && "[--glow-color:rgba(255,59,92,0.4)] animate-pulse-glow",
         sizeStyles[size],
         className
       )}
-      {...props}
+      {...(props as any)}
     >
       {children}
-    </button>
+    </motion.button>
   )
 }
 

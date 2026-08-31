@@ -2025,8 +2025,12 @@ function SessionContent() {
     return (
         <div ref={containerRef} className="h-screen overflow-hidden bg-[var(--bg)] relative text-[var(--text-primary)] font-sans">
             {/* FLOATING HEADER (DYNAMIC ISLAND) */}
-            <header className={cn(
-                "absolute top-4 left-1/2 -translate-x-1/2 h-[52px] flex items-center justify-between px-6 rounded-full border border-[var(--border)]/60 bg-[var(--surface)]/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] z-50 transition-all duration-500",
+            <motion.header 
+                drag
+                dragMomentum={false}
+                dragConstraints={containerRef}
+                className={cn(
+                "absolute top-4 left-1/2 -translate-x-1/2 h-[52px] flex items-center justify-between px-6 rounded-full border border-[var(--border)]/60 bg-[var(--surface)]/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] z-50 transition-colors duration-500 cursor-move",
                 !isUiVisible && "opacity-0 -translate-y-8 pointer-events-none scale-95"
             )}>
                 <div className="flex items-center gap-3">
@@ -2117,24 +2121,25 @@ function SessionContent() {
                         </button>
                     )}
                     {role === 'controller' && typeof window !== 'undefined' && (window as any).ipcRenderer && (
-                        <button 
+                        <GlowButton 
                             onClick={() => socketRef.current?.emit('request-role-swap', { roomId: roomCodeRef.current || joinInput })}
-                            className="h-9 px-4 rounded-full bg-[var(--accent)] text-black text-xs font-bold transition-transform active:scale-95"
-                        >SWAP ROLES</button>
+                            size="sm"
+                        >SWAP ROLES</GlowButton>
                     )}
                     {role === 'host' && isStreaming && (
-                        <button 
+                        <GlowButton 
                             onClick={stopSharing}
-                            className="h-9 px-4 rounded-full bg-[var(--amber)] text-black text-xs font-bold transition-transform active:scale-95"
-                        >STOP SHARING</button>
+                            size="sm"
+                            className="bg-[var(--amber)] hover:shadow-[0_0_20px_rgba(255,191,0,0.4)] text-black"
+                        >STOP SHARING</GlowButton>
                     )}
                     {role === 'host' ? (
-                        <button onClick={() => setShowKillConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-[var(--text-primary)] text-xs font-bold">END SESSION</button>
+                        <DangerButton onClick={() => setShowKillConfirm(true)} size="sm">END SESSION</DangerButton>
                     ) : (
-                        <button onClick={() => setShowLeaveConfirm(true)} className="h-9 px-4 rounded-full bg-[var(--red)] text-[var(--text-primary)] text-xs font-bold">LEAVE ROOM</button>
+                        <DangerButton onClick={() => setShowLeaveConfirm(true)} size="sm">LEAVE ROOM</DangerButton>
                     )}
                 </div>
-            </header>
+            </motion.header>
 
             {/* FLOATING SIDEBAR */}
             <aside className={cn(
@@ -2530,7 +2535,7 @@ function SessionContent() {
                             </>
                         )}
                         {role === 'host' && !isStreaming && (
-                            <button onClick={startSharingProcess} className="px-6 py-2 bg-[var(--accent)] text-black font-bold rounded-full">START SHARING</button>
+                            <GlowButton onClick={startSharingProcess} size="lg" className="px-8 py-3 rounded-full pointer-events-auto">START SHARING</GlowButton>
                         )}
                         
                         {/* PiP / Remote Camera Container */}

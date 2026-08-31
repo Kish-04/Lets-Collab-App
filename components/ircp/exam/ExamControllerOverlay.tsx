@@ -174,8 +174,15 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
     const q = questions[validIndex];
 
     return (
-        <div className="w-full h-full flex flex-col p-6 font-sans text-[var(--text-primary)]">
-            <h2 className="text-2xl font-black mb-6 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent tracking-tight pb-2 border-b border-[var(--border)]/60">Active Questions</h2>
+        <div className="w-full h-full flex flex-col p-6 font-sans text-[var(--text-primary)] relative">
+            <button
+                onClick={() => questions.forEach(q => handleSubmit(q.id))}
+                className="absolute top-6 right-6 w-8 h-8 flex items-center justify-center rounded-full bg-[var(--elevated)] border border-[var(--border)]/60 text-[var(--text-primary)] hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all font-bold"
+                title="Close and Submit All"
+            >
+                ×
+            </button>
+            <h2 className="text-2xl font-black mb-6 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent tracking-tight pb-2 border-b border-[var(--border)]/60 pr-10">Active Questions</h2>
             
             <div className="flex items-center justify-between mb-4 bg-[var(--elevated)] border border-[var(--border)]/60 rounded-xl p-3 shadow-inner">
                 <button 

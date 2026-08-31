@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../context/ApiContext';
 import { useTheme } from '../context/ThemeContext';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { client, login } = useApi();
@@ -58,15 +60,23 @@ export default function LoginScreen() {
         />
         
         <Text style={{ color: theme.textMuted }} className="text-xs font-medium mb-2 ml-1">Password</Text>
-        <TextInput
-          className="w-full h-12 border-0 rounded-md px-4 font-medium mb-8"
-          style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: theme.text }}
-          placeholder="••••••••"
-          placeholderTextColor={theme.textMuted}
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-        />
+        <View className="w-full h-12 rounded-md mb-8 relative justify-center">
+          <TextInput
+            className="w-full h-full border-0 rounded-md px-4 pr-12 font-medium"
+            style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: theme.text }}
+            placeholder="••••••••"
+            placeholderTextColor={theme.textMuted}
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={setPassword}
+          />
+          <TouchableOpacity
+            style={{ position: 'absolute', right: 12, height: '100%', justifyContent: 'center' }}
+            onPress={() => setShowPassword(!showPassword)}
+          >
+            <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color={theme.textMuted} />
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity 
           className="w-full h-12 rounded-md justify-center items-center shadow-lg"
