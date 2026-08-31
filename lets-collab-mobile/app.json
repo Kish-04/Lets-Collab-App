@@ -11,7 +11,7 @@
       "supportsTablet": true
     },
     "android": {
-      "versionCode": 2,
+      "versionCode": 3,
       "package": "com.kishankarthiks.letscollabadmin",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",

@@ -145,19 +145,19 @@ export default function LoginScreen() {
             <AppLogo size="large" />
           </View>
 
-          {/* Frosted Glass Container */}
-          <BlurView intensity={isGlass ? 80 : (isDark ? 30 : 60)} tint={isDark ? "dark" : "light"} style={[styles.glassContainer, { borderColor: colors.border }]}>
-            <View style={[styles.glassInner, { backgroundColor: colors.glassBg }]}>
+          {/* Solid Container */}
+          <View style={[styles.glassContainer, { borderColor: colors.border, backgroundColor: '#ffffff' }]}>
+            <View style={[styles.glassInner, { backgroundColor: '#ffffff' }]}>
               
-              <Text style={[styles.label, { color: colors.textSecondary }]}>EMAIL ADDRESS</Text>
+              <Text style={[styles.label, { color: '#0f172a' }]}>EMAIL ADDRESS</Text>
               <TextInput
                 style={[
                   styles.input,
-                  { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary },
-                  focusedInput === 'email' && { borderColor: colors.accent, backgroundColor: isDark ? 'rgba(0, 212, 255, 0.05)' : 'rgba(0, 212, 255, 0.02)' }
+                  { backgroundColor: '#f8fafc', borderColor: '#cbd5e1', color: '#0f172a' },
+                  focusedInput === 'email' && { borderColor: '#1d4ed8', backgroundColor: '#eff6ff' }
                 ]}
                 placeholder="name@example.com"
-                placeholderTextColor={colors.textDim}
+                placeholderTextColor="#94a3b8"
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
@@ -166,15 +166,15 @@ export default function LoginScreen() {
                 onBlur={() => setFocusedInput(null)}
               />
 
-              <Text style={[styles.label, { color: colors.textSecondary }]}>PASSWORD</Text>
+              <Text style={[styles.label, { color: '#0f172a' }]}>PASSWORD</Text>
               <TextInput
                 style={[
                   styles.input,
-                  { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary },
-                  focusedInput === 'password' && { borderColor: colors.accent, backgroundColor: isDark ? 'rgba(0, 212, 255, 0.05)' : 'rgba(0, 212, 255, 0.02)' }
+                  { backgroundColor: '#f8fafc', borderColor: '#cbd5e1', color: '#0f172a' },
+                  focusedInput === 'password' && { borderColor: '#1d4ed8', backgroundColor: '#eff6ff' }
                 ]}
                 placeholder="••••••••"
-                placeholderTextColor={colors.textDim}
+                placeholderTextColor="#94a3b8"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
@@ -183,7 +183,7 @@ export default function LoginScreen() {
               />
 
               {/* Animated Gradient Button */}
-              <Animated.View style={{ transform: [{ scale: scaleAnim }], marginTop: 12 }}>
+              <Animated.View style={{ transform: [{ scale: scaleAnim }], marginTop: 12, zIndex: 100 }}>
                 <Pressable 
                   style={({ pressed }) => [
                     styles.button,
@@ -195,7 +195,7 @@ export default function LoginScreen() {
                   disabled={loading}
                 >
                   <LinearGradient
-                    colors={[colors.accent, colors.violet]}
+                    colors={['#1e3a8a', '#1d4ed8']}
                     style={styles.buttonGradient}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
@@ -210,7 +210,7 @@ export default function LoginScreen() {
               </Animated.View>
               
             </View>
-          </BlurView>
+          </View>
 
         </Animated.View>
       </KeyboardAvoidingView>
