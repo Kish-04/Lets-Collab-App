@@ -198,6 +198,7 @@
     "express": "^5.2.1",
     "framer-motion": "^12.42.2",
     "monaco-editor": "^0.56.0",
+    "pngjs": "^7.0.0",
     "three": "^0.185.1",
     "y-monaco": "^0.1.6",
     "y-protocols": "^1.0.7",
