@@ -31,12 +31,17 @@ export default function UsersScreen() {
   };
 
   const toggleBan = async (id: string, currentlyBanned: boolean) => {
+    // Optimistic UI update
+    setUsers(prev => prev.map(u => u._id === id ? { ...u, banned: !currentlyBanned } : u));
     try {
       const res = await client.post(`/users/${id}/ban`);
-      if (res.data.success) {
-        fetchUsers();
+      if (!res.data.success) {
+        // Revert on error
+        setUsers(prev => prev.map(u => u._id === id ? { ...u, banned: currentlyBanned } : u));
       }
     } catch (err) {
+      // Revert on error
+      setUsers(prev => prev.map(u => u._id === id ? { ...u, banned: currentlyBanned } : u));
       Alert.alert('Error', 'Failed to update ban status');
     }
   };

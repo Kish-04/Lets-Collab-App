@@ -199,25 +199,43 @@ export default function UsersPage() {
   }, [])
 
   const handleBan = async (id: string) => {
-    await fetch(`${getBackendUrl()}/api/admin/users/${id}/ban`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: getAuthHeaders(),
-    })
-    fetchUsers()
+    // Optimistic update
+    setUsers(prev => prev.map(u => u._id === id ? { ...u, banned: !u.banned } : u))
+    if (selectedUser?._id === id) {
+      setSelectedUser(prev => prev ? { ...prev, banned: !prev.banned } : null)
+    }
+
+    try {
+      await fetch(`${getBackendUrl()}/api/admin/users/${id}/ban`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getAuthHeaders(),
+      })
+    } finally {
+      fetchUsers()
+    }
   }
 
   const handleRoleChange = async (id: string, role: "user" | "admin") => {
-    await fetch(`${getBackendUrl()}/api/admin/users/${id}/role`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders(),
-      },
-      body: JSON.stringify({ role }),
-    })
-    fetchUsers()
+    // Optimistic update
+    setUsers(prev => prev.map(u => u._id === id ? { ...u, role } : u))
+    if (selectedUser?._id === id) {
+      setSelectedUser(prev => prev ? { ...prev, role } : null)
+    }
+
+    try {
+      await fetch(`${getBackendUrl()}/api/admin/users/${id}/role`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ role }),
+      })
+    } finally {
+      fetchUsers()
+    }
   }
 
   const filtered = users.filter(u => {

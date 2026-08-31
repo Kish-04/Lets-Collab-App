@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, ImageBackground, TouchableOpacity, Modal, Platform, TextInput, ScrollView, Dimensions, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, ImageBackground, TouchableOpacity, Modal, Platform, TextInput, ScrollView, Dimensions, Alert, Image } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { BACKEND_URL, getAuthHeaders } from '../../lib/api';
 import { ShieldAlert, X, Sun, Moon, Search, Download, Flag, CheckCircle, AlertTriangle } from 'lucide-react-native';
@@ -12,6 +12,7 @@ export default function AlertsScreen() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
+  const [imageError, setImageError] = useState(false);
   const [filter, setFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [search, setSearch] = useState('');
 
@@ -79,12 +80,28 @@ export default function AlertsScreen() {
     }
   };
 
-  const handleWarnUser = async (roomId: string) => {
+  const [warnModalVisible, setWarnModalVisible] = useState(false);
+  const [warnRoomId, setWarnRoomId] = useState<string | null>(null);
+  const [warnMessage, setWarnMessage] = useState("");
+
+  const handleWarnUser = (roomId: string) => {
+    setWarnRoomId(roomId);
+    setWarnMessage("");
+    setWarnModalVisible(true);
+  };
+
+  const submitWarning = async () => {
+    if (!warnRoomId) return;
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(`${BACKEND_URL}/api/admin/rooms/${roomId}/warn`, { method: 'POST', headers });
+      const res = await fetch(`${BACKEND_URL}/api/admin/rooms/${warnRoomId}/warn`, { 
+        method: 'POST', 
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: warnMessage || "Admin has issued a warning." })
+      });
       if (res.ok) {
-        Alert.alert("Warn User", `Warning sent successfully to room ${roomId}`);
+        Alert.alert("Warn User", `Warning sent successfully to room ${warnRoomId}`);
+        setWarnModalVisible(false);
       } else {
         Alert.alert("Error", `Failed to send warning`);
       }
@@ -154,7 +171,7 @@ export default function AlertsScreen() {
     const isMedium = item.totalRisk >= 30 && item.totalRisk < 70;
     
     return (
-      <AnimatedPressable hapticFeedback="light" onPress={() => setSelectedAlert(item)} style={{ marginBottom: 12 }}>
+      <AnimatedPressable hapticFeedback="light" onPress={() => { setImageError(false); setSelectedAlert(item); }} style={{ marginBottom: 12 }}>
           <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }, isCritical && { borderColor: isDark ? 'rgba(255, 59, 92, 0.4)' : 'rgba(255, 59, 92, 0.3)' }, item.falsePositive && { opacity: 0.6 }]}>
             <View style={styles.cardInner}>
               <View style={[styles.statusIndicator, { backgroundColor: isCritical ? colors.red : isMedium ? colors.amber : colors.emerald, shadowColor: isCritical ? colors.red : isMedium ? colors.amber : colors.emerald }]} />
@@ -355,6 +372,20 @@ export default function AlertsScreen() {
                     <Text style={[styles.infoText, { color: colors.textSecondary }]}>{selectedAlert.message}</Text>
                   </View>
 
+                  <View style={[styles.infoBox, { backgroundColor: 'rgba(255,255,255,0.02)', borderColor: colors.border, marginBottom: 16, height: 160, justifyContent: 'center', alignItems: 'center', overflow: 'hidden', position: 'relative' }]}>
+                    <Text style={[styles.metricLabel, { color: colors.textDim, zIndex: 10, position: 'absolute', top: 12, left: 12 }]}>AI EVIDENCE</Text>
+                    {selectedAlert.evidenceUrl ? (
+                      <Image 
+                        source={{ uri: imageError ? 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=500&q=80' : (selectedAlert.evidenceUrl.startsWith('http') ? selectedAlert.evidenceUrl : `${BACKEND_URL}${selectedAlert.evidenceUrl}`) }} 
+                        style={{ position: 'absolute', width: '100%', height: '100%', opacity: 0.6 }} 
+                        resizeMode="cover"
+                        onError={() => setImageError(true)}
+                      />
+                    ) : (
+                      <ShieldAlert size={40} color={colors.red} />
+                    )}
+                  </View>
+
                   <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
                     <TouchableOpacity onPress={() => handleWarnUser(selectedAlert.roomId)} style={[styles.actionBtnSecondary, { backgroundColor: isDark ? 'rgba(240,165,0,0.1)' : 'rgba(240,165,0,0.05)', borderColor: isDark ? 'rgba(240,165,0,0.3)' : 'rgba(240,165,0,0.15)' }]}>
                       <AlertTriangle size={16} color={colors.amber} style={{ marginBottom: 4 }} />
@@ -382,6 +413,49 @@ export default function AlertsScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={warnModalVisible} animationType="slide" transparent={true} onRequestClose={() => setWarnModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={[styles.modalHeader, { borderColor: colors.border, backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)' }]}>
+              <Text style={{ color: colors.amber, fontSize: 16, fontFamily: 'Inter_700Bold' }}>Send Warning</Text>
+              <TouchableOpacity onPress={() => setWarnModalVisible(false)} style={[styles.closeBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}>
+                <X size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={[styles.metricLabel, { color: colors.textDim }]}>MESSAGE TO HOST/CONTROLLER</Text>
+              <TextInput
+                value={warnMessage}
+                onChangeText={setWarnMessage}
+                placeholder="Type your warning message here..."
+                placeholderTextColor={colors.textDim}
+                multiline
+                style={{ 
+                  backgroundColor: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)', 
+                  color: colors.textPrimary, 
+                  borderRadius: 8, 
+                  padding: 12, 
+                  height: 100, 
+                  textAlignVertical: 'top', 
+                  borderColor: colors.border, 
+                  borderWidth: 1,
+                  fontFamily: 'SpaceMono'
+                }}
+              />
+            </View>
+            <View style={[styles.modalActions, { borderTopColor: colors.border, backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)' }]}>
+              <TouchableOpacity onPress={() => setWarnModalVisible(false)} style={[styles.actionBtnSecondary, { borderColor: colors.border }]}>
+                <Text style={[styles.actionBtnSecondaryText, { color: colors.textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submitWarning} style={[styles.actionBtnSecondary, { borderColor: colors.amber, backgroundColor: isDark ? 'rgba(251, 191, 36, 0.1)' : 'rgba(251, 191, 36, 0.2)' }]}>
+                <Text style={[styles.actionBtnSecondaryText, { color: colors.amber }]}>Send Warning</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }

@@ -182,33 +182,54 @@ export function UserActivityHeatmap({
           </DialogHeader>
           
           <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-2 custom-scrollbar mt-4">
-            {selectedDay?.sessions.map((session: any, idx: number) => {
-               // Determine user's role in this specific session
-               const isHost = session.hostEmail === userEmail;
-               return (
-                 <div key={idx} className="p-4 rounded-xl border border-[var(--border)]/60 bg-[var(--elevated)]/50 flex flex-col gap-2">
-                   <div className="flex items-center justify-between">
-                     <span className="font-mono text-sm text-[#3b82f6] font-bold">
-                       Room: {session.roomCode || 'UNKNOWN'}
-                     </span>
-                     <span className="text-xs text-[var(--text-dim)] font-mono">
-                       {format(new Date(session.startedAt), 'h:mm a')} - {session.endedAt ? format(new Date(session.endedAt), 'h:mm a') : 'Active'}
-                     </span>
-                   </div>
-                   <div className="flex gap-2 items-center text-xs mt-1">
-                     <span className={cn("px-2 py-0.5 rounded border font-mono", isHost ? "bg-[#3b82f6]/20 border-[#3b82f6]/30 text-[#3b82f6]" : "bg-[var(--elevated)] border-[var(--border)] text-[var(--text-dim)]")}>
-                        {isHost ? 'HOSTED' : 'PARTICIPATED'}
-                     </span>
-                     <span className="text-[var(--text-dim)]">
-                       Total participants: <span className="text-[var(--text-primary)]">{session.participantCount || session.participants?.length || 0}</span>
-                     </span>
-                   </div>
-                 </div>
-               )
-            })}
+            {selectedDay?.sessions.map((session: any, idx: number) => (
+              <SessionCard key={idx} session={session} userEmail={userEmail} />
+            ))}
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function SessionCard({ session, userEmail }: { session: any, userEmail: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isHost = session.hostEmail === userEmail;
+  const participants = session.participants || [];
+  
+  return (
+    <div className="p-4 rounded-xl border border-[var(--border)]/60 bg-[var(--elevated)]/50 flex flex-col gap-2 transition-all">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-sm text-[#3b82f6] font-bold">
+          Room: {session.roomCode || 'UNKNOWN'}
+        </span>
+        <span className="text-xs text-[var(--text-dim)] font-mono">
+          {format(new Date(session.startedAt), 'h:mm a')} - {session.endedAt ? format(new Date(session.endedAt), 'h:mm a') : 'Active'}
+        </span>
+      </div>
+      <div className="flex gap-2 items-center text-xs mt-1">
+        <span className={cn("px-2 py-0.5 rounded border font-mono", isHost ? "bg-[#3b82f6]/20 border-[#3b82f6]/30 text-[#3b82f6]" : "bg-[var(--elevated)] border-[var(--border)] text-[var(--text-dim)]")}>
+           {isHost ? 'HOSTED' : 'PARTICIPATED'}
+        </span>
+        
+        <button onClick={() => setExpanded(!expanded)} className="text-[var(--text-dim)] hover:text-[#3b82f6] transition-colors flex items-center gap-1">
+          Total participants: <span className="text-[var(--text-primary)]">{session.participantCount || participants.length || 0}</span>
+          <span className="text-[8px] ml-1">{expanded ? '▲' : '▼'}</span>
+        </button>
+      </div>
+
+      {expanded && participants.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-[var(--border)]/40 flex flex-col gap-2">
+          <p className="text-[10px] font-mono text-[var(--text-dim)] uppercase tracking-wider">Participant Roster</p>
+          {participants.map((p: any, i: number) => (
+            <div key={i} className="flex items-center gap-2 text-xs font-mono">
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--text-dim)]" />
+              <span className="text-[var(--text-primary)]">{p.name || p.email || 'Unknown User'}</span>
+              {(p.name && p.email) && <span className="text-[var(--text-dim)] ml-auto">{p.email}</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

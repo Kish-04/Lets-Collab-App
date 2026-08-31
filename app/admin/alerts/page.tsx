@@ -112,7 +112,12 @@ function AlertDetailsModal({
              </div>
              <div className="p-6 flex flex-col items-center justify-center bg-[var(--bg)]/50 min-h-[160px] relative overflow-hidden">
                 {alert.evidenceUrl ? (
-                  <img src={alert.evidenceUrl.startsWith('http') ? alert.evidenceUrl : `${getBackendUrl()}${alert.evidenceUrl}`} alt="Evidence Snapshot" className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                  <img 
+                    src={alert.evidenceUrl.startsWith('http') ? alert.evidenceUrl : `${getBackendUrl()}${alert.evidenceUrl}`} 
+                    alt="Evidence Snapshot" 
+                    className="absolute inset-0 w-full h-full object-cover opacity-80" 
+                    onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=500&q=80' }}
+                  />
                 ) : (
                   <>
                     <div className="absolute bottom-0 left-0 w-full h-[60%] bg-gradient-to-t from-[var(--red)]/20 to-transparent pointer-events-none" />
@@ -323,6 +328,34 @@ export default function AlertsPage() {
         onWarnUser={handleWarnUser}
         onKillSession={handleKillSession}
       />
+
+      {warningRoomId && createPortal(
+        <>
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]" onClick={() => setWarningRoomId(null)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl z-[70] overflow-hidden">
+            <div className="p-4 border-b border-[var(--border)]/60 bg-[var(--elevated)] flex justify-between items-center">
+              <h3 className="font-mono font-bold text-[var(--amber)] flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" /> Send Warning
+              </h3>
+              <button onClick={() => setWarningRoomId(null)} className="text-[var(--text-dim)] hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-6">
+              <p className="text-xs text-[var(--text-dim)] font-mono mb-2">Message to Host/Controller</p>
+              <textarea 
+                value={warningMessage}
+                onChange={e => setWarningMessage(e.target.value)}
+                placeholder="Type your warning message here..."
+                className="w-full h-24 bg-[var(--bg)] border border-[var(--border)] rounded-lg p-3 text-sm text-[var(--text-primary)] font-mono placeholder-[var(--text-dim)] focus:border-[var(--amber)] outline-none resize-none"
+              />
+              <div className="flex gap-3 mt-4">
+                <button onClick={() => setWarningRoomId(null)} className="flex-1 py-2 border border-[var(--border)] rounded-lg text-sm font-mono text-[var(--text-dim)] hover:text-white hover:bg-[var(--elevated)]">Cancel</button>
+                <button onClick={submitWarning} className="flex-1 py-2 bg-[var(--amber)] text-black font-bold font-mono rounded-lg shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-[1.02] transition-transform">Send Warning</button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
       <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-display font-bold text-2xl text-[var(--text-primary)]">Anti-Cheat Alerts</h1>

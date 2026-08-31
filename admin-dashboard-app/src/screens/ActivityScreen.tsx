@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, RefreshControl, TouchableOpacity, Modal, ScrollView, Alert as RNAlert, Image } from 'react-native';
-import { useApi } from '../context/ApiContext';
+import { View, Text, FlatList, RefreshControl, TouchableOpacity, Modal, ScrollView, Alert as RNAlert, Image, TextInput } from 'react-native';
+import { useApi, BACKEND_URL } from '../context/ApiContext';
 import { useTheme } from '../context/ThemeContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -32,33 +32,58 @@ export default function ActivityScreen() {
     setRefreshing(false);
   };
 
+  const [warnModalVisible, setWarnModalVisible] = useState(false);
+  const [warnRoomId, setWarnRoomId] = useState<string | null>(null);
+  const [warnMessage, setWarnMessage] = useState("");
+  const [imageError, setImageError] = useState(false);
+
   const updateAlertStatus = async (id: string, updates: { flagged?: boolean, falsePositive?: boolean }) => {
+    // Optimistic Update
+    setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...updates } : a));
+    if (selectedAlert?._id === id) {
+      setSelectedAlert((prev: any) => ({ ...prev, ...updates }));
+    }
     try {
-      const res = await client.post(`/alerts/${id}/status`, updates);
-      if (res.data.success) {
-        setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...updates } : a));
-        if (selectedAlert?._id === id) {
-          setSelectedAlert((prev: any) => ({ ...prev, ...updates }));
-        }
-      }
+      await client.post(`/alerts/${id}/status`, updates);
     } catch (err) {
       console.error('Failed to update alert', err);
     }
   };
 
   const handleAction = async (roomId: string, action: 'warn' | 'kill') => {
+    if (action === 'warn') {
+      setWarnRoomId(roomId);
+      setWarnMessage("");
+      setWarnModalVisible(true);
+      return;
+    }
+    
     try {
-      await client.post(`/rooms/${roomId}/${action}`);
-      RNAlert.alert("Success", `${action === 'warn' ? 'Warning sent' : 'Session killed'} successfully.`);
+      await client.post(`/rooms/${roomId}/kill`);
+      RNAlert.alert("Success", "Session killed successfully.");
     } catch (e) {
       RNAlert.alert("Error", "Action failed.");
+    }
+  };
+
+  const submitWarning = async () => {
+    if (!warnRoomId) return;
+    try {
+      await client.post(`/rooms/${warnRoomId}/warn`, { message: warnMessage || "Admin has issued a warning." });
+      setWarnModalVisible(false);
+      RNAlert.alert("Success", "Warning sent successfully.");
+    } catch (e) {
+      RNAlert.alert("Error", "Failed to send warning.");
     }
   };
 
   const renderItem = ({ item }: { item: any }) => (
     <TouchableOpacity 
       activeOpacity={0.8}
-      onPress={() => setSelectedAlert(item)}
+      onPress={() => {
+        setImageError(false);
+        setSelectedAlert(item);
+      }}
       style={{ 
         backgroundColor: item.flagged ? 'rgba(251,191,36,0.1)' : theme.card, 
         borderColor: item.totalRisk >= 70 ? 'rgba(244,63,94,0.5)' : 'rgba(255,255,255,0.05)', 
@@ -151,9 +176,10 @@ export default function ActivityScreen() {
                   
                   {selectedAlert.evidenceUrl ? (
                     <Image 
-                      source={{ uri: selectedAlert.evidenceUrl }} 
+                      source={{ uri: imageError ? 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=500&q=80' : (selectedAlert.evidenceUrl.startsWith('http') ? selectedAlert.evidenceUrl : `${BACKEND_URL}${selectedAlert.evidenceUrl}`) }} 
                       style={{ position: 'absolute', width: '100%', height: '100%', opacity: 0.6 }} 
                       resizeMode="cover"
+                      onError={() => setImageError(true)}
                     />
                   ) : (
                     <Icon name="chart-bell-curve" size={40} color="#f43f5e" />
@@ -183,6 +209,39 @@ export default function ActivityScreen() {
                 </View>
               </ScrollView>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Warning Chat Modal */}
+      <Modal visible={warnModalVisible} animationType="slide" transparent={true}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: theme.card, width: '100%', borderRadius: 16, overflow: 'hidden' }}>
+            <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ color: '#fbbf24', fontSize: 16, fontWeight: 'bold' }}>Send Warning</Text>
+              <TouchableOpacity onPress={() => setWarnModalVisible(false)}>
+                <Icon name="close" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ padding: 16 }}>
+              <Text style={{ color: theme.textMuted, marginBottom: 8, fontSize: 12 }}>Message to Host/Controller:</Text>
+              <TextInput
+                value={warnMessage}
+                onChangeText={setWarnMessage}
+                placeholder="Type your warning message here..."
+                placeholderTextColor={theme.textMuted}
+                multiline
+                style={{ backgroundColor: 'rgba(0,0,0,0.2)', color: theme.text, borderRadius: 8, padding: 12, height: 100, textAlignVertical: 'top', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1 }}
+              />
+              <View style={{ flexDirection: 'row', marginTop: 16, gap: 12 }}>
+                <TouchableOpacity onPress={() => setWarnModalVisible(false)} style={{ flex: 1, padding: 12, borderRadius: 8, borderColor: 'rgba(255,255,255,0.2)', borderWidth: 1, alignItems: 'center' }}>
+                  <Text style={{ color: theme.textMuted, fontWeight: 'bold' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={submitWarning} style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#fbbf24', alignItems: 'center' }}>
+                  <Text style={{ color: '#000', fontWeight: 'bold' }}>Send</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         </View>
       </Modal>

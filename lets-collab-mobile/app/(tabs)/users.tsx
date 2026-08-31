@@ -53,19 +53,44 @@ export default function UsersScreen() {
     u.email?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleAction = async (action: string, id: string, name: string) => {
+  const handleAction = async (action: string, id: string, payload?: any) => {
+    // Optimistic UI updates
+    let updatedUsers = [...users];
+    
+    if (action === 'ban') {
+      updatedUsers = users.map(u => u._id === id ? { ...u, banned: !u.banned } : u);
+      setUsers(updatedUsers);
+      if (selectedUser?._id === id) {
+        setSelectedUser({ ...selectedUser, banned: !selectedUser.banned });
+      }
+    } else if (action === 'role') {
+      const newRole = typeof payload === 'string' ? payload : (payload?.role || (selectedUser?.role === 'admin' ? 'user' : 'admin'));
+      updatedUsers = users.map(u => u._id === id ? { ...u, role: newRole } : u);
+      setUsers(updatedUsers);
+      if (selectedUser?._id === id) {
+        setSelectedUser({ ...selectedUser, role: newRole });
+      }
+    }
+
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(`${BACKEND_URL}/api/admin/users/${id}/${action}`, { method: 'POST', headers });
-      if (res.ok) {
-        setLoading(true);
-        await fetchUsers();
-      } else {
+      const options: RequestInit = { method: 'POST', headers };
+      
+      if (action === 'role') {
+        const newRole = typeof payload === 'string' ? payload : (payload?.role || (selectedUser?.role === 'admin' ? 'user' : 'admin'));
+        options.headers = { ...headers, 'Content-Type': 'application/json' };
+        options.body = JSON.stringify({ role: newRole });
+      }
+      
+      const res = await fetch(`${BACKEND_URL}/api/admin/users/${id}/${action}`, options);
+      if (!res.ok) {
         const error = await res.json();
         Alert.alert("Action Failed", error.message || "Could not complete action.");
+        fetchUsers(); // revert
       }
     } catch (e) {
       Alert.alert("Network Error", "Could not reach the server.");
+      fetchUsers(); // revert
     }
   };
 

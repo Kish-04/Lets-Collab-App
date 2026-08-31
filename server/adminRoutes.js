@@ -455,14 +455,16 @@ router.post('/alerts/:id/status', async (req, res) => {
 });
 
 router.post('/rooms/:id/warn', (req, res) => {
-  const { io } = require('./index'); // Assuming io is exported, wait, is it?
-  // We can just emit via process.emit or similar if io is not accessible.
-  // Actually, I can use the existing socket implementation logic here by exporting a function from index.js, but a simpler way for now:
-  res.json({ success: true, message: 'Warn action mocked in REST API (use socket for real action)' });
+  const { io } = require('./index');
+  io.to(req.params.id).emit('system-warning', req.body.message || 'Warning from administrator.');
+  res.json({ success: true, message: 'Warning sent.' });
 });
 
 router.post('/rooms/:id/kill', (req, res) => {
-  res.json({ success: true, message: 'Kill action mocked in REST API (use socket for real action)' });
+  const { io } = require('./index');
+  io.to(req.params.id).emit('kill-session');
+  res.json({ success: true, message: 'Session killed.' });
 });
 
 module.exports = { router, onlineEmails, setRoomLookup, protectAuthenticated, protectAdmin };
+
