@@ -26,7 +26,7 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
     }
   },
   on: (channel, func) => {
-    const validChannels = ['system-event', 'pet-sync-state'];
+    const validChannels = ['system-event', 'pet-sync-state', 'panic-revoke-control'];
     if (validChannels.includes(channel)) {
       // Deliberately strip event as it includes `sender` 
       ipcRenderer.on(channel, (event, ...args) => func(...args));

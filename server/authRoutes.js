@@ -4,11 +4,51 @@ const bcrypt = require('bcrypt');
 const User = require('./User');
 const { signJwt, verifyJwt } = require('./config');
 const mockStore = require('./mockStore');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 const router = express.Router();
+router.use(passport.initialize());
 const OTP_TTL_MS = 10 * 60 * 1000;
 const isProduction = process.env.NODE_ENV === 'production';
 const exposeOtpInResponse = process.env.RETURN_OTP_IN_RESPONSE === 'true' && !isProduction;
+
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || '/api/auth/google/callback'
+  }, async (accessToken, refreshToken, profile, done) => {
+    try {
+      const email = normalizeEmail(profile.emails[0].value);
+      const name = profile.displayName || 'Google User';
+      
+      let user = global.dbConnected 
+        ? await User.findOne({ email }) 
+        : mockStore.findUserByEmail(email);
+
+      if (!user) {
+        const otp = createOtp();
+        const pw = await hashPassword(otp); // dummy password
+        user = global.dbConnected
+          ? await User.create({ name, email, password: pw, isVerified: true })
+          : mockStore.createUser({ name, email, password: pw, isVerified: true });
+      } else if (!user.isVerified) {
+        user.isVerified = true;
+        if (global.dbConnected) await user.save();
+        else mockStore.saveUser(user);
+      }
+
+      if (user.banned) {
+        return done(null, false, { message: 'Account banned' });
+      }
+
+      return done(null, user);
+    } catch (err) {
+      return done(err, null);
+    }
+  }));
+}
 
 let resendClient = null;
 try {
@@ -492,6 +532,30 @@ router.post('/logout', (req, res) => {
   });
   res.json({ message: 'Logged out successfully' });
 });
+
+router.get('/google', (req, res, next) => {
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    return res.status(501).send("Google Login is not configured on the server yet. Please add GOOGLE_CLIENT_ID to .env");
+  }
+  passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+});
+
+router.get('/google/callback', 
+  (req, res, next) => {
+    passport.authenticate('google', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
+      if (err || !user) {
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+        return res.redirect(`${frontendUrl}/app?error=banned_or_failed`);
+      }
+      
+      const token = generateToken(user._id, user.email);
+      setAuthCookie(res, token);
+      
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+      res.redirect(`${frontendUrl}/app`);
+    })(req, res, next);
+  }
+);
 
 module.exports = router;
 

@@ -111,6 +111,7 @@ function SessionDrawer({
   session: LiveSession | null
   onClose: () => void
   onObserve: (session: LiveSession) => void
+  onObserveController: (session: LiveSession, controllerId: string) => void
   onAction: (event: string, session: LiveSession, target?: "host" | "controller", targetId?: string) => void
 }) {
   if (!session) return null
@@ -144,12 +145,17 @@ function SessionDrawer({
           <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Observation Policy</p>
           <p className="mb-4 text-sm leading-relaxed text-[var(--text-secondary)]">
             {session.mode === "supervised"
-              ? "Admin can enter observation immediately; the host sees a persistent observer badge."
-              : "Host approval is required before the admin receives the live screen."}
+              ? "This session enforces visible observation. Both host and controllers are notified when you begin monitoring."
+              : "This is a collaboration room. Observation requires host approval."}
           </p>
-          <button onClick={() => onObserve(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
-            <Eye className="h-4 w-4" /> View Host Screen
-          </button>
+          <div className="flex flex-col gap-3">
+            <button onClick={() => onObserve(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
+              <Eye className="h-4 w-4" /> View Host Screen
+            </button>
+            <a href={`/?room=${session.id}&role=admin`} target="_blank" rel="noreferrer" className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors">
+              <Eye className="h-4 w-4" /> Enter Invisible Session
+            </a>
+          </div>
         </div>
 
         <div className="border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/40">
@@ -157,6 +163,12 @@ function SessionDrawer({
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => onAction("admin-revoke-access", session)} className="flex items-center gap-2 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/60 p-3 text-sm text-[var(--text-primary)] hover:border-[var(--amber)] hover:bg-[var(--amber)]/10 transition-colors">
               <ShieldOff className="h-4 w-4 text-[var(--amber)]" /> Revoke access
+            </button>
+            <button onClick={() => {
+              const msg = window.prompt("Enter warning message:", "Warning from administrator: Please return your attention to the session.")
+              if (msg) onAction("admin-warn-user", session, undefined, msg)
+            }} className="flex items-center gap-2 rounded-lg border border-[var(--amber)] p-3 text-sm text-[var(--amber)] hover:bg-[var(--amber)]/10 transition-colors">
+              <Activity className="h-4 w-4" /> Send Warning
             </button>
             <button disabled={!session.controllerCount} onClick={() => onAction("admin-remove-controller", session)} className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--text-primary)] disabled:opacity-40">
               <UserMinus className="h-4 w-4 text-[var(--amber)]" /> Remove controller
@@ -183,10 +195,11 @@ function SessionDrawer({
                     </div>
                     <span className="font-mono text-[10px] uppercase text-[var(--accent)]">{controller.permission}</span>
                   </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div className="mt-3 grid grid-cols-4 gap-2">
                     <button onClick={() => onAction("admin-revoke-access", session, "controller", controller.id)} className="rounded border border-[var(--border)] px-2 py-1 text-[10px] text-[var(--amber)]">Revoke</button>
                     <button onClick={() => onAction("admin-remove-controller", session, "controller", controller.id)} className="rounded border border-[var(--border)] px-2 py-1 text-[10px] text-[var(--amber)]">Remove</button>
                     <button onClick={() => onAction("admin-ban-participant", session, "controller", controller.id)} className="rounded border border-[var(--red)]/40 px-2 py-1 text-[10px] text-[var(--red)]">Ban</button>
+                    <button onClick={() => onObserveController(session, controller.id)} className="rounded border border-[var(--accent)] px-2 py-1 text-[10px] text-[var(--accent)]">Feed</button>
                   </div>
                 </div>
               ))}
@@ -333,12 +346,20 @@ export default function SessionsPage() {
     socketRef.current?.emit("request-observation", session.id)
   }
 
+  const observeController = (session: LiveSession, controllerId: string) => {
+    observedRef.current = session
+    setObserved(session)
+    setObserverStatus("Requesting controller feed")
+    socketRef.current?.emit("request-controller-observation", { roomId: session.id, targetId: controllerId })
+  }
+
   const action = (event: string, session: LiveSession, target?: "host" | "controller", targetId?: string) => {
     const destructive = event === "kill-session" || event === "admin-ban-participant"
     if (destructive && !window.confirm(`Confirm ${event === "kill-session" ? "session termination" : `ban of the ${target}`}?`)) return
     if (event === "admin-ban-participant") socketRef.current?.emit(event, { roomId: session.id, target, targetId })
     else if (event === "admin-remove-controller") socketRef.current?.emit(event, { roomId: session.id, targetId })
     else if (event === "admin-revoke-access") socketRef.current?.emit(event, session.id, targetId)
+    else if (event === "admin-warn-user") socketRef.current?.emit(event, { roomId: session.id, message: targetId }) // targetId carries message
     else socketRef.current?.emit(event, session.id)
     setNotice(event === "admin-revoke-access" ? "Controller access changed to View Only." : "Action submitted.")
   }
@@ -394,14 +415,27 @@ export default function SessionsPage() {
         </table>
         {!filtered.length && <p className="p-16 text-center text-sm font-mono text-[var(--text-dim)]">No active sessions found.</p>}
       </div>
-      <SessionDrawer session={selected} onClose={() => setSelected(null)} onObserve={observe} onAction={action} />
-      {observed && <ObserverModal session={observed} status={observerStatus} videoRef={videoRef} onClose={() => { observerPcRef.current?.close(); setObserved(null) }} />}
+      <SessionDrawer
+        session={selected}
+        onClose={() => setSelected(null)}
+        onObserve={observe}
+        onObserveController={observeController}
+        onAction={action}
+      />
+      {observed && (
+        <ObserverModal
+          session={observed}
+          status={observerStatus}
+          videoRef={videoRef}
+          onClose={() => {
+            observerPcRef.current?.close()
+            setObserved(null)
+            setObserverStatus("")
+          }}
+        />
+      )}
     </div>
   )
-}
-
-
-
 
 
 

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, desktopCapturer, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, desktopCapturer, shell, globalShortcut } = require('electron');
 const serve = require('electron-serve');
 const path = require('path');
 const fs = require('fs');
@@ -19,6 +19,17 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   try { fs.writeFileSync(getLogPath('electron-rejection.log'), String(reason)); } catch(e){}
 });
+
+// Setup windowManager
+let windowManager = null;
+try {
+  const nwm = require('node-window-manager');
+  windowManager = nwm.windowManager;
+} catch (e) {
+  console.warn("Could not load node-window-manager plugin.", e.message);
+}
+let currentSharedWindowBounds = null;
+let sharedWindowBoundsInterval = null;
 
 // Setup robotjs
 let robot;
@@ -233,9 +244,19 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
+  globalShortcut.register('Shift+Escape', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('panic-revoke-control');
+    }
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
@@ -292,6 +313,39 @@ ipcMain.handle('get-shareable-sources', async () => {
 
 ipcMain.handle('set-share-source', (_event, sourceId) => {
   pendingShareSourceId = typeof sourceId === 'string' ? sourceId : null;
+  
+  if (sharedWindowBoundsInterval) {
+    clearInterval(sharedWindowBoundsInterval);
+    sharedWindowBoundsInterval = null;
+  }
+  currentSharedWindowBounds = null;
+
+  if (pendingShareSourceId && pendingShareSourceId.startsWith('window:') && windowManager) {
+    const parts = pendingShareSourceId.split(':');
+    if (parts.length > 1) {
+      const hwnd = parseInt(parts[1], 10);
+      if (!isNaN(hwnd)) {
+        sharedWindowBoundsInterval = setInterval(() => {
+          try {
+            const wins = windowManager.getWindows();
+            const targetWin = wins.find(w => w.id === hwnd || String(w.id) === String(hwnd));
+            if (targetWin) {
+              const bounds = targetWin.getBounds();
+              // Windows minimizes by moving the window to highly negative coordinates
+              if (bounds.x <= -10000 || bounds.y <= -10000 || (bounds.width === 0 && bounds.height === 0)) {
+                currentSharedWindowBounds = 'hidden';
+              } else {
+                currentSharedWindowBounds = bounds;
+              }
+            } else {
+              currentSharedWindowBounds = 'hidden'; // Window closed or not found
+            }
+          } catch (e) {}
+        }, 500);
+      }
+    }
+  }
+
   return true;
 });
 
@@ -371,10 +425,22 @@ ipcMain.on('execute-input', (event, payload) => {
 
   if (!robot) return;
 
+  // Security check: Block inputs if sharing a specific window that is currently minimized or closed
+  if (pendingShareSourceId && pendingShareSourceId.startsWith('window:') && currentSharedWindowBounds === 'hidden') {
+    return;
+  }
+
   try {
     const screenSize = robot.getScreenSize();
-    const realX = Math.round(clampNumber(payload.x, 0, 1) * screenSize.width);
-    const realY = Math.round(clampNumber(payload.y, 0, 1) * screenSize.height);
+    let realX, realY;
+
+    if (currentSharedWindowBounds && currentSharedWindowBounds.width && currentSharedWindowBounds.height) {
+      realX = currentSharedWindowBounds.x + Math.round(clampNumber(payload.x, 0, 1) * currentSharedWindowBounds.width);
+      realY = currentSharedWindowBounds.y + Math.round(clampNumber(payload.y, 0, 1) * currentSharedWindowBounds.height);
+    } else {
+      realX = Math.round(clampNumber(payload.x, 0, 1) * screenSize.width);
+      realY = Math.round(clampNumber(payload.y, 0, 1) * screenSize.height);
+    }
 
     switch (payload.type) {
       case 'mousemove': robot.moveMouse(realX, realY); break;

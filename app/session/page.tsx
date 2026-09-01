@@ -54,7 +54,7 @@ import {
     readPersonalAppearance, SessionMode
 } from "@/lib/appearance"
 
-type Role = "host" | "controller"
+type Role = "host" | "controller" | "admin"
 type PermissionLevel = "view" | "mouse" | "keyboard" | "full"
 type ConnectionState = "idle" | "waiting" | "connecting" | "connected"
 type LogEntry = {
@@ -163,7 +163,7 @@ function SessionContent() {
 
     // ── Setup state ───────────────────────────────────────────────────────────
     const [setupMode, setSetupMode] = useState<"choose" | "join" | null>(
-        initialRoom ? "join" : createDirect ? null : (joinDirect ? "join" : "choose")
+        initialRoom ? "join" : createDirect ? null : (joinDirect ? "join" : searchParams.get("role") === "admin" ? null : "choose")
     )
     const [joinInput, setJoinInput] = useState(initialRoom || "")
     const [setupError, setSetupError] = useState("")
@@ -171,7 +171,8 @@ function SessionContent() {
 
     // ── Malpractice Detection (OS-Level Focus Loss) ───────────────────────────
     // ── Session state ───────────────────────────────────────────────────────────
-    const [role, setRole] = useState<Role>(initialRoom || joinDirect ? "controller" : "host")
+    const roleParam = searchParams.get("role")
+    const [role, setRole] = useState<Role>((roleParam as Role) || (initialRoom || joinDirect ? "controller" : "host"))
     const [sessionMode, setSessionMode] = useState<SessionMode>(requestedMode)
     const [roomCode, setRoomCode] = useState<string | null>(null)
     const [copied, setCopied] = useState(false)
@@ -287,6 +288,7 @@ function SessionContent() {
     const prevBackgroundStyleRef = useRef<BackgroundStyle>('none')
     const [isCanvasMode, setIsCanvasMode] = useState(false)
     const [messages, setMessages] = useState<any[]>([])
+    const [systemWarning, setSystemWarning] = useState<string | null>(null)
 
     const captureScreenshotEvidence = async (video: HTMLVideoElement | null, label: string): Promise<string | undefined> => {
         if (!video || video.videoWidth === 0 || video.videoHeight === 0) return undefined;
@@ -1152,6 +1154,11 @@ function SessionContent() {
         socket.on('connect', () => {
             if (asRole === 'host') {
                 socket.emit('create-room', { name: localStorage.getItem('ircp_name') || 'Host', mode: sessionModeRef.current, appearance: readPersonalAppearance() })
+            } else if (asRole === 'admin') {
+                const room = code || joinInput
+                setRoomCode(room)
+                socket.emit('join-room', room, 'admin', { name: 'Administrator' })
+                setConnectionState('connecting')
             } else {
                 const room = code || joinInput
                 setRoomCode(room)
@@ -1282,6 +1289,35 @@ function SessionContent() {
                 setChatMessages(prev => [...prev, message].slice(-100));
             }
         })
+        socket.on('system-warning', (message: string) => {
+            setSystemWarning(message)
+            addLog('system', `ADMIN WARNING: ${message}`)
+            const audio = new Audio('/alert.mp3') // Try to play an alert sound if it exists
+            audio.play().catch(() => {})
+        })
+        socket.on('controller-observation-requested', async ({ adminId }: { adminId: string }) => {
+            try {
+                if (currentRoleRef.current !== 'controller') return
+                const stream = activeLocalStreamRef.current || localStreamRef.current
+                if (!stream) return
+                
+                const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
+                observerPcRefs.current.set(adminId, pc)
+                stream.getTracks().forEach(t => pc.addTrack(t, stream))
+                
+                pc.onicecandidate = e => {
+                    if (e.candidate) {
+                        socketRef.current?.emit('observer-ice-candidate', { observerId: adminId, candidate: e.candidate })
+                    }
+                }
+                
+                const offer = await pc.createOffer()
+                await pc.setLocalDescription(offer)
+                socketRef.current?.emit('controller-observation-offer', { adminId, offer })
+            } catch (err) {
+                console.error("Failed to establish controller observation", err)
+            }
+        })
         socket.on('federated-update-accepted', ({ round, pendingContributors }: { round: number; pendingContributors: number }) => {
             addLog('system', `Federated update accepted for round ${round} (${pendingContributors} pending)`)
         })
@@ -1399,6 +1435,30 @@ function SessionContent() {
             setupSocket(role, joinInput || undefined)
         }
     }, [setupMode, role, joinInput, setupSocket])
+
+    // Global listener for the Shift+Esc panic button
+    useEffect(() => {
+        if (typeof window !== 'undefined' && (window as any).ipcRenderer && !(window as any)._panicListenerAdded) {
+            (window as any)._panicListenerAdded = true;
+            (window as any).ipcRenderer.on('panic-revoke-control', () => {
+                window.dispatchEvent(new CustomEvent('panic-revoke'));
+            });
+        }
+    }, []);
+
+    useEffect(() => {
+        const handlePanic = () => {
+            if (role === 'host') {
+                updatePermission('view');
+                addLog('permission', 'Shift+Esc Panic Button triggered! All remote control revoked.');
+                if (Notification.permission === 'granted') {
+                    new Notification('Control Revoked', { body: 'Shift+Esc panic button was pressed.' });
+                }
+            }
+        };
+        window.addEventListener('panic-revoke', handlePanic);
+        return () => window.removeEventListener('panic-revoke', handlePanic as EventListener);
+    }, [role, roomCode, selectedParticipant, clipboardAllowed, addLog]);
 
     const startSharingProcess = async () => {
         if (typeof window !== 'undefined' && (window as any).api && (window as any).api.getShareableSources) {
@@ -1562,6 +1622,16 @@ function SessionContent() {
 
     const emitMouse = (event: ReactMouseEvent<HTMLVideoElement> | ReactWheelEvent<HTMLVideoElement>, type: 'mousemove' | 'mousedown' | 'mouseup' | 'wheel') => {
         if (role !== 'controller' || !mouseEnabled || connectionState !== 'connected') return
+        
+        const now = Date.now();
+        if (type === 'mousemove') {
+            if (now - lastMouseMoveTimeRef.current < 16) return;
+            lastMouseMoveTimeRef.current = now;
+        } else if (type === 'wheel') {
+            if (now - lastWheelTimeRef.current < 16) return;
+            lastWheelTimeRef.current = now;
+        }
+
         const rect = event.currentTarget.getBoundingClientRect()
         const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
         const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
@@ -1582,6 +1652,8 @@ function SessionContent() {
 
     const pressedKeysRef = useRef<Set<string>>(new Set());
     const pressedMouseButtonsRef = useRef<Set<number>>(new Set());
+    const lastMouseMoveTimeRef = useRef<number>(0);
+    const lastWheelTimeRef = useRef<number>(0);
 
     useEffect(() => {
         if (role !== 'controller' || connectionState !== 'connected' || !keyboardEnabled) return
@@ -2024,6 +2096,20 @@ function SessionContent() {
 
     return (
         <div ref={containerRef} className="h-screen overflow-hidden bg-[var(--bg)] relative text-[var(--text-primary)] font-sans">
+            {/* SYSTEM WARNING TOAST */}
+            {systemWarning && (
+                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 bg-[var(--red)]/20 border border-[var(--red)] text-[var(--red)] px-6 py-4 rounded-xl shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-10">
+                    <AlertTriangle className="h-6 w-6 shrink-0" />
+                    <div>
+                        <p className="font-bold text-sm">ADMINISTRATOR WARNING</p>
+                        <p className="text-sm opacity-90">{systemWarning}</p>
+                    </div>
+                    <button onClick={() => setSystemWarning(null)} className="ml-4 p-2 hover:bg-[var(--red)]/20 rounded-lg transition-colors">
+                        <X className="h-5 w-5" />
+                    </button>
+                </div>
+            )}
+
             {/* FLOATING HEADER (DYNAMIC ISLAND) */}
             <motion.header 
                 drag

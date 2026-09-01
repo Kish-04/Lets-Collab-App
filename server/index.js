@@ -839,6 +839,24 @@ function grantObservation(roomCode, observerId) {
   broadcastSessions();
 }
 
+io.on('connection', (socket) => {
+  socket.on('request-controller-observation', async ({ roomId, targetId }) => {
+    if (!await isAdminSocket(socket)) return;
+    const room = rooms.get(roomId);
+    if (!room || !room.controllers.has(targetId)) return;
+    io.to(targetId).emit('controller-observation-requested', { adminId: socket.id });
+  });
+
+  socket.on('controller-observation-offer', ({ adminId, offer }) => {
+    io.to(adminId).emit('observer-offer', { offer, hostId: socket.id, targetType: 'controller' });
+  });
+
+  socket.on('controller-observation-ice-candidate', ({ adminId, candidate }) => {
+    io.to(adminId).emit('observer-ice-candidate', { candidate, fromId: socket.id });
+  });
+});
+
+
 function buildPendingController(socket, actor, meta = {}) {
   const name = actor.name || meta.name || 'Controller';
   return {
@@ -1032,8 +1050,21 @@ io.on('connection', (socket) => {
     }
     const normalizedRoomId = normalizeRoomCode(roomId);
     const room = rooms.get(normalizedRoomId);
-    if (!room || role !== 'controller') {
+    if (!room || (role !== 'controller' && role !== 'admin')) {
       socket.emit('room-not-found', { roomId });
+      return;
+    }
+    
+    if (role === 'admin') {
+      if (!await isAdminSocket(socket)) {
+        socket.emit('join-denied', { reason: 'Administrator privileges required.' });
+        return;
+      }
+      room.observers.add(socket.id);
+      socket.join(normalizedRoomId);
+      socket.roomCode = normalizedRoomId;
+      socket.role = 'admin';
+      socket.emit('session-state', roomState(normalizedRoomId, room, socket));
       return;
     }
     if (room.hostEmail && actor.email === room.hostEmail) {
