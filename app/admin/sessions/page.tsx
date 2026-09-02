@@ -436,7 +436,4 @@ export default function SessionsPage() {
       )}
     </div>
   )
-
-
-
-
+}
