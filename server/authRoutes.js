@@ -546,14 +546,26 @@ router.get('/google/callback',
     passport.authenticate('google', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
       console.log('[Passport Auth Result]', { err, user: !!user, info });
       if (err || !user) {
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+        let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+        if (frontendUrl.endsWith('/app')) {
+          frontendUrl = frontendUrl.slice(0, -4);
+        }
+        if (frontendUrl.endsWith('/')) {
+          frontendUrl = frontendUrl.slice(0, -1);
+        }
         return res.redirect(`${frontendUrl}/app?error=banned_or_failed`);
       }
       
       const token = generateToken(user._id, user.email);
       setAuthCookie(res, token);
       
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+      let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+      if (frontendUrl.endsWith('/app')) {
+        frontendUrl = frontendUrl.slice(0, -4);
+      }
+      if (frontendUrl.endsWith('/')) {
+        frontendUrl = frontendUrl.slice(0, -1);
+      }
       const redirectUrl = `${frontendUrl}/app?oauth=success&email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(user.name || user.email)}`;
       res.redirect(redirectUrl);
     })(req, res, next);
