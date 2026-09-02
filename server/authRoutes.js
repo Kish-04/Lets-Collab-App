@@ -6,6 +6,7 @@ const { signJwt, verifyJwt } = require('./config');
 const mockStore = require('./mockStore');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const GitHubStrategy = require('passport-github2').Strategy;
 
 const router = express.Router();
 router.use(passport.initialize());
@@ -46,6 +47,47 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
       return done(null, user);
     } catch (err) {
       console.error('[GoogleStrategy Error]:', err);
+      return done(err, null);
+    }
+  }));
+}
+
+if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+  passport.use(new GitHubStrategy({
+    clientID: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    callbackURL: process.env.GITHUB_CALLBACK_URL || '/api/auth/github/callback',
+    scope: ['user:email']
+  }, async (accessToken, refreshToken, profile, done) => {
+    try {
+      const email = profile.emails && profile.emails.length > 0 
+        ? normalizeEmail(profile.emails[0].value) 
+        : normalizeEmail(`${profile.username || profile.id}@github.com`);
+      const name = profile.displayName || profile.username || 'GitHub User';
+      
+      let user = global.dbConnected 
+        ? await User.findOne({ email }) 
+        : mockStore.findUserByEmail(email);
+
+      if (!user) {
+        const otp = createOtp();
+        const pw = await hashPassword(otp); // dummy password
+        user = global.dbConnected
+          ? await User.create({ name, email, password: pw, isVerified: true })
+          : mockStore.createUser({ name, email, password: pw, isVerified: true });
+      } else if (!user.isVerified) {
+        user.isVerified = true;
+        if (global.dbConnected) await user.save();
+        else mockStore.saveUser(user);
+      }
+
+      if (user.banned) {
+        return done(null, false, { message: 'Account banned' });
+      }
+
+      return done(null, user);
+    } catch (err) {
+      console.error('[GitHubStrategy Error]:', err);
       return done(err, null);
     }
   }));
@@ -544,6 +586,44 @@ router.get('/google', (req, res, next) => {
 router.get('/google/callback', 
   (req, res, next) => {
     passport.authenticate('google', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
+      console.log('[Passport Auth Result]', { err, user: !!user, info });
+      if (err || !user) {
+        let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+        if (frontendUrl.endsWith('/app')) {
+          frontendUrl = frontendUrl.slice(0, -4);
+        }
+        if (frontendUrl.endsWith('/')) {
+          frontendUrl = frontendUrl.slice(0, -1);
+        }
+        return res.redirect(`${frontendUrl}/app?error=banned_or_failed`);
+      }
+      
+      const token = generateToken(user._id, user.email);
+      setAuthCookie(res, token);
+      
+      let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
+      if (frontendUrl.endsWith('/app')) {
+        frontendUrl = frontendUrl.slice(0, -4);
+      }
+      if (frontendUrl.endsWith('/')) {
+        frontendUrl = frontendUrl.slice(0, -1);
+      }
+      const redirectUrl = `${frontendUrl}/app?oauth=success&email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(user.name || user.email)}`;
+      res.redirect(redirectUrl);
+    })(req, res, next);
+  }
+);
+
+router.get('/github', (req, res, next) => {
+  if (!process.env.GITHUB_CLIENT_ID) {
+    return res.status(501).send("GitHub Login is not configured on the server yet. Please add GITHUB_CLIENT_ID to .env");
+  }
+  passport.authenticate('github', { scope: ['user:email'] })(req, res, next);
+});
+
+router.get('/github/callback', 
+  (req, res, next) => {
+    passport.authenticate('github', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
       console.log('[Passport Auth Result]', { err, user: !!user, info });
       if (err || !user) {
         let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
