@@ -18,7 +18,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || '/api/auth/google/callback'
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || (isProduction ? 'https://let-s-collab-tjwc.onrender.com/api/auth/google/callback' : '/api/auth/google/callback')
   }, async (accessToken, refreshToken, profile, done) => {
     try {
       const email = normalizeEmail(profile.emails[0].value);
@@ -56,7 +56,7 @@ if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
   passport.use(new GitHubStrategy({
     clientID: process.env.GITHUB_CLIENT_ID,
     clientSecret: process.env.GITHUB_CLIENT_SECRET,
-    callbackURL: process.env.GITHUB_CALLBACK_URL || '/api/auth/github/callback',
+    callbackURL: process.env.GITHUB_CALLBACK_URL || (isProduction ? 'https://let-s-collab-tjwc.onrender.com/api/auth/github/callback' : '/api/auth/github/callback'),
     scope: ['user:email']
   }, async (accessToken, refreshToken, profile, done) => {
     try {
