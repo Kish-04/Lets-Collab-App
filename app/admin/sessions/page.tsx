@@ -106,6 +106,7 @@ function SessionDrawer({
   session,
   onClose,
   onObserve,
+  onObserveController,
   onAction,
 }: {
   session: LiveSession | null
