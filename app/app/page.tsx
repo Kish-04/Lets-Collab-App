@@ -158,6 +158,19 @@ export default function HomePage() {
     if (navigator.userAgent.toLowerCase().includes('electron')) {
       setIsDesktop(true)
     }
+
+    // Handle OAuth callback from URL params
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('oauth') === 'success') {
+      const email = params.get('email') || '';
+      const name = params.get('name') || email;
+      const user = { name, email };
+      localStorage.setItem('ircp_user', JSON.stringify(user));
+      localStorage.setItem('ircp_name', name);
+      localStorage.setItem('ircp_email', email);
+      setIsAuth(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
     
     // Connect to signaling server for live stats
     const socket = io(getBackendUrl())

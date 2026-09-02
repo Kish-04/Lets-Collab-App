@@ -45,6 +45,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
 
       return done(null, user);
     } catch (err) {
+      console.error('[GoogleStrategy Error]:', err);
       return done(err, null);
     }
   }));
@@ -543,6 +544,7 @@ router.get('/google', (req, res, next) => {
 router.get('/google/callback', 
   (req, res, next) => {
     passport.authenticate('google', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
+      console.log('[Passport Auth Result]', { err, user: !!user, info });
       if (err || !user) {
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
         return res.redirect(`${frontendUrl}/app?error=banned_or_failed`);
@@ -552,7 +554,8 @@ router.get('/google/callback',
       setAuthCookie(res, token);
       
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
-      res.redirect(`${frontendUrl}/app`);
+      const redirectUrl = `${frontendUrl}/app?oauth=success&email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(user.name || user.email)}`;
+      res.redirect(redirectUrl);
     })(req, res, next);
   }
 );

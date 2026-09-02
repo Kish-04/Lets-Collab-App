@@ -1865,7 +1865,7 @@ io.on('connection', (socket) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`Let's Collab! signaling server running on port ${PORT}`);
   });
 }
