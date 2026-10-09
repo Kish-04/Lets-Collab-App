@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
 import { ExamQuestion } from './ExamHostDashboard';
 import * as Y from 'yjs';
-import { dataChannelManager } from '@/lib/DataChannelManager';
+import { bindSharedDoc } from '@/lib/CrdtSync';
+import { setPetCodeContext } from '@/lib/petContext';
 
 interface ExamControllerOverlayProps {
     questions: ExamQuestion[];
@@ -18,35 +19,29 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
     const mediaRecorderRefs = useRef<Record<string, MediaRecorder>>({});
     const audioChunksRefs = useRef<Record<string, Blob[]>>({});
     const yDocRef = useRef<Y.Doc>(new Y.Doc());
-    const yTextRef = useRef<Y.Text>(yDocRef.current.getText('monaco'));
+    const bindingRef = useRef<{ destroy: () => void } | null>(null);
     
     useEffect(() => {
-        const doc = yDocRef.current;
-        const updateHandler = (update: Uint8Array, origin: any) => {
-            if (origin !== 'remote') {
-                const arr = Array.from(update);
-                dataChannelManager.send('yjs-update', { update: arr });
-            }
-        };
-        doc.on('update', updateHandler);
-
-        const remoteHandler = (payload: any) => {
-            if (payload && payload.update) {
-                const arr = new Uint8Array(payload.update);
-                Y.applyUpdate(doc, arr, 'remote');
-            }
-        };
-        dataChannelManager.on('yjs-update', remoteHandler);
+        // Streams keystrokes to the invigilator only; the host never relays one candidate's code to another
+        const unbind = bindSharedDoc('exam-code', yDocRef.current);
 
         return () => {
-            doc.off('update', updateHandler);
-            dataChannelManager.off('yjs-update', remoteHandler);
+            unbind();
+            bindingRef.current?.destroy();
+            bindingRef.current = null;
         };
     }, []);
 
-    const handleEditorMount = async (editor: any) => {
+    // One shared Y.Text per question; seeded from the editor so the starter code/draft is not wiped on bind
+    const handleEditorMount = async (editor: any, questionId: string) => {
         const { MonacoBinding } = await import('y-monaco');
-        new MonacoBinding(yTextRef.current, editor.getModel(), new Set([editor]), null);
+        const model = editor.getModel();
+        if (!model) return;
+        const yText = yDocRef.current.getText(`monaco:${questionId}`);
+        if (yText.length === 0 && model.getValue()) yText.insert(0, model.getValue());
+        bindingRef.current?.destroy();
+        bindingRef.current = new MonacoBinding(yText, model, new Set([editor]), null);
+        setPetCodeContext(model.getValue(), questions.find(item => item.id === questionId)?.language);
     };
 
     const handleAnswerChange = (qId: string, val: string) => {
@@ -152,19 +147,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
             });
         }
         
-        if (q?.answerKey) {
-            let isCorrect = false;
-            const keyLower = q.answerKey.toLowerCase().trim();
-            if (q.type === 'mc' || q.type === 'poll') {
-                isCorrect = (finalAnswer.text || '').toLowerCase().trim() === keyLower;
-            } else if (q.type === 'code') {
-                isCorrect = (finalAnswer.output || '').toLowerCase().trim().includes(keyLower);
-            } else {
-                isCorrect = (finalAnswer.text || '').toLowerCase().trim().includes(keyLower);
-            }
-            setFeedback(prev => ({ ...prev, [qId]: { status: isCorrect ? 'correct' : 'wrong' } }));
-        }
-
+        // Grading happens on the server (candidates never receive the answer key)
         onSubmit(qId, finalAnswer);
     };
 
@@ -284,12 +267,17 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
                         <div className="flex flex-col gap-3">
                             <div className="h-72 border border-[var(--border)]/60 rounded-xl overflow-hidden shadow-inner bg-[var(--bg)]/60">
                                 <MonacoEditor
+                                    key={q.id}
+                                    path={q.id}
                                     height="100%"
                                     language={q.language || 'javascript'}
                                     theme="vs-dark"
-                                    value={answers[q.id]?.text ?? q.starterCode ?? ''}
-                                    onChange={(val) => handleAnswerChange(q.id, val || '')}
-                                    onMount={handleEditorMount}
+                                    defaultValue={answers[q.id]?.text ?? q.starterCode ?? ''}
+                                    onChange={(val) => {
+                                        handleAnswerChange(q.id, val || '')
+                                        setPetCodeContext(val || '', q.language)
+                                    }}
+                                    onMount={(editor) => handleEditorMount(editor, q.id)}
                                     options={{ minimap: { enabled: false }, fontSize: 14, padding: { top: 16 } }}
                                 />
                             </div>

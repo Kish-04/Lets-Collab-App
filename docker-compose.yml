@@ -91,6 +91,7 @@ services:
       - NODE_ENV=development
       - JWT_SECRET=${JWT_SECRET:-development-only-jwt-secret-change-me-1234567890}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-30d}
+      - AUDIT_HASH_SECRET=${AUDIT_HASH_SECRET:-development-only-audit-hash-secret}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
@@ -102,6 +103,10 @@ services:
       - ALLOW_MOCK_BLOCKCHAIN=${ALLOW_MOCK_BLOCKCHAIN:-true}
       - METERED_DOMAIN=${METERED_DOMAIN:-}
       - METERED_SECRET_KEY=${METERED_SECRET_KEY:-}
+      - TURN_URLS=${TURN_URLS:-}
+      - TURN_SECRET=${TURN_SECRET:-}
+      - TURN_CREDENTIAL_TTL=${TURN_CREDENTIAL_TTL:-43200}
+      - STUN_URLS=${STUN_URLS:-}
       - TURN_URL=${TURN_URL:-}
       - TURN_USERNAME=${TURN_USERNAME:-}
       - TURN_CREDENTIAL=${TURN_CREDENTIAL:-}
@@ -146,6 +151,21 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Self-hosted TURN relay. Start with: docker compose --profile turn up -d coturn
+  # For global coverage run this same service on one host per region and list them all in TURN_URLS.
+  coturn:
+    image: coturn/coturn:4.6.2
+    profiles: ["turn"]
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./deploy/turn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --static-auth-secret=${TURN_SECRET:?Set TURN_SECRET to the same value as the backend}
+      - --external-ip=$$(detect-external-ip)
 
 volumes:
   mongodb_data:

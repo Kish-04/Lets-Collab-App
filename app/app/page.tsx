@@ -634,7 +634,14 @@ export default function HomePage() {
                   <div className="flex gap-4">
                     <button
                       type="button"
-                      onClick={() => window.location.href = `${getBackendUrl()}/api/auth/google`}
+                      onClick={async () => {
+                        if (typeof window !== 'undefined' && (window as any).api && (window as any).api.oauthLogin) {
+                          const success = await (window as any).api.oauthLogin('google');
+                          if (success) window.location.search = '?oauth=success';
+                        } else {
+                          window.location.href = `${getBackendUrl()}/api/auth/google`;
+                        }
+                      }}
                       className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-[var(--border)] bg-[rgba(var(--surface-rgb),0.5)] hover:bg-[rgba(var(--surface-rgb),0.8)] hover:border-[var(--accent)] transition-all"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -647,7 +654,14 @@ export default function HomePage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => window.location.href = `${getBackendUrl()}/api/auth/github`}
+                      onClick={async () => {
+                        if (typeof window !== 'undefined' && (window as any).api && (window as any).api.oauthLogin) {
+                          const success = await (window as any).api.oauthLogin('github');
+                          if (success) window.location.search = '?oauth=success';
+                        } else {
+                          window.location.href = `${getBackendUrl()}/api/auth/github`;
+                        }
+                      }}
                       className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-[var(--border)] bg-[rgba(var(--surface-rgb),0.5)] hover:bg-[rgba(var(--surface-rgb),0.8)] hover:border-[var(--accent)] transition-all"
                     >
                       <Github className="w-5 h-5 text-[var(--text-primary)]" />

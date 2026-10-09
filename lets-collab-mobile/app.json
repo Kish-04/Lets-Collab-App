@@ -8,7 +8,11 @@
     "scheme": "letscollabmobile",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Let's Collab uses your camera so the session host can see you during live sessions and supervised exams.",
+        "NSMicrophoneUsageDescription": "Let's Collab uses your microphone so you can talk with the session host during live sessions and supervised exams."
+      }
     },
     "android": {
       "versionCode": 3,
@@ -20,7 +24,13 @@
         "monochromeImage": "./assets/images/logo.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.kishankarthiks.letscollabadmin"
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.WAKE_LOCK"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -35,6 +45,13 @@
           "image": "./assets/images/logo.png",
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Let's Collab uses your camera so the session host can see you during live sessions and supervised exams.",
+          "microphonePermission": "Let's Collab uses your microphone so you can talk with the session host during live sessions and supervised exams."
         }
       ]
     ],

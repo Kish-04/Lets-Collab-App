@@ -9,8 +9,12 @@
     "check": "node --check index.js && node --check authRoutes.js && node --check adminRoutes.js && node --check blockchainLogger.js && node --check config.js && node --check mockStore.js",
     "compile:contract": "node compile.js",
     "test:api": "jest test/api.test.js --detectOpenHandles --forceExit",
-    "test:contracts": "hardhat test test/SessionAudit.js",
-    "test": "npm run test:api && npm run test:contracts"
+    "test:contracts": "hardhat test test/SessionAudit.js test/AuditVerification.js",
+    "test": "npm run test:api && npm run test:contracts",
+    "deploy:amoy": "hardhat run scripts/deploy.js --network amoy",
+    "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
+    "verify:polygon": "hardhat verify --network polygon",
+    "test:chain": "node test/blockchainLogger.integration.js"
   },
   "keywords": [],
   "author": "",

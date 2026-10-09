@@ -91,7 +91,27 @@ export function getAuthHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+// Explorer link for an audit transaction; set NEXT_PUBLIC_CHAIN_EXPLORER_TX_URL when the ledger moves
+// off Sepolia (e.g. https://polygonscan.com/tx/). A base URL returned by the backend takes precedence.
+export function explorerTxUrl(txHash: string, baseUrl?: string | null) {
+  const base = baseUrl || process.env.NEXT_PUBLIC_CHAIN_EXPLORER_TX_URL || 'https://sepolia.etherscan.io/tx/'
+  return `${base}${txHash}`
+}
+
+// Prefers short-lived credentials minted by the backend; credentials baked into the client
+// bundle (NEXT_PUBLIC_TURN_*) are only a fallback because anyone can read them.
 export async function fetchIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const backendUrl = getBackendUrl();
+    const res = await fetch(`${backendUrl}/api/turn/credentials`, { credentials: 'include', headers: getAuthHeaders() });
+    if (res.ok) {
+      const servers = await res.json();
+      if (Array.isArray(servers) && servers.length) return servers;
+    }
+  } catch (e: any) {
+    console.warn('[WebRTC] Could not fetch TURN credentials from backend:', e.message);
+  }
+
   const staticTurnUrl = process.env.NEXT_PUBLIC_TURN_URL
   if (staticTurnUrl) {
     return [
@@ -102,16 +122,6 @@ export async function fetchIceServers(): Promise<RTCIceServer[]> {
       },
       { urls: 'stun:stun.l.google.com:19302' },
     ]
-  }
-
-  try {
-    const backendUrl = getBackendUrl();
-    const res = await fetch(`${backendUrl}/api/turn/credentials`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (e: any) {
-    console.warn('[WebRTC] Falling back to public STUN servers:', e.message);
   }
 
   // Fallback

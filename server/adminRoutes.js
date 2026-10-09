@@ -8,6 +8,7 @@ const User = require('./User');
 const Alert = require('./alert');
 const SessionLog = require('./sessionLog');
 const { verifyJwt } = require('./config');
+const { signUploadUrl } = require('./uploadAccess');
 const mockStore = require('./mockStore');
 
 const onlineEmails = new Set();
@@ -342,7 +343,7 @@ router.get('/reports', async (req, res) => {
         message: alert.message,
         penalty: alert.penalty,
         time: alert.createdAt,
-        evidenceUrl: alert.evidenceUrl,
+        evidenceUrl: signUploadUrl(alert.evidenceUrl) || undefined,
         flagged: Boolean(alert.flagged),
         falsePositive: Boolean(alert.falsePositive),
       }));
@@ -399,7 +400,7 @@ router.get('/reports', async (req, res) => {
       message: alert.message,
       penalty: alert.penalty,
       time: alert.createdAt,
-      evidenceUrl: alert.evidenceUrl,
+      evidenceUrl: signUploadUrl(alert.evidenceUrl) || undefined,
       flagged: Boolean(alert.flagged),
       falsePositive: Boolean(alert.falsePositive),
     }));
@@ -437,17 +438,33 @@ router.get('/reports', async (req, res) => {
 });
 
 router.post('/alerts/:id/status', async (req, res) => {
-  if (!global.dbConnected) return res.json({ success: true, message: 'Mock mode (no db)' });
   try {
     const { flagged, falsePositive } = req.body;
-    const alert = await Alert.findById(req.params.id);
-    if (!alert) return res.status(404).json({ success: false, message: 'Alert not found' });
-    
-    if (typeof flagged === 'boolean') alert.flagged = flagged;
-    if (typeof falsePositive === 'boolean') alert.falsePositive = falsePositive;
-    
-    await alert.save();
-    res.json({ success: true, alert });
+    const updates = {};
+    if (typeof flagged === 'boolean') updates.flagged = flagged;
+    if (typeof falsePositive === 'boolean') updates.falsePositive = falsePositive;
+
+    let alert;
+    let wasFalsePositive = false;
+    if (global.dbConnected) {
+      alert = await Alert.findById(req.params.id);
+      if (!alert) return res.status(404).json({ success: false, message: 'Alert not found' });
+      wasFalsePositive = alert.falsePositive;
+      Object.assign(alert, updates);
+      await alert.save();
+    } else {
+      const existing = mockStore.listAlerts(1000).find(item => String(item._id) === String(req.params.id));
+      if (!existing) return res.status(404).json({ success: false, message: 'Alert not found' });
+      wasFalsePositive = Boolean(existing.falsePositive);
+      alert = mockStore.updateAlert(req.params.id, updates);
+    }
+
+    // Newly judged a false positive: feed it back to that device's federated model as a label-0 sample
+    let labelSent = false;
+    if (updates.falsePositive === true && !wasFalsePositive) {
+      labelSent = require('./index').sendFalsePositiveLabel(alert);
+    }
+    res.json({ success: true, alert, labelSent });
   } catch (err) {
     console.error('Update alert status error:', err);
     res.status(500).json({ success: false, message: 'Server error' });

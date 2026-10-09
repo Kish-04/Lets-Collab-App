@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { getBackendUrl } from '@/lib/utils'
+import { getPetCodeContext } from '@/lib/petContext'
 import { Canvas } from '@react-three/fiber'
 import * as THREE from 'three'
 import { motion, AnimatePresence, useMotionValue, animate, useDragControls } from 'framer-motion'
@@ -285,6 +286,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       setTimeout(() => setEmotion('Thinking'), 1000)
 
       const backendUrl = getBackendUrl()
+      const codeContext = getPetCodeContext()
       let reply = ""
       
       try {
@@ -292,7 +294,7 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         reply = await fetch(`${backendUrl}/api/pet`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: userMsg })
+          body: JSON.stringify({ message: userMsg, codeContext })
         }).then(async (res) => {
           if (!res.ok) throw new Error("Backend failed")
           const data = await res.json()
@@ -301,14 +303,14 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
       } catch (err) {
         // If backend fails, check if we're in Electron and can use IPC
         if (typeof window !== 'undefined' && (window as any).api && (window as any).api.askGemini) {
-          reply = await (window as any).api.askGemini(userMsg)
+          reply = await (window as any).api.askGemini(userMsg, codeContext)
         } else {
           // If not in Electron, fallback to local Next.js API route
           try {
             reply = await fetch('/api/pet', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message: userMsg })
+              body: JSON.stringify({ message: userMsg, codeContext })
             }).then(async (res) => {
               if (!res.ok) throw new Error("Next.js fallback failed")
               const data = await res.json()

@@ -40,6 +40,13 @@ const sessionLogSchema = new mongoose.Schema({
     by: String,
     label: String,
   }],
+  anchors: [{
+    eventType: String,
+    payload: String,
+    dataHash: String,
+    txHash: String,
+    createdAt: String,
+  }],
   federated: { type: mongoose.Schema.Types.Mixed },
   examData: { type: mongoose.Schema.Types.Mixed },
   riskScore: { type: Number, default: 0 },

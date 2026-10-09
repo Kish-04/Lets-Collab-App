@@ -17,7 +17,7 @@ import { io, Socket } from "socket.io-client"
 import { motion } from "framer-motion"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer, X,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft, ShieldOff
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -27,7 +27,9 @@ import { PermissionRequestModal } from "@/components/ircp/permission-modal"
 
 import { VoiceChanger, VoiceFilter } from "@/lib/VoiceChanger"
 import { VirtualAvatar, AvatarStyle } from "@/lib/VirtualAvatar"
+import { Avatar3D, isAvatar3DStyle } from "@/lib/Avatar3D"
 import { VirtualBackground, BackgroundStyle } from "@/lib/VirtualBackground"
+import { CRDT_CHANNEL } from "@/lib/CrdtSync"
 import { dataChannelManager } from "@/lib/DataChannelManager"
 import { FileTransfer } from "@/components/ircp/FileTransfer"
 import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
@@ -35,10 +37,11 @@ import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
 import { AiSupervisor } from "@/components/ircp/supervisor/AiSupervisor"
 import { SessionRecorder } from "@/lib/SessionRecorder"
 import { FederatedFeatures, FederatedLearner } from "@/lib/FederatedLearner"
+import { buildContribution, createRoundKeys, HeldShare, maskVector, openShares, prepareShares, revealShares, RoundKeys, RoundPeer } from "@/lib/secureAggregation"
 
 import dynamic from 'next/dynamic'
 const PetCanvas = dynamic(() => import('@/components/ircp/pet/PetCanvas').then(m => m.PetCanvas), { ssr: false })
-const StandaloneCanvas = dynamic<{ peerId?: string; isHost: boolean; onClose: () => void }>(() => import('@/components/ircp/StandaloneCanvas').then(m => m.StandaloneCanvas as any), { ssr: false })
+const StandaloneCanvas = dynamic<{ peerId?: string; isHost: boolean; sessionMode?: string | null; onClose: () => void }>(() => import('@/components/ircp/StandaloneCanvas').then(m => m.StandaloneCanvas as any), { ssr: false })
 
 import { ExamHostDashboard, ExamQuestion } from '@/components/ircp/exam/ExamHostDashboard'
 import { ExamControllerOverlay } from '@/components/ircp/exam/ExamControllerOverlay'
@@ -48,7 +51,7 @@ import { useFaceProctoring } from "@/hooks/useFaceProctoring"
 import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
-import { CryptoUtil } from "@/lib/CryptoUtil"
+import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
     readPersonalAppearance, SessionMode
@@ -118,6 +121,9 @@ const permissionLevels = [
 const quickChatEmojis = ['👍', '👎', '🙏', '✅', '❌', '🔥', '😂', '🎉', '💡', '🤔', '🚀', '❤️', '👀', '✨']
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
+// Secure aggregation: per-update L2 clip bound and optional Gaussian noise (DP-FedAvg style)
+const FL_CLIP_NORM = 1
+const FL_NOISE_MULTIPLIER = Number(process.env.NEXT_PUBLIC_FL_DP_NOISE || 0)
 
 function formatDuration(s: number) {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
@@ -211,10 +217,21 @@ function SessionContent() {
     const [showPermModal, setShowPermModal] = useState(false)
     const [requestingUser, setRequestingUser] = useState<any>(null)
     const [participants, setParticipants] = useState<Participant[]>([])
+    const [panicShortcuts, setPanicShortcuts] = useState<string[]>([])
+    const [panicNotice, setPanicNotice] = useState<string | null>(null)
     const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
     const [selectedControllerId, setSelectedControllerId] = useState<string | null>(null)
     const [clipboardAllowed, setClipboardAllowed] = useState(false)
+    // chatMessages holds messages exactly as relayed (e2e ciphertext); decryption happens for display only
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+    const [decryptedChat, setDecryptedChat] = useState<Record<string, string | null>>({})
+    const [e2eKeyVersion, setE2eKeyVersion] = useState(0)
+    const [e2eFingerprint, setE2eFingerprint] = useState('')
+    const e2eRef = useRef<E2EChatSession | null>(null)
+    const e2eAnnouncedRef = useRef(false)
+    const e2eRosterRef = useRef<RosterMember[]>([])
+    const e2eQueueRef = useRef<Promise<void>>(Promise.resolve())
+    const e2eKeyRequestAtRef = useRef(0)
     const [chatInput, setChatInput] = useState("")
     const [chatOpen, setChatOpen] = useState(false)
     const [showPet, setShowPet] = useState(true)
@@ -350,10 +367,20 @@ function SessionContent() {
     const screenStreamRef = useRef<MediaStream | null>(null)
     const voiceChangerRef = useRef<VoiceChanger | null>(null)
     const virtualAvatarRef = useRef<VirtualAvatar | null>(null)
+    const avatar3DRef = useRef<Avatar3D | null>(null)
     const virtualBackgroundRef = useRef<VirtualBackground | null>(null)
     const sessionRecorderRef = useRef<SessionRecorder | null>(null)
     const engineRef = useRef<AntiCheatEngine | null>(null)
     const federatedLearnerRef = useRef<FederatedLearner | null>(null)
+    // Ephemeral round key and frozen contribution, kept only until the masked update is sent
+    // Per-round secrets (ephemeral key, self-mask seed, received shares), kept only until the round ends
+    const flRoundStateRef = useRef<Map<number, {
+        keys: RoundKeys
+        seed: Uint8Array
+        contribution: Float64Array
+        peers?: RoundPeer[]
+        held?: Map<string, HeldShare>
+    }>>(new Map())
     const hiddenBgVideoRef = useRef<HTMLVideoElement | null>(null)
     const chatScrollRef = useRef<HTMLDivElement>(null)
 
@@ -470,11 +497,24 @@ function SessionContent() {
         };
 
         if (avatarStyle !== 'none') {
-            if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
-            virtualAvatarRef.current.setAvatarStyle(avatarStyle);
-            
-            if (currentVideoSource) {
-                const avatarStream = virtualAvatarRef.current!.start(currentVideoSource);
+            let avatarStream: MediaStream | null = null;
+            if (isAvatar3DStyle(avatarStyle)) {
+                // 3D avatars replace the camera entirely: only the rendered character is sent
+                virtualAvatarRef.current?.stop();
+                if (!avatar3DRef.current) {
+                    avatar3DRef.current = new Avatar3D();
+                    avatar3DRef.current.onLoadError = () => setAvatarError('3D face tracking failed to load');
+                }
+                avatar3DRef.current.setStyle(avatarStyle);
+                if (currentVideoSource) avatarStream = avatar3DRef.current.start(currentVideoSource);
+            } else {
+                avatar3DRef.current?.stop();
+                if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
+                virtualAvatarRef.current.setAvatarStyle(avatarStyle);
+                if (currentVideoSource) avatarStream = virtualAvatarRef.current.start(currentVideoSource);
+            }
+
+            if (avatarStream) {
                 const finalStream = new MediaStream();
                 processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
                 avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
@@ -482,11 +522,17 @@ function SessionContent() {
             }
         } else {
             virtualAvatarRef.current?.stop();
+            avatar3DRef.current?.stop();
             updateSenders(processedStream);
         }
         
         
     }, [voiceFilter, avatarStyle, backgroundStyle, customBackgroundUrl, hasLocalMedia]);
+
+    useEffect(() => () => {
+        avatar3DRef.current?.dispose();
+        avatar3DRef.current = null;
+    }, []);
     const [aiConfig, setAiConfig] = useState({
         eyeTrackingThreshold: 0.80,
         emotionSensitivity: 0.65,
@@ -616,11 +662,28 @@ function SessionContent() {
         ensureFederatedLearner().addSample(features.map(clamp01) as FederatedFeatures, label)
     }, [ensureFederatedLearner])
 
+    const currentNetworkInstability = useCallback(() => {
+        const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
+        const frameDrop = streamFpsRef.current === null ? 0 : clamp01((24 - streamFpsRef.current) / 24)
+        return Math.max(networkInstability, frameDrop)
+    }, [])
+
+    // Features: [visual signal, environment/focus signal, audio signal]. Live network quality is
+    // included so the shared model can learn that detections during bad connections are less reliable.
     const federatedFeaturesForEvent = useCallback((eventType: string): FederatedFeatures => {
-        if (['NO_FACE', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'PHONE_DETECTED'].includes(eventType)) return [1, 0, 0.15]
-        if (['VOICE_DETECTED', 'TALKING_DETECTED', 'STRESS_DETECTED', 'EMOTION_ANOMALY'].includes(eventType)) return [0.35, 0, 1]
+        const network = currentNetworkInstability()
+        if (['NO_FACE', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'PHONE_DETECTED'].includes(eventType)) return [1, network, 0.15]
+        if (['VOICE_DETECTED', 'TALKING_DETECTED', 'STRESS_DETECTED', 'EMOTION_ANOMALY'].includes(eventType)) return [0.35, network, 1]
         if (eventType === 'TAB_SWITCHED') return [0.2, 1, 0.1]
-        return [0.2, 0.2, 0.2]
+        return [0.2, Math.max(0.2, network), 0.2]
+    }, [currentNetworkInstability])
+
+    // Once the room has a trained/aggregated model, scale each penalty by its violation confidence (0.5x-1.5x)
+    const federatedPenalty = useCallback((features: FederatedFeatures, basePenalty: number) => {
+        const learner = federatedLearnerRef.current
+        if (!learner?.hasLearned() || basePenalty <= 0) return { penalty: basePenalty, confidence: null as number | null }
+        const confidence = learner.predict(features)
+        return { penalty: Math.max(1, Math.round(basePenalty * (0.5 + confidence))), confidence }
     }, [])
 
     const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6]) => {
@@ -630,6 +693,8 @@ function SessionContent() {
             event: 'PROCTORING_ALERT',
             message: reason,
             penalty,
+            // Lets an admin's false-positive verdict come back as a training label for this device
+            features: features.map(clamp01),
         })
         recordFederatedSample(features, 1)
         addLog('anticheat', `Malpractice detected: ${reason}`)
@@ -649,12 +714,10 @@ function SessionContent() {
     useEffect(() => {
         if (sessionMode !== 'supervised' || connectionState !== 'connected') return
         const timer = window.setInterval(() => {
-            const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
-            const frameDrop = streamFpsRef.current === null ? 0 : clamp01((24 - streamFpsRef.current) / 24)
-            recordFederatedSample([0, Math.max(networkInstability, frameDrop), 0], 0)
+            recordFederatedSample([0, currentNetworkInstability(), 0], 0)
         }, 30000)
         return () => window.clearInterval(timer)
-    }, [sessionMode, connectionState, recordFederatedSample])
+    }, [sessionMode, connectionState, recordFederatedSample, currentNetworkInstability])
 
     const mediaStreamPromiseRef = useRef<Promise<MediaStream> | null>(null)
 
@@ -808,16 +871,19 @@ function SessionContent() {
             if (status === 'error') addLog('anticheat', `Anti-cheat failed: ${msg}`)
         })
         engine.onEvent((ev: AntiCheatEvent) => {
-            addLog('anticheat', `${ev.type}: ${ev.message} (+${ev.scorePenalty})`)
-            recordFederatedSample(federatedFeaturesForEvent(ev.type), ev.scorePenalty > 0 ? 1 : 0)
-            setRiskScore(s => Math.min(100, s + ev.scorePenalty))
+            const features = federatedFeaturesForEvent(ev.type)
+            const { penalty, confidence } = federatedPenalty(features, ev.scorePenalty)
+            addLog('anticheat', `${ev.type}: ${ev.message} (+${penalty}${confidence === null ? '' : `, FL confidence ${confidence.toFixed(2)}`})`)
+            recordFederatedSample(features, ev.scorePenalty > 0 ? 1 : 0)
+            setRiskScore(s => Math.min(100, s + penalty))
             setGaugeGlow(true)
             setTimeout(() => setGaugeGlow(false), 800)
             captureScreenshotEvidence(localCamRef.current, ev.message).then(url => {
                 socketRef.current?.emit('system-alert', {
                     type: 'anticheat_violation', event: ev.type,
-                    message: ev.message, penalty: ev.scorePenalty, room: roomCode,
-                    evidenceUrl: url
+                    message: ev.message, penalty, room: roomCode,
+                    evidenceUrl: url,
+                    features: features.map(clamp01),
                 })
             });
         })
@@ -859,7 +925,7 @@ function SessionContent() {
             engine.stop()
             stopLocalMedia()
         }
-    }, [sessionMode, role, addLog, federatedFeaturesForEvent, recordFederatedSample, stopLocalMedia])
+    }, [sessionMode, role, addLog, federatedFeaturesForEvent, federatedPenalty, recordFederatedSample, stopLocalMedia])
 
     useEffect(() => {
         if (engineRef.current) engineRef.current.setConfig(aiConfig)
@@ -1086,6 +1152,10 @@ function SessionContent() {
             
             const chatChannel = pc.createDataChannel('ircp-chat', { ordered: true })
             dataChannelManager.attachChannel(chatChannel, targetId, 'ircp-chat')
+
+            // Reliable, ordered channel for Yjs CRDT sync (whiteboard, exam code mirror)
+            const crdtChannel = pc.createDataChannel(CRDT_CHANNEL, { ordered: true })
+            dataChannelManager.attachChannel(crdtChannel, targetId, CRDT_CHANNEL)
         } else {
             pc.ondatachannel = event => {
                 if (event.channel.label === 'ircp-input') attachInputChannel(event.channel, targetId || 'host')
@@ -1131,8 +1201,33 @@ function SessionContent() {
             setConnectionState('connected')
             setStatusMessage('')
         }
+        let iceRestarts = 0
         pc.onconnectionstatechange = () => {
-            if (['connected', 'completed'].includes(pc.connectionState)) setConnectionState('connected')
+            if (['connected', 'completed'].includes(pc.connectionState)) {
+                setConnectionState('connected')
+                iceRestarts = 0
+            }
+            // The host (offerer) recovers failed paths with an ICE restart using fresh TURN credentials,
+            // e.g. after a network switch or when the original relay became unreachable
+            if (pc.connectionState === 'failed' && currentRoleRef.current === 'host' && targetId && iceRestarts < 3) {
+                iceRestarts += 1
+                addLog('system', `Connection to peer failed; restarting ICE (attempt ${iceRestarts})`)
+                fetchIceServers()
+                    .then(async (freshServers) => {
+                        iceServersRef.current = freshServers
+                        pc.setConfiguration({ ...pc.getConfiguration(), iceServers: freshServers })
+                        if (pc.signalingState !== 'stable') return
+                        const offer = await pc.createOffer({ iceRestart: true })
+                        await pc.setLocalDescription(offer)
+                        socketRef.current?.emit('offer', {
+                            offer,
+                            roomId: roomCodeRef.current,
+                            targetId,
+                            mediaStreamIds: getLocalMediaStreamIds(),
+                        })
+                    })
+                    .catch(err => addLog('system', `ICE restart failed: ${err?.message || err}`))
+            }
         }
         startStats(pc)
         startQualityStats(pc, targetId || 'primary')
@@ -1152,6 +1247,7 @@ function SessionContent() {
         (window as any)._socket = socket;
         (window as any)._roomCode = roomCodeRef;
         socket.on('connect', () => {
+            e2eAnnouncedRef.current = false
             if (asRole === 'host') {
                 socket.emit('create-room', { name: localStorage.getItem('ircp_name') || 'Host', mode: sessionModeRef.current, appearance: readPersonalAppearance() })
             } else if (asRole === 'admin') {
@@ -1191,6 +1287,7 @@ function SessionContent() {
             setParticipants(state.participants || [])
             setPendingJoinRequests(state.pendingRequests || [])
             setChatMessages(state.messages || [])
+            announceE2E(socket, state.roomCode)
             setObserverCount(state.observerCount || 0)
             setExamQuestions(state.examQuestions || [])
         })
@@ -1281,13 +1378,30 @@ function SessionContent() {
             const pc = observerPcRefs.current.get(fromId)
             await pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
         })
-        socket.on('chat-message', async (message: ChatMessage) => {
-            try {
-                const decryptedText = await CryptoUtil.decrypt(message.text, roomCodeRef.current || 'default-secret');
-                setChatMessages(prev => [...prev, { ...message, text: decryptedText }].slice(-100));
-            } catch (err) {
-                setChatMessages(prev => [...prev, message].slice(-100));
-            }
+        socket.on('chat-message', (message: ChatMessage) => {
+            setChatMessages(prev => [...prev, message].slice(-100))
+        })
+        // Host: hand the wrapped group key to members that lack it, rotating when someone left
+        socket.on('e2e-roster', ({ hostId, members }: { hostId: string; members: RosterMember[] }) => {
+            e2eRosterRef.current = members
+            if (hostId === socket.id) runE2EHostPass(socket)
+        })
+        socket.on('e2e-key-request', ({ memberId }: { memberId: string }) => {
+            e2eRef.current?.resetShare(memberId)
+            runE2EHostPass(socket)
+        })
+        socket.on('e2e-key-share', ({ payload }: { payload: WrappedKeyring }) => {
+            const session = e2eRef.current
+            if (!session) return
+            e2eQueueRef.current = e2eQueueRef.current.then(async () => {
+                try {
+                    await session.receiveKeyring(payload)
+                    setE2eFingerprint(await session.hostFingerprint())
+                    setE2eKeyVersion(v => v + 1)
+                } catch {
+                    addLog('system', 'Received a chat key that could not be unwrapped')
+                }
+            })
         })
         socket.on('system-warning', (message: string) => {
             setSystemWarning(message)
@@ -1295,11 +1409,20 @@ function SessionContent() {
             const audio = new Audio('/alert.mp3') // Try to play an alert sound if it exists
             audio.play().catch(() => {})
         })
+        socket.on('controller-observation-ended', ({ adminId }: { adminId: string }) => {
+            observerPcRefs.current.get(adminId)?.close()
+            observerPcRefs.current.delete(adminId)
+        })
         socket.on('controller-observation-requested', async ({ adminId }: { adminId: string }) => {
             try {
                 if (currentRoleRef.current !== 'controller') return
                 const stream = activeLocalStreamRef.current || localStreamRef.current
-                if (!stream) return
+                if (!stream) {
+                    socketRef.current?.emit('controller-observation-unavailable', { adminId, reason: 'The participant has no camera stream to share.' })
+                    return
+                }
+                observerPcRefs.current.get(adminId)?.close()
+                addLog('system', 'An administrator is viewing your camera (supervised session)')
                 
                 const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
                 observerPcRefs.current.set(adminId, pc)
@@ -1307,7 +1430,7 @@ function SessionContent() {
                 
                 pc.onicecandidate = e => {
                     if (e.candidate) {
-                        socketRef.current?.emit('observer-ice-candidate', { observerId: adminId, candidate: e.candidate })
+                        socketRef.current?.emit('controller-observation-ice-candidate', { adminId, candidate: e.candidate })
                     }
                 }
                 
@@ -1318,19 +1441,102 @@ function SessionContent() {
                 console.error("Failed to establish controller observation", err)
             }
         })
-        socket.on('federated-update-accepted', ({ round, pendingContributors }: { round: number; pendingContributors: number }) => {
-            addLog('system', `Federated update accepted for round ${round} (${pendingContributors} pending)`)
+        socket.on('fl-round-open', async ({ round, baseRound }: { round: number; baseRound: number }) => {
+            if (sessionModeRef.current !== 'supervised' || !['host', 'controller'].includes(currentRoleRef.current)) return
+            const learner = ensureFederatedLearner()
+            if (learner.getModelRound() !== baseRound) {
+                socket.emit('fl-sync-request', { roomId: roomCodeRef.current })
+                addLog('system', `Skipping federated round ${round}: syncing to the latest global model first`)
+                return
+            }
+            try {
+                if (learner.getPendingSampleCount() >= 2) await learner.trainLocalModel(10)
+                const contribution = buildContribution(await learner.getDelta(), learner.getSamplesSinceSync(), FL_CLIP_NORM, FL_NOISE_MULTIPLIER)
+                const keys = await createRoundKeys()
+                flRoundStateRef.current.set(round, { keys, seed: crypto.getRandomValues(new Uint8Array(32)), contribution })
+                socket.emit('fl-join', {
+                    roomId: roomCodeRef.current,
+                    round,
+                    publicKey: keys.publicKey,
+                    baseRound,
+                    vectorLength: contribution.length,
+                    // The seeded initial model is public; it lets the server start the first round
+                    initWeights: baseRound === 0 ? learner.getBaseWeights() : undefined,
+                })
+                addLog('system', `Joined secure federated round ${round} with ${learner.getSamplesSinceSync()} local sample(s)`)
+            } catch (err: any) {
+                addLog('system', `Could not join federated round ${round}: ${err?.message || err}`)
+            }
         })
-        socket.on('federated-aggregate', async ({ round, weights, contributorCount, sampleCount, loss }: any) => {
-            const ok = await ensureFederatedLearner().setSerializedWeights(weights)
+        socket.on('federated-update-accepted', ({ round, pendingContributors }: { round: number; pendingContributors: number }) => {
+            addLog('system', `Federated round ${round}: ${pendingContributors} participant(s) joined`)
+        })
+        // Stage 2: Shamir-share our masking key and self-mask seed with every participant
+        socket.on('fl-round-keys', async ({ round, peers }: { round: number; peers: RoundPeer[] }) => {
+            const state = flRoundStateRef.current.get(round)
+            if (!state) return
+            try {
+                state.peers = peers
+                const { shares } = await prepareShares({ keys: state.keys, selfSeed: state.seed, peers, roomId: roomCodeRef.current || '', round })
+                socket.emit('fl-shares', { roomId: roomCodeRef.current, round, shares })
+            } catch (err: any) {
+                addLog('system', `Key sharing failed for round ${round}: ${err?.message || err}`)
+            }
+        })
+        // Stage 3: open the shares addressed to us and submit the masked update
+        socket.on('fl-round-masking', async ({ round, peers, shares }: { round: number; peers: RoundPeer[]; shares: { from: string; ct: string }[] }) => {
+            const state = flRoundStateRef.current.get(round)
+            if (!state?.peers || !socket.id) return
+            try {
+                state.held = await openShares({ keys: state.keys, received: shares, peers: state.peers, roomId: roomCodeRef.current || '', round })
+                const masked = await maskVector({ values: state.contribution, keys: state.keys, selfSeed: state.seed, selfId: socket.id, peers, roomId: roomCodeRef.current || '', round })
+                socket.emit('fl-submit', { roomId: roomCodeRef.current, round, masked })
+                addLog('system', `Submitted masked update for round ${round} (${peers.length} participants; the server only sees the sum)`)
+            } catch (err: any) {
+                addLog('system', `Masking failed for round ${round}: ${err?.message || err}`)
+            }
+        })
+        // Stage 4: reveal exactly what the server needs to unmask the sum (never both secrets of one peer)
+        socket.on('fl-unmask', ({ round, survivors, dropped }: { round: number; survivors: string[]; dropped: string[] }) => {
+            const state = flRoundStateRef.current.get(round)
+            flRoundStateRef.current.delete(round)
+            if (!state?.held || !state.peers) return
+            const known = new Set(state.peers.map(p => p.id))
+            if (![...survivors, ...dropped].every(id => known.has(id))) return
+            try {
+                const shares = revealShares(state.held, survivors, dropped)
+                socket.emit('fl-unmask-shares', { roomId: roomCodeRef.current, round, shares })
+                if (dropped.length) addLog('system', `Federated round ${round}: helping recover ${dropped.length} dropped participant(s)`)
+            } catch (err: any) {
+                addLog('system', `Refused to unmask round ${round}: ${err?.message || err}`)
+            }
+        })
+        socket.on('fl-round-aborted', ({ round, reason }: { round: number; reason: string }) => {
+            flRoundStateRef.current.delete(round)
+            addLog('system', `Federated round ${round} aborted: ${reason}`)
+        })
+        // An admin marked one of our alerts a false positive: learn it as a negative example. Several copies
+        // outweigh the positive sample recorded when the detector fired, so the next round reduces such alarms.
+        socket.on('fl-label-correction', ({ features, label }: { features: number[]; label: number }) => {
+            if (!Array.isArray(features) || features.length !== 3) return
+            const learner = ensureFederatedLearner()
+            for (let i = 0; i < 3; i++) learner.addSample(features.map(clamp01) as FederatedFeatures, label)
+            addLog('system', 'An administrator marked one of your alerts as a false positive; it will be used as a training label in the next federated round')
+        })
+        socket.on('fl-model-sync', async ({ round, weights }: { round: number; weights: number[] }) => {
+            const ok = await ensureFederatedLearner().applyGlobal(weights, round)
+            if (ok) addLog('system', `Synced to global federated model from round ${round}`)
+        })
+        socket.on('federated-aggregate', async ({ round, weights, contributorCount, sampleCount }: any) => {
+            const ok = await ensureFederatedLearner().applyGlobal(weights, round)
             addLog(
                 'system',
                 ok
-                    ? `Federated round ${round} applied from ${contributorCount} contributor(s), ${sampleCount} sample(s), loss ${loss ?? 'n/a'}`
+                    ? `Secure federated round ${round} applied: ${contributorCount} participant(s), ${sampleCount} sample(s)`
                     : `Federated round ${round} received but model shape did not match`
             )
         })
-        socket.on('federated-error', ({ message }: { message: string }) => addLog('system', `Federated update failed: ${message}`))
+        socket.on('federated-error', ({ message }: { message: string }) => addLog('system', `Federated learning: ${message}`))
         socket.on('evidence-event', (item: EvidenceItem) => {
             setEvidence(prev => [item, ...prev].slice(0, 80))
             if (item.type === 'join' && item.message?.includes('disconnected') && Notification.permission === 'granted') {
@@ -1360,7 +1566,10 @@ function SessionContent() {
             }
         });
         socket.on('new-exam-question', (question: ExamQuestion) => {
-            setExamQuestions(prev => [...prev, question]);
+            setExamQuestions(prev => prev.some(q => q.id === question.id) ? prev : [...prev, question]);
+        });
+        socket.on('exam-answer-result', ({ correct }: { questionId: string; correct: boolean }) => {
+            addLog('system', correct ? 'Your submitted answer was marked correct' : 'Your submitted answer was marked incorrect')
         });
         socket.on('host-live-answer-update', ({ questionId, controllerId, controllerName, answer }) => {
             setExamLiveAnswers(prev => {
@@ -1436,29 +1645,53 @@ function SessionContent() {
         }
     }, [setupMode, role, joinInput, setupSocket])
 
-    // Global listener for the Shift+Esc panic button
-    useEffect(() => {
-        if (typeof window !== 'undefined' && (window as any).ipcRenderer && !(window as any)._panicListenerAdded) {
-            (window as any)._panicListenerAdded = true;
-            (window as any).ipcRenderer.on('panic-revoke-control', () => {
-                window.dispatchEvent(new CustomEvent('panic-revoke'));
-            });
+    // Panic revoke: drops EVERY controller to View Only at once. In the desktop app the main process
+    // has already locked remote input and released held keys/buttons before this runs.
+    const panicRevokeAll = (source: string) => {
+        if (currentRoleRef.current !== 'host') return
+        window.ipcRenderer?.send('set-remote-input-lock', true)
+        // Block in this renderer immediately as well, without waiting for the server's room state
+        participantsRef.current = participantsRef.current.map(p => ({ ...p, permission: 'view' as const }))
+        setParticipants(prev => prev.map(p => ({ ...p, permission: 'view' as const })))
+        setPermission('view')
+        if (roomCodeRef.current) {
+            socketRef.current?.emit('access-granted', 'view', { reason: 'panic' }, roomCodeRef.current)
         }
-    }, []);
+        addLog('permission', `Panic revoke (${source}): all remote control revoked, every controller is now View Only`)
+        setPanicNotice(`Remote control revoked (${source}). All controllers are View Only.`)
+        window.setTimeout(() => setPanicNotice(null), 6000)
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification('Control Revoked', { body: 'All controllers were switched to View Only.' })
+        }
+    }
+    const panicRevokeRef = useRef(panicRevokeAll)
+    panicRevokeRef.current = panicRevokeAll
 
     useEffect(() => {
-        const handlePanic = () => {
-            if (role === 'host') {
-                updatePermission('view');
-                addLog('permission', 'Shift+Esc Panic Button triggered! All remote control revoked.');
-                if (Notification.permission === 'granted') {
-                    new Notification('Control Revoked', { body: 'Shift+Esc panic button was pressed.' });
-                }
+        // Desktop: global shortcut handled by the Electron main process (works even when unfocused)
+        if (typeof window !== 'undefined' && (window as any).ipcRenderer && !(window as any)._panicListenerAdded) {
+            (window as any)._panicListenerAdded = true;
+            (window as any).ipcRenderer.on('panic-revoke-control', (info: { source?: string } = {}) => {
+                window.dispatchEvent(new CustomEvent('panic-revoke', { detail: info?.source || 'Shift+Esc' }));
+            });
+        }
+        (window as any).api?.getPanicShortcuts?.().then((keys: string[]) => setPanicShortcuts(Array.isArray(keys) ? keys : []))
+
+        const onPanic = (event: Event) => panicRevokeRef.current(String((event as CustomEvent).detail || 'Shift+Esc'))
+        // Browser host: same shortcut while the window is focused
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && event.shiftKey) {
+                event.preventDefault()
+                panicRevokeRef.current('Shift+Esc')
             }
-        };
-        window.addEventListener('panic-revoke', handlePanic);
-        return () => window.removeEventListener('panic-revoke', handlePanic as EventListener);
-    }, [role, roomCode, selectedParticipant, clipboardAllowed, addLog]);
+        }
+        window.addEventListener('panic-revoke', onPanic)
+        window.addEventListener('keydown', onKeyDown)
+        return () => {
+            window.removeEventListener('panic-revoke', onPanic)
+            window.removeEventListener('keydown', onKeyDown)
+        }
+    }, []);
 
     const startSharingProcess = async () => {
         if (typeof window !== 'undefined' && (window as any).api && (window as any).api.getShareableSources) {
@@ -1594,6 +1827,8 @@ function SessionContent() {
 
     const updatePermission = (nextPermission: PermissionLevel) => {
         setPermission(nextPermission)
+        // Granting control again lifts a panic lock in the desktop app
+        if (role === 'host' && nextPermission !== 'view') window.ipcRenderer?.send('set-remote-input-lock', false)
         if (role === 'host' && roomCode) {
             socketRef.current?.emit('access-granted', nextPermission, {
                 targetId: selectedParticipant?.id,
@@ -1881,40 +2116,68 @@ function SessionContent() {
         }, 'image/png')
     }
 
-    const runFederatedEpoch = async () => {
-        const learner = ensureFederatedLearner()
-        let sampleCount = learner.getPendingSampleCount()
-
-        if (sampleCount === 0) {
-            const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
-            const riskSignal = clamp01(riskScoreRef.current / 100)
-            learner.addSample([riskSignal, networkInstability, riskSignal], riskScoreRef.current >= 30 ? 1 : 0)
-            sampleCount = learner.getPendingSampleCount()
-            addLog('system', 'Queued one live telemetry snapshot for federated training')
-        }
-
-        addLog('system', 'Starting local Federated Training Epoch...')
-        const loss = await learner.trainLocalModel(10)
-        
-        addLog('system', `Training complete. Final Loss: ${loss === null ? 'n/a' : Number(loss).toFixed(4)}. Extracting weights...`)
-        const weights = await learner.getSerializedWeights()
-        
-        socketRef.current?.emit('federated-update', {
-            roomId: roomCodeRef.current,
-            weights,
-            sampleCount,
-            loss,
-            modelVersion: 'anti-cheat-v1',
-        })
-        addLog('system', `Submitted ${weights.length} model weights from ${sampleCount} telemetry sample(s) to the aggregator.`)
+    // Asks the server to open a secure aggregation round; every eligible participant trains and joins
+    const runFederatedEpoch = () => {
+        socketRef.current?.emit('fl-round-start', { roomId: roomCodeRef.current })
+        addLog('system', 'Requested a secure federated training round')
     }
+
+    // Announces this participant's public chat key once it is a member of the room
+    const announceE2E = (socket: Socket, room?: string) => {
+        if (!room) return
+        let session = e2eRef.current
+        if (!session || session.roomId !== room) {
+            session = new E2EChatSession(room)
+            e2eRef.current = session
+            e2eAnnouncedRef.current = false
+        }
+        if (e2eAnnouncedRef.current) return
+        e2eAnnouncedRef.current = true
+        session.init().then(publicKey => socket.emit('e2e-announce', { roomId: room, publicKey }))
+    }
+
+    const runE2EHostPass = (socket: Socket) => {
+        const session = e2eRef.current
+        if (!session || !session.publicKey || !socket.id) return
+        e2eQueueRef.current = e2eQueueRef.current.then(async () => {
+            const shares = await session.hostHandleRoster(socket.id!, e2eRosterRef.current)
+            shares.forEach(share => socket.emit('e2e-key-share', { roomId: session.roomId, ...share }))
+            setE2eFingerprint(await session.hostFingerprint())
+            setE2eKeyVersion(v => v + 1)
+        }).catch(err => addLog('system', `Chat key distribution failed: ${err?.message || err}`))
+    }
+
+    useEffect(() => {
+        let cancelled = false
+        const session = e2eRef.current
+        ;(async () => {
+            const next: Record<string, string | null> = {}
+            for (const message of chatMessages) {
+                if (isE2EMessage(message.text)) next[message.id] = session ? await session.decrypt(message.text) : null
+            }
+            if (cancelled) return
+            setDecryptedChat(next)
+            // Missing a key (e.g. after a reload): ask the host to re-share, at most every 5s
+            const missing = Object.values(next).some(value => value === null)
+            if (missing && currentRoleRef.current !== 'host' && roomCodeRef.current && Date.now() - e2eKeyRequestAtRef.current > 5000) {
+                e2eKeyRequestAtRef.current = Date.now()
+                socketRef.current?.emit('e2e-key-request', { roomId: roomCodeRef.current })
+            }
+        })()
+        return () => { cancelled = true }
+    }, [chatMessages, e2eKeyVersion])
 
     const sendChatMessage = async (event?: FormEvent) => {
         event?.preventDefault()
         const text = chatInput.trim()
         const activeRoom = roomCodeRef.current
         if (!text || !activeRoom) return
-        const encryptedText = await CryptoUtil.encrypt(text, activeRoom);
+        const session = e2eRef.current
+        if (!session?.hasKey()) {
+            addLog('system', 'Chat is waiting for the end-to-end encryption key from the host')
+            return
+        }
+        const encryptedText = await session.encrypt(text);
         socketRef.current?.emit('chat-message', { roomId: activeRoom, text: encryptedText })
         setChatInput('')
         setChatOpen(true)
@@ -2366,6 +2629,21 @@ function SessionContent() {
                         )}
                         <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] font-bold block mb-3">Permission</span>
                         {role === 'host' && (
+                            <div className="mb-3">
+                                <button
+                                    onClick={() => panicRevokeAll('button')}
+                                    className="w-full h-10 flex items-center justify-center gap-2 rounded-lg bg-[var(--red)]/15 text-[var(--red)] border border-[var(--red)]/40 hover:bg-[var(--red)]/25 text-xs font-bold transition-colors"
+                                >
+                                    <ShieldOff className="w-4 h-4" />
+                                    Revoke all control
+                                </button>
+                                <p className="mt-1.5 text-[10px] text-[var(--text-dim)]">
+                                    Emergency shortcut: <span className="font-mono text-[var(--text-secondary)]">{(panicShortcuts.length ? panicShortcuts : ['Shift+Escape']).map(key => key.replace('CommandOrControl', 'Ctrl')).join(' or ')}</span>
+                                    {typeof window !== 'undefined' && (window as any).api?.getPanicShortcuts && panicShortcuts.length === 0 ? ' (only while this window is focused)' : ''}
+                                </p>
+                            </div>
+                        )}
+                        {role === 'host' && (
                             <button onClick={() => setShowAiSettings(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors">
                                 <Zap className="w-4 h-4" />
                                 AI Calibrate
@@ -2474,6 +2752,9 @@ function SessionContent() {
                                             <option value="sketch">Sketch Outline</option>
                                             <option value="synthwave">Synthwave</option>
                                             <option value="anime">Anime</option>
+                                            <option value="robot3d">3D Robot</option>
+                                            <option value="alien3d">3D Alien</option>
+                                            <option value="bear3d">3D Bear</option>
                                             <option value="custom">Custom...</option>
                                         </select>
                                         <input 
@@ -2598,6 +2879,7 @@ function SessionContent() {
                             <StandaloneCanvas 
                                 isHost={role === 'host'} 
                                 peerId={selectedControllerId || undefined} 
+                                sessionMode={sessionMode}
                                 onClose={() => setIsCanvasMode(false)} 
                             />
                         )}
@@ -2731,6 +3013,12 @@ function SessionContent() {
                         <div className="flex items-center gap-2">
                             <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
                             <span className="text-sm font-bold text-[var(--text-primary)]">Session Chat</span>
+                            <span
+                                title={e2eFingerprint ? `End-to-end encrypted. Compare this host key fingerprint with other participants: ${e2eFingerprint}` : 'Waiting for the end-to-end encryption key'}
+                                className={cn("rounded px-1.5 py-0.5 font-mono text-[9px]", e2eFingerprint ? "bg-[var(--success)]/15 text-[var(--success)]" : "bg-[var(--amber)]/15 text-[var(--amber)]")}
+                            >
+                                {e2eFingerprint ? `E2E ${e2eFingerprint.slice(0, 9)}` : 'E2E pending'}
+                            </span>
                         </div>
                         <button
                             onClick={() => setChatOpen(false)}
@@ -2760,7 +3048,11 @@ function SessionContent() {
                                                 <span className="truncate text-[10px] font-bold uppercase text-[var(--text-secondary)]">{message.senderName}</span>
                                                 <span className="shrink-0 font-mono text-[9px] text-[var(--text-dim)]">{isNaN(new Date(message.time).getTime()) ? message.time : new Date(message.time).toLocaleTimeString([], { hour12: false })}</span>
                                             </div>
-                                            <p className="break-words text-sm leading-relaxed text-[var(--text-primary)] font-emoji">{message.text}</p>
+                                            <p className="break-words text-sm leading-relaxed text-[var(--text-primary)] font-emoji">
+                                                {isE2EMessage(message.text)
+                                                    ? (decryptedChat[message.id] ?? 'Encrypted message (waiting for the key)')
+                                                    : message.text}
+                                            </p>
                                         </div>
                                     </div>
                                 )
@@ -2899,6 +3191,13 @@ function SessionContent() {
                 </div>
             )}
 
+            {panicNotice && (
+                <div role="alert" className="fixed top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 rounded-xl border border-[var(--red)]/50 bg-[var(--bg)]/95 px-4 py-3 text-sm font-semibold text-[var(--red)] shadow-2xl backdrop-blur">
+                    <ShieldOff className="w-4 h-4" />
+                    {panicNotice}
+                </div>
+            )}
+
             {requestingUser && (
                 <PermissionRequestModal
                     isOpen={showPermModal}
@@ -2910,6 +3209,7 @@ function SessionContent() {
                         ip: requestingUser.ip || 'Unknown IP',
                     }}
                     onAllow={(nextPermission, options) => {
+                        if (nextPermission !== 'view') window.ipcRenderer?.send('set-remote-input-lock', false)
                         socketRef.current?.emit('access-granted', nextPermission, {
                             ...options,
                             targetId: requestingUser.controllerId,

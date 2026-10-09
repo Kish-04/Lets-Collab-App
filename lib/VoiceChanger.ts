@@ -1,5 +1,51 @@
 export type VoiceFilter = 'none' | 'robot' | 'alien' | 'radio' | 'megaphone' | 'deep' | 'chipmunk' | 'echo' | 'male' | 'female';
 
+// Granular pitch shifter: two read heads sweep a short delay line at `pitch` speed and are
+// crossfaded with sin^2 windows (which sum to 1) so the wrap-around jumps are inaudible.
+const PITCH_SHIFT_PROCESSOR = `
+class PitchShiftProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [{ name: 'pitch', defaultValue: 1, minValue: 0.25, maxValue: 4, automationRate: 'k-rate' }];
+  }
+  constructor() {
+    super();
+    this.grain = 2048;
+    this.size = 8192;
+    this.buffer = new Float32Array(this.size);
+    this.write = 0;
+    this.delay = 0;
+  }
+  read(pos) {
+    const i = Math.floor(pos);
+    const frac = pos - i;
+    const a = this.buffer[i & (this.size - 1)];
+    const b = this.buffer[(i + 1) & (this.size - 1)];
+    return a + (b - a) * frac;
+  }
+  process(inputs, outputs, parameters) {
+    const input = inputs[0] && inputs[0][0];
+    const output = outputs[0];
+    if (!output || !output.length) return true;
+    const pitch = parameters.pitch[0];
+    const grain = this.grain;
+    for (let n = 0; n < output[0].length; n++) {
+      this.buffer[this.write] = input ? input[n] : 0;
+      const d1 = this.delay;
+      const d2 = (d1 + grain / 2) % grain;
+      const g1 = Math.sin(Math.PI * d1 / grain) ** 2;
+      const g2 = Math.sin(Math.PI * d2 / grain) ** 2;
+      const base = this.write + this.size - 1;
+      const sample = this.read(base - d1) * g1 + this.read(base - d2) * g2;
+      for (let c = 0; c < output.length; c++) output[c][n] = sample;
+      this.write = (this.write + 1) & (this.size - 1);
+      this.delay = ((this.delay + 1 - pitch) % grain + grain) % grain;
+    }
+    return true;
+  }
+}
+registerProcessor('pitch-shift-processor', PitchShiftProcessor);
+`;
+
 export class VoiceChanger {
     private context: AudioContext;
     private source: MediaStreamAudioSourceNode | null = null;
@@ -14,6 +60,9 @@ export class VoiceChanger {
     private feedbackGain: GainNode;
     private distortionNode: WaveShaperNode;
     private highShelfFilter: BiquadFilterNode;
+    private pitchNode: AudioWorkletNode | null = null;
+    private pitchReady: Promise<boolean>;
+    private routeId = 0;
 
     constructor() {
         this.context = new window.AudioContext();
@@ -31,6 +80,40 @@ export class VoiceChanger {
 
         // Start oscillator for ring mod (AM Synthesis)
         this.ringModulator.start();
+        this.pitchReady = this.loadPitchShifter();
+    }
+
+    private async loadPitchShifter(): Promise<boolean> {
+        if (!this.context.audioWorklet) return false;
+        const url = URL.createObjectURL(new Blob([PITCH_SHIFT_PROCESSOR], { type: 'application/javascript' }));
+        try {
+            await this.context.audioWorklet.addModule(url);
+            this.pitchNode = new AudioWorkletNode(this.context, 'pitch-shift-processor');
+            return true;
+        } catch (err) {
+            console.warn('[VoiceChanger] Pitch shifter unavailable, using filters only.', err);
+            return false;
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    // Connects the mic source to the start of an effect chain, inserting the pitch shifter once it has loaded.
+    // Until then (or if worklets are unavailable) the chain runs without pitch shifting.
+    private connectSource(entry: AudioNode, pitchRatio = 1) {
+        const source = this.source;
+        if (!source) return;
+        source.connect(entry);
+        if (pitchRatio === 1) return;
+
+        const routeId = this.routeId;
+        this.pitchReady.then((ready) => {
+            if (!ready || !this.pitchNode || routeId !== this.routeId || source !== this.source) return;
+            this.pitchNode.parameters.get('pitch')?.setValueAtTime(pitchRatio, this.context.currentTime);
+            source.disconnect();
+            source.connect(this.pitchNode);
+            this.pitchNode.connect(entry);
+        });
     }
 
     public processStream(stream: MediaStream, filterType: VoiceFilter): MediaStream {
@@ -56,7 +139,9 @@ export class VoiceChanger {
         this.feedbackGain.disconnect();
         this.distortionNode.disconnect();
         this.highShelfFilter.disconnect();
+        this.pitchNode?.disconnect();
         this.source.disconnect();
+        this.routeId += 1;
 
         if (filterType === 'none') {
             this.source.connect(this.destination);
@@ -110,33 +195,22 @@ export class VoiceChanger {
             this.distortionNode.connect(this.outputGain);
             this.outputGain.connect(this.destination);
         } else if (filterType === 'deep') {
-            // Simple lowpass + slight AM synthesis
-            this.filter.type = 'lowpass';
-            this.filter.frequency.value = 400;
+            // Pitch down ~6 semitones with a bass boost
+            this.filter.type = 'lowshelf';
+            this.filter.frequency.value = 250;
+            this.filter.gain.value = 6;
 
-            this.ringModulator.type = 'sine';
-            this.ringModulator.frequency.value = 30;
-
-            this.source.connect(this.filter);
-            this.filter.connect(this.ringModGain);
-            this.ringModulator.connect(this.ringModGain.gain);
-            
-            this.ringModGain.connect(this.outputGain);
+            this.connectSource(this.filter, 0.7);
+            this.filter.connect(this.outputGain);
             this.outputGain.gain.value = 1.3;
             this.outputGain.connect(this.destination);
         } else if (filterType === 'chipmunk') {
-            // Highpass filter + high freq ring mod for squeaky effect
+            // Pitch up ~9 semitones, trimming low rumble
             this.filter.type = 'highpass';
-            this.filter.frequency.value = 800;
+            this.filter.frequency.value = 200;
 
-            this.ringModulator.type = 'square';
-            this.ringModulator.frequency.value = 800;
-
-            this.source.connect(this.filter);
-            this.filter.connect(this.ringModGain);
-            this.ringModulator.connect(this.ringModGain.gain);
-            
-            this.ringModGain.connect(this.outputGain);
+            this.connectSource(this.filter, 1.7);
+            this.filter.connect(this.outputGain);
             this.outputGain.gain.value = 1.2;
             this.outputGain.connect(this.destination);
         } else if (filterType === 'echo') {
@@ -158,7 +232,7 @@ export class VoiceChanger {
             this.filter.frequency.value = 200;
             this.filter.gain.value = 10; // Boost bass
 
-            this.source.connect(this.filter);
+            this.connectSource(this.filter, 0.85);
             this.filter.connect(this.outputGain);
             this.outputGain.gain.value = 1.0;
             this.outputGain.connect(this.destination);
@@ -171,7 +245,7 @@ export class VoiceChanger {
             this.highShelfFilter.frequency.value = 2500;
             this.highShelfFilter.gain.value = 8; // Boost highs
 
-            this.source.connect(this.filter);
+            this.connectSource(this.filter, 1.2);
             this.filter.connect(this.highShelfFilter);
             this.highShelfFilter.connect(this.outputGain);
             
