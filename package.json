@@ -75,7 +75,17 @@
       "!fix*.js",
       "!patch*.js",
       "!modify.js",
-      "!inject-sidebar.js"
+      "!inject-sidebar.js",
+      "!dist-*/**/*",
+      "!dist-fixed/**/*",
+      "!lets-collab-mobile/**/*",
+      "!admin-dashboard-app/**/*",
+      "!Lets-Collab-App/**/*",
+      "!tests/**/*",
+      "!deploy/**/*",
+      "!.github/**/*",
+      "!*.md",
+      "!tsconfig.tsbuildinfo"
     ],
     "mac": {
       "target": [
