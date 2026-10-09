@@ -46,3 +46,6 @@ runs.json
 asar-files.txt
 chunks_raw.txt
 all_exam_replaces.txt
+
+# Archived desktop builds
+dist-*/
