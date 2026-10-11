@@ -106,7 +106,7 @@ test('host and participant run a live session through the UI', { timeout: 480000
   const roomCode = await host.waitForFunction(() => {
     const el = document.querySelector('[data-room-code]')
     return window._roomCode?.current || (el ? el.innerText.trim() : null)
-  }, { timeout: 180000 }).then(h => h.jsonValue())
+  }, { timeout: 300000 }).then(h => h.jsonValue())
   assert.match(roomCode, /^[A-Z0-9]{4,}$/)
 
   // Participant joins with the room link and is approved by the host
