@@ -110,9 +110,16 @@ test('host and participant run a live session through the UI', { timeout: 600000
   assert.match(roomCode, /^[A-Z0-9]{4,}$/)
 
   // Participant joins with the room link and is approved by the host
+  // DOMContentLoaded can precede React hydration on a cold CI runner.
+  const guestReady = guest.waitForResponse(
+    response => response.url() === `${backendUrl}/api/turn/credentials` && response.request().method() === 'GET',
+    { timeout: 60000 },
+  )
   await guest.goto(`${frontendUrl}/session?room=${roomCode}`, { waitUntil: 'domcontentloaded', timeout: 240000 })
+  await guestReady
   await guest.locator('::-p-text(Join Room)').click()
-  await textOnPage(host, 'GuestE2E', 300000)
+  await guest.waitForFunction(() => window._socket?.connected, { timeout: 60000 })
+  await textOnPage(host, 'GuestE2E', 60000)
   await host.locator('::-p-text(Approve)').setTimeout(90000).click()
 
   // WebRTC connects between the two browsers
