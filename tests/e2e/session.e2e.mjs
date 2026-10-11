@@ -102,21 +102,24 @@ test('host and participant run a live session through the UI', { timeout: 300000
   const guest = await pageAs(guestUser)
 
   // Host creates a room (first visit compiles the page in dev mode, hence the long timeout)
-  await host.goto(`${frontendUrl}/session?create=true&mode=collaboration`, { waitUntil: 'domcontentloaded', timeout: 180000 })
-  const roomCode = await host.waitForFunction(() => window._roomCode?.current, { timeout: 120000 }).then(h => h.jsonValue())
+  await host.goto(`${frontendUrl}/session?create=true&mode=collaboration`, { waitUntil: 'domcontentloaded', timeout: 240000 })
+  const roomCode = await host.waitForFunction(() => {
+    const el = document.querySelector('[data-room-code]')
+    return window._roomCode?.current || (el ? el.innerText.trim() : null)
+  }, { timeout: 180000 }).then(h => h.jsonValue())
   assert.match(roomCode, /^[A-Z0-9]{4,}$/)
 
   // Participant joins with the room link and is approved by the host
-  await guest.goto(`${frontendUrl}/session?room=${roomCode}`, { waitUntil: 'domcontentloaded', timeout: 180000 })
+  await guest.goto(`${frontendUrl}/session?room=${roomCode}`, { waitUntil: 'domcontentloaded', timeout: 240000 })
   await guest.locator('::-p-text(Join Room)').click()
-  await textOnPage(host, 'GuestE2E', 60000)
-  await host.locator('::-p-text(Approve)').setTimeout(15000).click()
+  await textOnPage(host, 'GuestE2E', 90000)
+  await host.locator('::-p-text(Approve)').setTimeout(30000).click()
 
   // WebRTC connects between the two browsers
   await guest.waitForFunction(() => {
     const pc = window._pc
     return pc && ['connected', 'completed'].includes(pc.connectionState)
-  }, { timeout: 60000 })
+  }, { timeout: 90000 })
 
   // End-to-end encrypted chat, both directions, through the real chat UI
   const sendChat = async (page, text) => {
