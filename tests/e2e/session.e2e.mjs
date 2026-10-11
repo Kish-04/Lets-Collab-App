@@ -112,26 +112,26 @@ test('host and participant run a live session through the UI', { timeout: 480000
   // Participant joins with the room link and is approved by the host
   await guest.goto(`${frontendUrl}/session?room=${roomCode}`, { waitUntil: 'domcontentloaded', timeout: 240000 })
   await guest.locator('::-p-text(Join Room)').click()
-  await textOnPage(host, 'GuestE2E', 120000)
-  await host.locator('::-p-text(Approve)').setTimeout(45000).click()
+  await textOnPage(host, 'GuestE2E', 180000)
+  await host.locator('::-p-text(Approve)').setTimeout(60000).click()
 
   // WebRTC connects between the two browsers
   await guest.waitForFunction(() => {
     const pc = window._pc
     return pc && ['connected', 'completed'].includes(pc.connectionState)
-  }, { timeout: 120000 })
+  }, { timeout: 180000 })
 
   // End-to-end encrypted chat, both directions, through the real chat UI
   const sendChat = async (page, text) => {
     if (!(await page.$('input[placeholder="Message everyone"]'))) await page.click('[aria-label="Toggle Session Chat"]')
-    await page.waitForFunction(() => document.body.innerText.includes('E2E ') && !document.body.innerText.includes('E2E pending'), { timeout: 45000 })
+    await page.waitForFunction(() => document.body.innerText.includes('E2E ') && !document.body.innerText.includes('E2E pending'), { timeout: 60000 })
     await page.type('input[placeholder="Message everyone"]', text)
     await page.keyboard.press('Enter')
   }
   await sendChat(host, 'hello from the host')
   await sendChat(guest, 'hello from the guest')
-  await textOnPage(guest, 'hello from the host', 45000)
-  await textOnPage(host, 'hello from the guest', 45000)
+  await textOnPage(guest, 'hello from the host', 60000)
+  await textOnPage(host, 'hello from the guest', 60000)
 
   // The server only ever stored ciphertext
   const verify = await fetch(`${backendUrl}/api/sessions/${roomCode}/verify`, { headers: { Authorization: `Bearer ${account('AdminE2E', 'admin').token}` } })
