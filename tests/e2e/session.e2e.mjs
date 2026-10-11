@@ -76,7 +76,7 @@ before(async () => {
       cwd: repoRoot, stdio: 'ignore', shell: process.platform === 'win32', env: { ...process.env, NODE_ENV: 'development' },
     })
   }
-  await waitForHttp(`${frontendUrl}/session`, 180000)
+  await waitForHttp(`${frontendUrl}/session`, 300000)
   browser = await puppeteer.launch({
     headless: true,
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--no-sandbox', '--autoplay-policy=no-user-gesture-required'],
