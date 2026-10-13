@@ -72,11 +72,23 @@ before(async () => {
   backendUrl = `http://127.0.0.1:${server.address().port}`
   if (!frontendUrl) {
     frontendUrl = `http://localhost:${FRONTEND_PORT}`
-    nextProcess = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['next', 'dev', '-p', String(FRONTEND_PORT)], {
-      cwd: repoRoot, stdio: 'ignore', shell: process.platform === 'win32', env: { ...process.env, NODE_ENV: 'development' },
+    // Use 'next start' (pre-built) in CI to avoid on-demand compilation delays.
+    // Set E2E_NEXT_MODE=start after running `next build` in the CI step.
+    const useStart = process.env.E2E_NEXT_MODE === 'start'
+    const nextCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+    const nextArgs = useStart
+      ? ['next', 'start', '-p', String(FRONTEND_PORT)]
+      : ['next', 'dev', '-p', String(FRONTEND_PORT)]
+    const nextEnv = useStart
+      ? { ...process.env, NODE_ENV: 'production' }
+      : { ...process.env, NODE_ENV: 'development' }
+    nextProcess = spawn(nextCmd, nextArgs, {
+      cwd: repoRoot, stdio: 'ignore', shell: process.platform === 'win32', env: nextEnv,
     })
   }
-  await waitForHttp(`${frontendUrl}/session`, 300000)
+  // next start is ready in ~5 s; next dev may take minutes on a cold runner
+  const httpTimeout = process.env.E2E_NEXT_MODE === 'start' ? 30000 : 300000
+  await waitForHttp(`${frontendUrl}/session`, httpTimeout)
   browser = await puppeteer.launch({
     headless: true,
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--no-sandbox', '--autoplay-policy=no-user-gesture-required'],

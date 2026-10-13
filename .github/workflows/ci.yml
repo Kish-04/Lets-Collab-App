@@ -60,8 +60,10 @@ jobs:
   e2e:
     name: Browser end-to-end (two Chrome profiles)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     needs: [web, server]
+    env:
+      E2E_NEXT_MODE: start
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -76,7 +78,10 @@ jobs:
         working-directory: server
       - name: Install Chrome for Puppeteer
         run: npx puppeteer browsers install chrome
-      - run: npm run test:e2e
+      - name: Build Next.js (pre-compile so e2e uses next start, not next dev)
+        run: npx next build
+      - name: Run e2e tests
+        run: xvfb-run --auto-servernum npm run test:e2e
 
   mobile:
     name: Mobile - typecheck
