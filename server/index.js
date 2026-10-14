@@ -16,8 +16,22 @@ const { router: adminRoutes, onlineEmails, setRoomLookup, protectAdmin, protectA
 const User = require('./User');
 const Alert = require('./alert');
 const SessionLog = require('./sessionLog');
-const { initBlockchain, logToChain, queryChain, querySessionLogs } = require('./blockchainLogger');
+const {
+  getActiveChain,
+  initBlockchain,
+  logToChain,
+  queryChain,
+  querySessionLogs,
+  hashAuditPayload,
+  hashIdentity,
+  legacyIdentityHash,
+  verifyAnchors,
+} = require('./blockchainLogger');
 const { ethers } = require('ethers');
+const { decodeSubmission, recoverSum, applyAggregate } = require('./secureAggregation');
+const { buildIceServers } = require('./turn');
+const { isUploadPath, requireSignedUpload, signUploadUrl } = require('./uploadAccess');
+const rateLimit = require('express-rate-limit');
 const { createCorsOptions, ensureServerConfig, verifyJwt } = require('./config');
 const mockStore = require('./mockStore');
 
@@ -31,7 +45,8 @@ ensureServerConfig();
 const corsOptions = createCorsOptions();
 app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Evidence and recordings require a short-lived signed URL (issued to admins only)
+app.use('/uploads', requireSignedUpload, express.static(path.join(__dirname, 'uploads')));
 app.use(express.json({ limit: '2mb' }));
 
 // Serve the statically exported Next.js app (if available)
@@ -95,7 +110,7 @@ app.post('/api/upload-evidence-video', uploadVideo.single('video'), (req, res) =
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 app.post('/api/pet', async (req, res) => {
   try {
-    const { message, imageBase64 } = req.body;
+    const { message, imageBase64, codeContext } = req.body;
     const geminiApiKey = process.env.GEMINI_API_KEY || '';
     if (!geminiApiKey) {
       return res.json({ text: "I'm offline! Please add GEMINI_API_KEY to your .env file." });
@@ -108,7 +123,7 @@ app.post('/api/pet', async (req, res) => {
 You are a friendly robot pet without a tail, so do not mention wagging a tail or anything about a tail.
 Your goal is to help the Host and Controller debug code or use the app. Keep your answers concise, friendly, and helpful.
 IMPORTANT: You MUST start every single answer with a funny robotic sound word like *Beep Bop*, *Bzzzzt*, or *Whirr*. Do not forget this.
-The user said: "${message}"`;
+The user said: "${message}"${codeContext && codeContext.code ? '\n\nThe user is currently editing this ' + String(codeContext.language || 'code').slice(0, 30) + ' code:\n```\n' + String(codeContext.code).slice(0, 8000) + '\n```' : ''}`;
 
     if (imageBase64) {
       const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
@@ -300,7 +315,8 @@ app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
     const hashMap = {};
     for (const user of allUsers) {
       if (user.email) {
-        hashMap[ethers.id(user.email)] = user.email;
+        hashMap[hashIdentity(user.email)] = user.email;
+        hashMap[legacyIdentityHash(user.email)] = user.email;
       }
     }
 
@@ -313,26 +329,78 @@ app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
       dataHash: log.dataHash
     }));
 
-    res.json({ success: true, logs: resolvedLogs });
+    res.json({ success: true, logs: resolvedLogs, chain: getActiveChain() });
   } catch (error) {
     console.error('History Error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch history' });
   }
 });
 
-app.get('/api/turn/credentials', async (req, res) => {
+// Recompute every stored audit payload hash and compare it with the on-chain record
+app.get('/api/sessions/:sessionId/verify', protectAdmin, async (req, res) => {
   try {
-    const staticTurnUrl = process.env.TURN_URL || process.env.NEXT_PUBLIC_TURN_URL;
-    if (staticTurnUrl) {
-      return res.json([
-        {
-          urls: staticTurnUrl,
-          username: process.env.TURN_USERNAME || process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
-          credential: process.env.TURN_CREDENTIAL || process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
-        },
-        { urls: 'stun:stun.l.google.com:19302' },
-      ]);
+    const sessionId = normalizeRoomCode(req.params.sessionId);
+    const liveRoom = rooms.get(sessionId);
+    let session = liveRoom || endedSessions.find(s => s.roomCode === sessionId) || null;
+    if (!session && global.dbConnected) {
+      session = await SessionLog.findOne({ roomCode: sessionId }).sort({ endedAt: -1 }).lean();
     }
+    if (!session && !global.dbConnected) {
+      session = mockStore.listSessionLogs().find(s => s.roomCode === sessionId) || null;
+    }
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+    if (!global.blockchainActive) {
+      return res.json({ success: true, chainActive: false, message: 'Blockchain is inactive; nothing to verify against.' });
+    }
+
+    const chainLogs = await querySessionLogs(sessionId);
+    const report = verifyAnchors(session.anchors || [], chainLogs);
+
+    // The chat transcript and evidence are anchored as one digest when the session is archived
+    const archiveResult = [...report.results].reverse().find(r => r.eventType === 'SESSION_ARCHIVED' && r.payload);
+    let transcript = { status: 'not_archived' };
+    if (archiveResult) {
+      const anchored = JSON.parse(archiveResult.payload);
+      const current = transcriptDigest(session);
+      const matches = anchored.messagesHash === current.messagesHash && anchored.evidenceHash === current.evidenceHash;
+      transcript = {
+        status: archiveResult.status !== 'verified' ? 'unanchored' : matches ? 'verified' : 'tampered',
+        anchored: { messageCount: anchored.messageCount, evidenceCount: anchored.evidenceCount },
+        current: { messageCount: current.messageCount, evidenceCount: current.evidenceCount },
+      };
+    }
+
+    res.json({
+      success: true,
+      chainActive: true,
+      sessionId,
+      live: Boolean(liveRoom),
+      ...report,
+      intact: report.intact && transcript.status !== 'tampered',
+      transcript,
+    });
+  } catch (error) {
+    console.error('Verify Error:', error);
+    res.status(500).json({ success: false, message: 'Failed to verify session audit trail' });
+  }
+});
+
+const turnCredentialLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+
+app.get('/api/turn/credentials', turnCredentialLimiter, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    // Tie ephemeral credentials to the signed-in user when there is one (useful in coturn logs)
+    let identity = 'guest';
+    const token = req.cookies?.auth_token || String(req.headers.authorization || '').replace(/^Bearers+/i, '');
+    if (token) {
+      try { identity = String(verifyJwt(token).id || 'guest'); } catch (err) { identity = 'guest'; }
+    }
+
+    const configured = buildIceServers(process.env, identity);
+    if (configured) return res.json(configured.iceServers);
 
     const domain = process.env.METERED_DOMAIN;
     const apiKey = process.env.METERED_SECRET_KEY;
@@ -369,6 +437,14 @@ const endedSessions = [];
 const validPermissions = new Set(['view', 'mouse', 'keyboard', 'full']);
 const FEDERATED_MODEL_VERSION = 'anti-cheat-v1';
 const MAX_FEDERATED_WEIGHTS = 10000;
+// Secure aggregation rounds: participants advertise keys, then submit pairwise-masked updates
+const FL_MIN_PARTICIPANTS = Math.max(2, Number(process.env.FL_MIN_PARTICIPANTS) || 3);
+const FL_MAX_PARTICIPANTS = 50; // keeps the fixed-point sum well inside int32
+const FL_JOIN_WINDOW_MS = Number(process.env.FL_JOIN_WINDOW_MS) || 8000;
+const FL_SUBMIT_WINDOW_MS = Number(process.env.FL_SUBMIT_WINDOW_MS) || 20000;
+// Shamir threshold: a strict majority of the participants that received shares (same rule as the client)
+const flShareThreshold = (count) => Math.max(2, Math.floor(count / 2) + 1);
+const FL_ROUND_INTERVAL_MS = Number(process.env.FL_ROUND_INTERVAL_MS) || 5 * 60 * 1000;
 setRoomLookup((roomCode) => rooms.get(String(roomCode || '').toUpperCase()));
 const appearanceKeys = new Set([
   'preset', 'background', 'surface', 'elevated', 'border', 'textPrimary',
@@ -431,12 +507,11 @@ function pushEvent(roomCode, type, message) {
 function createFederatedState() {
   return {
     round: 0,
-    pending: new Map(),
+    completedRound: 0,
     globalWeights: null,
     history: [],
-    timer: null,
-    startedAt: null,
     lastAggregate: null,
+    active: null,
   };
 }
 
@@ -444,11 +519,80 @@ function federatedSummary(room) {
   if (!room.federated) return null;
   return {
     round: room.federated.round,
-    pendingContributors: room.federated.pending.size,
+    completedRound: room.federated.completedRound,
+    pendingContributors: room.federated.active ? room.federated.active.participants.size : 0,
+    phase: room.federated.active ? room.federated.active.phase : 'idle',
+    secureAggregation: true,
     hasGlobalModel: Array.isArray(room.federated.globalWeights),
     lastAggregate: room.federated.lastAggregate,
     history: room.federated.history.slice(-5),
   };
+}
+
+// ── Exams ──────────────────────────────────────────────────────────────────────
+const EXAM_TYPES = new Set(['freeform', 'mc', 'poll', 'code']);
+const clampText = (value, max) => (typeof value === 'string' ? value.slice(0, max) : undefined);
+
+function sanitizeExamQuestion(payload) {
+  const id = clampText(payload.id, 100);
+  if (!id || !EXAM_TYPES.has(payload.type) || typeof payload.prompt !== 'string' || !payload.prompt.trim()) return null;
+  return {
+    id,
+    type: payload.type,
+    prompt: payload.prompt.slice(0, 5000),
+    options: Array.isArray(payload.options) ? payload.options.slice(0, 20).map(o => String(o).slice(0, 500)) : undefined,
+    language: clampText(payload.language, 40),
+    starterCode: clampText(payload.starterCode, 20000),
+    voicePrompt: clampText(payload.voicePrompt, 3 * 1024 * 1024),
+    answerKey: clampText(payload.answerKey, 2000),
+  };
+}
+
+// What candidates receive: never the answer key
+function publicExamQuestion({ answerKey, ...question }) {
+  return question;
+}
+
+function sanitizeExamAnswer(answer = {}) {
+  return {
+    text: clampText(answer.text, 50000),
+    options: Array.isArray(answer.options) ? answer.options.slice(0, 20).map(o => String(o).slice(0, 500)) : undefined,
+    audio: clampText(answer.audio, 5 * 1024 * 1024),
+    output: clampText(answer.output, 20000),
+  };
+}
+
+/** Server-side grading (the candidate never sees the key); null when the question has no key. */
+function gradeExamAnswer(question, answer) {
+  if (!question.answerKey) return null;
+  const key = question.answerKey.toLowerCase().trim();
+  if (question.type === 'mc' || question.type === 'poll') return (answer.text || '').toLowerCase().trim() === key;
+  if (question.type === 'code') return (answer.output || '').toLowerCase().trim().includes(key);
+  return (answer.text || '').toLowerCase().trim().includes(key);
+}
+
+function examQuestionsFor(room, targetSocket) {
+  const questions = room.exam?.questions || [];
+  if (targetSocket?.id === room.hostSocketId) return questions;
+  return questions
+    .filter(q => !room.exam.answers[q.id]?.[targetSocket?.id]?.isFinal)
+    .map(publicExamQuestion);
+}
+
+// Federated features are three normalised signals in [0, 1]
+function sanitizeFeatures(features) {
+  if (!Array.isArray(features) || features.length !== 3) return undefined;
+  const values = features.map(Number);
+  return values.every(v => Number.isFinite(v) && v >= 0 && v <= 1) ? values : undefined;
+}
+
+/** An admin judged an alert a false positive: send it back to the device that raised it as a label-0 sample. */
+function sendFalsePositiveLabel(alert) {
+  if (!alert?.sourceSocketId || !Array.isArray(alert.features) || alert.features.length !== 3) return false;
+  const target = io.sockets.sockets.get(alert.sourceSocketId);
+  if (!target) return false;
+  target.emit('fl-label-correction', { alertId: String(alert._id), features: alert.features, label: 0 });
+  return true;
 }
 
 function sanitizeWeights(weights) {
@@ -490,72 +634,201 @@ function getRoomParticipant(room, socket, targetControllerId = null) {
   return null;
 }
 
-function aggregateFederatedRound(roomCode) {
-  const room = rooms.get(roomCode);
-  if (!room?.federated || room.federated.pending.size === 0) return;
-  if (room.federated.timer) {
-    clearTimeout(room.federated.timer);
-    room.federated.timer = null;
-  }
+function clearFederatedRound(room) {
+  const active = room?.federated?.active;
+  if (active?.timer) clearTimeout(active.timer);
+  if (room?.federated) room.federated.active = null;
+}
 
-  const updates = Array.from(room.federated.pending.values());
-  const weightLength = updates[0].weights.length;
-  if (!updates.every(update => update.weights.length === weightLength)) {
-    pushEvent(roomCode, 'system', 'Federated round rejected because model weight lengths did not match');
-    room.federated.pending.clear();
-    emitRoomState(roomCode);
-    broadcastSessions();
+function abortFederatedRound(roomCode, reason) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active) return;
+  clearFederatedRound(room);
+  pushEvent(roomCode, 'system', `Secure federated round ${active.round} aborted: ${reason}`);
+  io.to(roomCode).emit('fl-round-aborted', { round: active.round, reason });
+  emitRoomState(roomCode);
+}
+
+function openFederatedRound(roomCode, openedBy) {
+  const room = rooms.get(roomCode);
+  if (!room || room.mode !== 'supervised' || room.federated.active) return false;
+  room.federated.round += 1;
+  const round = room.federated.round;
+  room.federated.active = {
+    round,
+    phase: 'advertise',
+    participants: new Map(),
+    submissions: new Map(),
+    vectorLength: null,
+    initWeights: null,
+    timer: setTimeout(() => distributeFederatedKeys(roomCode), FL_JOIN_WINDOW_MS),
+  };
+  pushEvent(roomCode, 'system', `Secure federated round ${round} opened${openedBy ? ` by ${openedBy}` : ''}`);
+  io.to(roomCode).emit('fl-round-open', { round, baseRound: room.federated.completedRound });
+  emitRoomState(roomCode);
+  return true;
+}
+
+// Stage 1 -> 2: hand every participant the advertised keys so it can Shamir-share its secrets
+function distributeFederatedKeys(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active || active.phase !== 'advertise') return;
+  clearTimeout(active.timer);
+
+  if (active.participants.size < FL_MIN_PARTICIPANTS) {
+    abortFederatedRound(roomCode, `needs at least ${FL_MIN_PARTICIPANTS} participants, got ${active.participants.size}`);
+    return;
+  }
+  if (!room.federated.globalWeights && !active.initWeights) {
+    abortFederatedRound(roomCode, 'no initial model weights were provided');
     return;
   }
 
-  const totalSamples = updates.reduce((total, update) => total + update.sampleCount, 0) || updates.length;
-  const aggregate = new Array(weightLength).fill(0);
-  updates.forEach((update) => {
-    const contribution = update.sampleCount / totalSamples;
-    update.weights.forEach((weight, index) => {
-      aggregate[index] += weight * contribution;
-    });
-  });
+  active.phase = 'sharing';
+  active.keyed = new Map(active.participants); // U1: everyone who received the key list
+  active.threshold = flShareThreshold(active.keyed.size);
+  active.shares = new Map();
+  const peers = Array.from(active.keyed.values()).map(({ id, publicKey }) => ({ id, publicKey }));
+  active.keyed.forEach(p => io.to(p.id).emit('fl-round-keys', { round: active.round, peers, threshold: active.threshold }));
+  active.timer = setTimeout(() => startMaskingStage(roomCode), FL_SUBMIT_WINDOW_MS);
+  emitRoomState(roomCode);
+}
 
-  const lossUpdates = updates.filter(update => Number.isFinite(update.loss));
-  const avgLoss = lossUpdates.length
-    ? lossUpdates.reduce((total, update) => total + update.loss, 0) / lossUpdates.length
-    : null;
+// Stage 2 -> 3: forward each participant the encrypted shares addressed to it
+function startMaskingStage(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active || active.phase !== 'sharing') return;
+  clearTimeout(active.timer);
+
+  const sharers = Array.from(active.shares.keys()); // U2
+  if (sharers.length < active.threshold) {
+    abortFederatedRound(roomCode, `only ${sharers.length} participant(s) shared keys; ${active.threshold} needed`);
+    return;
+  }
+  active.phase = 'masking';
+  active.sharers = new Set(sharers);
+  active.submissions = new Map();
+  const peers = sharers.map(id => ({ id, publicKey: active.keyed.get(id).publicKey }));
+  sharers.forEach((recipient) => {
+    const inbox = [];
+    active.shares.forEach((list, from) => {
+      const share = list.find(item => item.to === recipient);
+      if (share) inbox.push({ from, ct: share.ct });
+    });
+    io.to(recipient).emit('fl-round-masking', { round: active.round, peers, shares: inbox });
+  });
+  active.timer = setTimeout(() => startUnmaskStage(roomCode), FL_SUBMIT_WINDOW_MS);
+  emitRoomState(roomCode);
+}
+
+// Stage 3 -> 4: whoever submitted survives; ask survivors for the shares needed to unmask the sum
+function startUnmaskStage(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active || active.phase !== 'masking') return;
+  clearTimeout(active.timer);
+
+  const survivors = Array.from(active.submissions.keys()); // U3
+  if (survivors.length < active.threshold) {
+    abortFederatedRound(roomCode, `only ${survivors.length} participant(s) submitted; ${active.threshold} needed to recover dropouts`);
+    return;
+  }
+  active.phase = 'unmasking';
+  active.survivors = survivors;
+  active.dropped = Array.from(active.sharers).filter(id => !active.submissions.has(id));
+  active.revealed = new Map();
+  active.revealers = new Set();
+  survivors.forEach(id => io.to(id).emit('fl-unmask', { round: active.round, survivors, dropped: active.dropped }));
+  active.timer = setTimeout(() => finalizeFederatedRound(roomCode), FL_SUBMIT_WINDOW_MS);
+  emitRoomState(roomCode);
+}
+
+// Advances a stage early once every still-connected participant of that stage has acted
+function maybeAdvanceFederatedRound(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active) return;
+  const connected = id => io.sockets.sockets.has(id);
+  if (active.phase === 'sharing' && Array.from(active.keyed.keys()).filter(connected).every(id => active.shares.has(id))) startMaskingStage(roomCode);
+  else if (active.phase === 'masking' && Array.from(active.sharers).filter(connected).every(id => active.submissions.has(id))) startUnmaskStage(roomCode);
+  else if (active.phase === 'unmasking' && active.survivors.filter(connected).every(id => active.revealers.has(id))) finalizeFederatedRound(roomCode);
+}
+
+function finalizeFederatedRound(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active) return;
+
+  if (active.phase !== 'unmasking') return;
+  clearTimeout(active.timer);
+  const base = room.federated.globalWeights || active.initWeights;
+  let revealedSum;
+  try {
+    revealedSum = recoverSum({
+      masked: active.submissions,
+      dropped: active.dropped,
+      publicKeys: new Map(Array.from(active.keyed.values()).map(p => [p.id, p.publicKey])),
+      revealed: active.revealed,
+      threshold: active.threshold,
+      roomId: roomCode,
+      round: active.round,
+    });
+  } catch (err) {
+    abortFederatedRound(roomCode, `could not unmask the sum (${err.message})`);
+    return;
+  }
+  const result = applyAggregate(base, revealedSum);
+  if (!result) {
+    abortFederatedRound(roomCode, 'no training samples were contributed this round');
+    return;
+  }
+  if (!result.weights.every(Number.isFinite)) {
+    abortFederatedRound(roomCode, 'aggregate was not finite');
+    return;
+  }
+
   const summary = {
-    round: room.federated.round,
-    contributors: updates.map(update => ({
-      id: update.participantId,
-      name: update.participantName,
-      role: update.role,
-      sampleCount: update.sampleCount,
-    })),
-    contributorCount: updates.length,
-    sampleCount: totalSamples,
-    loss: Number.isFinite(avgLoss) ? Number(avgLoss.toFixed(6)) : null,
+    round: active.round,
+    contributors: active.survivors.map(id => active.keyed.get(id)).map(p => ({ id: p.id, name: p.name, role: p.role })),
+    contributorCount: active.survivors.length,
+    droppedCount: active.dropped.length,
+    sampleCount: result.totalSamples,
     modelVersion: FEDERATED_MODEL_VERSION,
+    modelHash: ethers.id(JSON.stringify(result.weights)),
+    secureAggregation: true,
     aggregatedAt: new Date().toISOString(),
   };
 
-  room.federated.globalWeights = aggregate;
+  clearFederatedRound(room);
+  room.federated.globalWeights = result.weights;
+  room.federated.completedRound = summary.round;
   room.federated.lastAggregate = summary;
   room.federated.history.push(summary);
   if (room.federated.history.length > 20) room.federated.history.shift();
-  room.federated.pending.clear();
 
-  pushEvent(roomCode, 'system', `Federated round ${summary.round} aggregated from ${summary.contributorCount} participant(s), ${summary.sampleCount} sample(s)`);
-  io.to(roomCode).emit('federated-aggregate', {
-    ...summary,
-    weights: aggregate,
-  });
+  pushEvent(roomCode, 'system', `Secure federated round ${summary.round} aggregated from ${summary.contributorCount} participant(s), ${summary.sampleCount} sample(s)`);
+  io.to(roomCode).emit('federated-aggregate', { ...summary, weights: result.weights });
   anchorEvent(roomCode, 'FEDERATED_AGGREGATE', {
     round: summary.round,
     contributorCount: summary.contributorCount,
     sampleCount: summary.sampleCount,
     modelVersion: FEDERATED_MODEL_VERSION,
+    modelHash: summary.modelHash,
   }, room.hostEmail || '');
   emitRoomState(roomCode);
   broadcastSessions();
 }
+
+// Starts a round in every supervised room that has enough eligible participants
+setInterval(() => {
+  rooms.forEach((room, roomCode) => {
+    if (room.mode !== 'supervised' || room.archived || room.federated.active) return;
+    if (roomFederatedMembers(room).length >= FL_MIN_PARTICIPANTS) openFederatedRound(roomCode, 'scheduler');
+  });
+}, FL_ROUND_INTERVAL_MS).unref();
 
 function participantPayload(participant) {
   return {
@@ -598,24 +871,41 @@ function roomState(code, room, socket) {
     participants: Array.from(room.controllers.values()).map(participantPayload),
     pendingRequests: Array.from(room.pendingControllers.values()).map(pendingPayload),
     messages: room.messages.slice(-80),
-    examQuestions: room.examQuestions || [],
+    examQuestions: examQuestionsFor(room, socket),
     evidence: room.evidence.slice(-80),
     federated: federatedSummary(room),
   };
 }
 
-function emitRoomState(code) {
-  const room = rooms.get(code);
-  if (!room) return;
-  const recipients = [
+function roomMemberIds(room) {
+  return [
     room.hostSocketId,
     ...Array.from(room.controllers.keys()),
     ...Array.from(room.observers),
   ].filter(Boolean);
-  recipients.forEach((socketId) => {
+}
+
+// End-to-end chat: the server only relays public keys. Broadcasts the roster whenever membership
+// changes so the host can hand the group key to newcomers and rotate it when someone leaves.
+function broadcastE2ERoster(code, room) {
+  if (!room.e2eKeys) room.e2eKeys = new Map();
+  const members = new Set(roomMemberIds(room));
+  room.e2eKeys.forEach((_, id) => { if (!members.has(id)) room.e2eKeys.delete(id); });
+  const roster = Array.from(room.e2eKeys.entries()).map(([id, publicKey]) => ({ id, publicKey }));
+  const signature = `${room.hostSocketId}|${roster.map(m => m.id).sort().join(',')}`;
+  if (signature === room.e2eRosterSignature) return;
+  room.e2eRosterSignature = signature;
+  io.to(code).emit('e2e-roster', { hostId: room.hostSocketId, members: roster });
+}
+
+function emitRoomState(code) {
+  const room = rooms.get(code);
+  if (!room) return;
+  roomMemberIds(room).forEach((socketId) => {
     const targetSocket = io.sockets.sockets.get(socketId);
     if (targetSocket) targetSocket.emit('session-state', roomState(code, room, targetSocket));
   });
+  broadcastE2ERoster(code, room);
 }
 
 function serializeSessions() {
@@ -640,11 +930,19 @@ function serializeSessions() {
     hasController: room.controllers.size > 0,
     controllers: Array.from(room.controllers.values()).map(participantPayload),
     pendingControllers: Array.from(room.pendingControllers.values()).map(pendingPayload),
-    evidence: room.evidence.slice(-20),
+    evidence: room.evidence.slice(-20).map(item => ({ ...item, url: signUploadUrl(item.url) || undefined })),
+    recordings: (room.recordings || []).map(url => signUploadUrl(url)).filter(Boolean),
     messageCount: room.messages.length,
     federated: federatedSummary(room),
     examData: room.exam,
   }));
+}
+
+function signSessionEvidence(session) {
+  return {
+    ...session,
+    evidence: (session.evidence || []).map(item => ({ ...item, url: signUploadUrl(item.url) || undefined })),
+  };
 }
 
 function broadcastSessions() {
@@ -652,16 +950,34 @@ function broadcastSessions() {
   io.emit('sessions-count', { active: rooms.size });
 }
 
+// Canonical digest of the chat transcript and evidence, recomputable from an archived SessionLog
+function transcriptDigest(session) {
+  const messages = (session.messages || []).map(m => [m.id, m.time, m.senderId, m.senderName, m.role, m.text]);
+  const evidence = (session.evidence || []).map(e => [e.id, e.time, e.type, e.by, e.label]);
+  return {
+    messageCount: messages.length,
+    messagesHash: ethers.id(JSON.stringify(messages)),
+    evidenceCount: evidence.length,
+    evidenceHash: ethers.id(JSON.stringify(evidence)),
+  };
+}
+
 function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = '') {
   const room = rooms.get(code);
   if (!room) return;
   
-  // Hash emails for privacy before sending to chain
-  const hashedHost = hostEmail ? ethers.id(hostEmail) : '';
-  const hashedController = controllerEmail ? ethers.id(controllerEmail) : '';
+  // Keyed hash so emails on the public chain cannot be recovered by dictionary lookup
+  const hashedHost = hashIdentity(hostEmail);
+  const hashedController = hashIdentity(controllerEmail);
 
-  logToChain(code, hashedHost, hashedController, eventType, data)
+  // Keep the exact hashed payload off-chain so auditors can recompute and compare it later
+  const { payload, dataHash } = hashAuditPayload(data);
+  const anchor = { eventType, payload, dataHash, txHash: null, createdAt: new Date().toISOString() };
+  room.anchors.push(anchor);
+
+  logToChain(code, hashedHost, hashedController, eventType, payload)
     .then((txHash) => {
+      if (txHash && !String(txHash).startsWith('[OFF-CHAIN-MOCK]')) anchor.txHash = txHash;
       const liveRoom = rooms.get(code);
       if (!liveRoom || !txHash) return;
       liveRoom.latestTxHash = txHash;
@@ -754,10 +1070,8 @@ async function archiveSession(roomCode, reason) {
   const room = rooms.get(roomCode);
   if (!room || room.archived) return;
   room.archived = true;
-  if (room.federated?.timer) {
-    clearTimeout(room.federated.timer);
-    room.federated.timer = null;
-  }
+  anchorEvent(roomCode, 'SESSION_ARCHIVED', { reason, ...transcriptDigest(room) }, room.hostEmail || '');
+  clearFederatedRound(room);
   const endedAt = Date.now();
   pushEvent(roomCode, 'kill', reason);
   const archived = {
@@ -775,6 +1089,7 @@ async function archiveSession(roomCode, reason) {
     riskScore: room.riskScore,
     alertCount: room.alertCount,
     latestTxHash: room.latestTxHash,
+    anchors: room.anchors,
     federated: federatedSummary(room),
   };
   endedSessions.unshift(archived);
@@ -840,21 +1155,61 @@ function grantObservation(roomCode, observerId) {
   broadcastSessions();
 }
 
+// Admin viewing a controller's camera. The admin socket remembers which controller it asked for,
+// and every relayed offer/answer/candidate is checked against that pairing.
+function adminObservesController(adminId, controllerId) {
+  const adminSocket = io.sockets.sockets.get(adminId);
+  const target = adminSocket?.observingController;
+  if (!target || target.controllerId !== controllerId) return false;
+  return Boolean(rooms.get(target.roomId)?.controllers.has(controllerId));
+}
+
+function endControllerObservation(adminSocket) {
+  const target = adminSocket.observingController;
+  if (!target) return;
+  adminSocket.observingController = null;
+  io.to(target.controllerId).emit('controller-observation-ended', { adminId: adminSocket.id });
+}
+
 io.on('connection', (socket) => {
-  socket.on('request-controller-observation', async ({ roomId, targetId }) => {
+  socket.on('request-controller-observation', async ({ roomId, targetId } = {}) => {
     if (!await isAdminSocket(socket)) return;
-    const room = rooms.get(roomId);
-    if (!room || !room.controllers.has(targetId)) return;
+    const roomCode = normalizeRoomCode(roomId);
+    const room = rooms.get(roomCode);
+    if (!room || !room.controllers.has(targetId)) {
+      socket.emit('admin-error', 'That participant is no longer in the session.');
+      return;
+    }
+    // Camera observation follows the supervised-room policy; collaboration rooms need consent
+    if (room.mode !== 'supervised') {
+      socket.emit('admin-error', 'Participant camera observation is only available in supervised rooms.');
+      return;
+    }
+    endControllerObservation(socket);
+    socket.observingController = { roomId: roomCode, controllerId: targetId };
+    pushEvent(roomCode, 'permission', `Administrator is viewing ${room.controllers.get(targetId).name}'s camera`);
     io.to(targetId).emit('controller-observation-requested', { adminId: socket.id });
+    emitRoomState(roomCode);
   });
 
-  socket.on('controller-observation-offer', ({ adminId, offer }) => {
+  socket.on('end-controller-observation', () => endControllerObservation(socket));
+
+  socket.on('controller-observation-offer', ({ adminId, offer } = {}) => {
+    if (!adminObservesController(adminId, socket.id)) return;
     io.to(adminId).emit('observer-offer', { offer, hostId: socket.id, targetType: 'controller' });
   });
 
-  socket.on('controller-observation-ice-candidate', ({ adminId, candidate }) => {
+  socket.on('controller-observation-ice-candidate', ({ adminId, candidate } = {}) => {
+    if (!adminObservesController(adminId, socket.id)) return;
     io.to(adminId).emit('observer-ice-candidate', { candidate, fromId: socket.id });
   });
+
+  socket.on('controller-observation-unavailable', ({ adminId, reason } = {}) => {
+    if (!adminObservesController(adminId, socket.id)) return;
+    io.to(adminId).emit('admin-error', reason || 'The participant has no camera stream to share.');
+  });
+
+  socket.on('disconnect', () => endControllerObservation(socket));
 });
 
 
@@ -966,6 +1321,7 @@ io.on('connection', (socket) => {
       riskScore: 0,
       alertCount: 0,
       latestTxHash: null,
+      anchors: [],
       events: [],
       messages: [],
       evidence: [],
@@ -1019,9 +1375,9 @@ io.on('connection', (socket) => {
     if (!await isAdminSocket(socket)) return;
     if (global.dbConnected) {
       const docs = await SessionLog.find({}).sort({ endedAt: -1 }).limit(100).lean().catch(() => []);
-      socket.emit('session-history', docs);
+      socket.emit('session-history', docs.map(signSessionEvidence));
     } else {
-      socket.emit('session-history', mockStore.listSessionLogs(100));
+      socket.emit('session-history', mockStore.listSessionLogs(100).map(signSessionEvidence));
     }
   });
 
@@ -1311,11 +1667,16 @@ io.on('connection', (socket) => {
       });
     });
     if (updatesDefault) room.defaultPermission = permission;
-    pushEvent(normalizedRoomId, 'permission', `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
+    // Host pressed the emergency shortcut: tell controllers why control vanished
+    const isPanic = options.reason === 'panic' && permission === 'view';
+    if (isPanic) targets.forEach(targetId => io.to(targetId).emit('system-warning', 'The host revoked all remote control. You are now in View Only mode.'));
+    pushEvent(normalizedRoomId, 'permission', isPanic
+      ? 'PANIC: host revoked all remote control (every controller set to VIEW)'
+      : `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
     emitRoomState(normalizedRoomId);
     const targetParticipant = options.targetId ? room.controllers.get(options.targetId) : null;
     const targetEmail = targetParticipant ? targetParticipant.email : '';
-    anchorEvent(normalizedRoomId, 'ACCESS_CHANGED', { permission, targetId: options.targetId || null }, room.hostEmail, targetEmail);
+    anchorEvent(normalizedRoomId, isPanic ? 'PANIC_REVOKE' : 'ACCESS_CHANGED', { permission, targetId: options.targetId || null, ...(isPanic ? { reason: 'panic' } : {}) }, room.hostEmail, targetEmail);
     broadcastSessions();
   });
 
@@ -1353,6 +1714,34 @@ io.on('connection', (socket) => {
     broadcastSessions();
   });
 
+  socket.on('e2e-announce', ({ roomId, publicKey } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || !roomMemberIds(room).includes(socket.id)) return;
+    if (typeof publicKey !== 'string' || publicKey.length < 80 || publicKey.length > 120) return;
+    if (!room.e2eKeys) room.e2eKeys = new Map();
+    room.e2eKeys.set(socket.id, publicKey);
+    room.e2eRosterSignature = null; // force a fresh roster so the host re-shares keys
+    broadcastE2ERoster(roomCode, room);
+  });
+
+  // Only the host distributes the (wrapped) group key, and only to current room members
+  socket.on('e2e-key-share', ({ roomId, targetId, payload } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || socket.id !== room.hostSocketId || !roomMemberIds(room).includes(targetId)) return;
+    if (!payload || typeof payload !== 'object' || JSON.stringify(payload).length > 64 * 1024) return;
+    io.to(targetId).emit('e2e-key-share', { fromId: socket.id, payload });
+  });
+
+  // A member that is missing a key (e.g. after reloading) asks the host to re-share
+  socket.on('e2e-key-request', ({ roomId } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || !roomMemberIds(room).includes(socket.id)) return;
+    io.to(room.hostSocketId).emit('e2e-key-request', { memberId: socket.id });
+  });
+
   socket.on('chat-message', ({ roomId, text } = {}) => {
     const room = rooms.get(roomId || socket.roomCode);
     if (!room || typeof text !== 'string' || !text.trim()) return;
@@ -1366,75 +1755,127 @@ io.on('connection', (socket) => {
       senderId: socket.id,
       senderName: isHost ? room.hostName : controller?.name || 'Administrator',
       role: isHost ? 'host' : controller ? 'controller' : 'admin',
-      text: text.trim().slice(0, 1000),
+      // End-to-end ciphertext ("e2e1:...") is ~1.4x the plaintext; never truncate it (that breaks decryption)
+      text: text.startsWith('e2e1:') ? text.slice(0, 4096) : text.trim().slice(0, 1000),
     };
+    if (message.text.startsWith('e2e1:') && text.length > 4096) return;
     room.messages.push(message);
     if (room.messages.length > 150) room.messages.shift();
-    pushEvent(roomId || socket.roomCode, 'chat', `${message.senderName}: ${message.text.slice(0, 80)}`);
+    // The server cannot read encrypted chat, so the activity log only records that a message was sent
+    pushEvent(roomId || socket.roomCode, 'chat', message.text.startsWith('e2e1:')
+      ? `${message.senderName}: [end-to-end encrypted message]`
+      : `${message.senderName}: ${message.text.slice(0, 80)}`);
     io.to(roomId || socket.roomCode).emit('chat-message', message);
     broadcastSessions();
   });
 
-  socket.on('federated-update', ({ roomId, weights, sampleCount = 1, loss = null, modelVersion = FEDERATED_MODEL_VERSION } = {}) => {
-    const normalizedRoomId = String(roomId || socket.roomCode || '').toUpperCase();
-    const room = rooms.get(normalizedRoomId);
-    if (!room || room.mode !== 'supervised') {
-      socket.emit('federated-error', { message: 'Federated updates are only accepted for live supervised rooms.' });
-      return;
-    }
-
+  const federatedContext = (roomId) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || room.mode !== 'supervised') return { error: 'Federated learning only runs in live supervised rooms.' };
     const participant = getFederatedParticipant(room, socket);
-    if (!participant) {
-      socket.emit('federated-error', { message: 'Only the host or approved controllers can submit federated updates.' });
-      return;
+    if (!participant) return { error: 'Only the host or approved controllers can take part in federated rounds.' };
+    return { roomCode, room, participant };
+  };
+
+  socket.on('fl-round-start', ({ roomId } = {}) => {
+    const { error, roomCode, room, participant } = federatedContext(roomId);
+    if (error) return socket.emit('federated-error', { message: error });
+    if (room.federated.active) return socket.emit('federated-error', { message: `Round ${room.federated.active.round} is already running.` });
+    openFederatedRound(roomCode, participant.name);
+  });
+
+  // Late joiners and peers whose model fell behind fetch the current global model
+  socket.on('fl-sync-request', ({ roomId } = {}) => {
+    const { error, room } = federatedContext(roomId);
+    if (error || !room.federated.globalWeights) return;
+    socket.emit('fl-model-sync', { round: room.federated.completedRound, weights: room.federated.globalWeights });
+  });
+
+  socket.on('fl-join', ({ roomId, round, publicKey, vectorLength, baseRound, initWeights } = {}) => {
+    const { error, roomCode, room, participant } = federatedContext(roomId);
+    if (error) return socket.emit('federated-error', { message: error });
+    const active = room.federated.active;
+    if (!active || active.phase !== 'advertise' || active.round !== round) return;
+
+    if (baseRound !== room.federated.completedRound) {
+      if (room.federated.globalWeights) {
+        socket.emit('fl-model-sync', { round: room.federated.completedRound, weights: room.federated.globalWeights });
+      }
+      return socket.emit('federated-error', { message: 'Local model was out of date; synced to the latest global model. Join the next round.' });
+    }
+    if (typeof publicKey !== 'string' || publicKey.length < 40 || publicKey.length > 200) {
+      return socket.emit('federated-error', { message: 'Invalid round public key.' });
+    }
+    const length = Number(vectorLength);
+    if (!Number.isInteger(length) || length < 2 || length > MAX_FEDERATED_WEIGHTS + 1) {
+      return socket.emit('federated-error', { message: 'Invalid model update size.' });
+    }
+    if (room.federated.globalWeights && room.federated.globalWeights.length !== length - 1) {
+      return socket.emit('federated-error', { message: 'Model shape does not match the room model.' });
+    }
+    if (active.vectorLength && active.vectorLength !== length) {
+      return socket.emit('federated-error', { message: 'Model shape does not match other participants.' });
+    }
+    if (active.participants.size >= FL_MAX_PARTICIPANTS) {
+      return socket.emit('federated-error', { message: 'Round is full.' });
     }
 
-    const sanitizedWeights = sanitizeWeights(weights);
-    if (!sanitizedWeights) {
-      socket.emit('federated-error', { message: 'Invalid federated model weights.' });
-      return;
-    }
-    if (room.federated.globalWeights && room.federated.globalWeights.length !== sanitizedWeights.length) {
-      socket.emit('federated-error', { message: 'Model weight shape does not match the current room aggregate.' });
-      return;
+    // The deterministic initial model is public (seeded), so it can be sent in the clear
+    if (!room.federated.globalWeights && !active.initWeights) {
+      const init = sanitizeWeights(initWeights);
+      if (init && init.length === length - 1) active.initWeights = init;
     }
 
-    const safeSampleCount = Math.max(1, Math.min(10000, Math.round(Number(sampleCount) || 1)));
-    const safeLoss = Number.isFinite(Number(loss)) ? Number(loss) : null;
+    active.vectorLength = length;
+    active.participants.set(socket.id, { id: socket.id, name: participant.name, role: participant.role, publicKey });
+    socket.emit('federated-update-accepted', { roomId: roomCode, round: active.round, pendingContributors: active.participants.size });
 
-    if (!room.federated.startedAt || room.federated.pending.size === 0) {
-      room.federated.round += 1;
-      room.federated.startedAt = Date.now();
-    }
+    if (active.participants.size === roomFederatedMembers(room).length) distributeFederatedKeys(roomCode);
+    else emitRoomState(roomCode);
+  });
 
-    room.federated.pending.set(socket.id, {
-      participantId: socket.id,
-      participantName: participant.name,
-      role: participant.role,
-      weights: sanitizedWeights,
-      sampleCount: safeSampleCount,
-      loss: safeLoss,
-      modelVersion: String(modelVersion || FEDERATED_MODEL_VERSION),
-      receivedAt: new Date().toISOString(),
+  socket.on('fl-shares', ({ roomId, round, shares } = {}) => {
+    const { error, roomCode, room } = federatedContext(roomId);
+    if (error) return;
+    const active = room.federated.active;
+    if (!active || active.phase !== 'sharing' || active.round !== round || !active.keyed.has(socket.id)) return;
+    const valid = Array.isArray(shares) && shares.length === active.keyed.size
+      && shares.every(item => item && active.keyed.has(item.to) && typeof item.ct === 'string' && item.ct.length < 2048)
+      && new Set(shares.map(item => item.to)).size === shares.length;
+    if (!valid) return socket.emit('federated-error', { message: 'Malformed key shares; you will be treated as dropped this round.' });
+    active.shares.set(socket.id, shares);
+    maybeAdvanceFederatedRound(roomCode);
+  });
+
+  socket.on('fl-submit', ({ roomId, round, masked } = {}) => {
+    const { error, roomCode, room } = federatedContext(roomId);
+    if (error) return;
+    const active = room.federated.active;
+    if (!active || active.phase !== 'masking' || active.round !== round || !active.sharers.has(socket.id)) return;
+    const vector = decodeSubmission(masked, active.vectorLength);
+    if (!vector) return socket.emit('federated-error', { message: 'Malformed masked update; you will be treated as dropped this round.' });
+    active.submissions.set(socket.id, vector);
+    maybeAdvanceFederatedRound(roomCode);
+  });
+
+  socket.on('fl-unmask-shares', ({ roomId, round, shares } = {}) => {
+    const { error, roomCode, room } = federatedContext(roomId);
+    if (error) return;
+    const active = room.federated.active;
+    if (!active || active.phase !== 'unmasking' || active.round !== round || !active.survivors.includes(socket.id)) return;
+    if (active.revealers.has(socket.id) || !Array.isArray(shares)) return;
+    active.revealers.add(socket.id);
+    shares.forEach((share) => {
+      if (!share || typeof share.y !== 'string' || !Number.isInteger(share.x)) return;
+      // Only accept the kind each participant is entitled to: b for survivors, s for dropped
+      const expected = active.survivors.includes(share.owner) ? 'b' : active.dropped.includes(share.owner) ? 's' : null;
+      if (!expected || share.kind !== expected) return;
+      if (!active.revealed.has(share.owner)) active.revealed.set(share.owner, { kind: expected, shares: [] });
+      const entry = active.revealed.get(share.owner);
+      if (!entry.shares.some(item => item.x === share.x)) entry.shares.push({ x: share.x, y: share.y });
     });
-
-    pushEvent(normalizedRoomId, 'system', `Federated update accepted from ${participant.name} (${safeSampleCount} sample(s))`);
-    socket.emit('federated-update-accepted', {
-      roomId: normalizedRoomId,
-      round: room.federated.round,
-      pendingContributors: room.federated.pending.size,
-    });
-
-    const expectedContributors = roomFederatedMembers(room).length;
-    const quorum = Math.max(1, Math.min(2, expectedContributors));
-    if (room.federated.pending.size >= quorum) {
-      aggregateFederatedRound(normalizedRoomId);
-    } else if (!room.federated.timer) {
-      room.federated.timer = setTimeout(() => aggregateFederatedRound(normalizedRoomId), 2500);
-    }
-
-    emitRoomState(normalizedRoomId);
-    broadcastSessions();
+    maybeAdvanceFederatedRound(roomCode);
   });
 
   socket.on('quality-update', ({ roomId, quality = {} } = {}) => {
@@ -1588,6 +2029,11 @@ io.on('connection', (socket) => {
     const room = rooms.get(socket.observingRoom);
     if (room && room.hostSocketId === hostId && room.observers.has(socket.id)) {
       io.to(hostId).emit('observer-answer', { observerId: socket.id, answer });
+      return;
+    }
+    // Answer to a controller camera offer ("hostId" is the controller that made the offer)
+    if (adminObservesController(socket.id, hostId)) {
+      io.to(hostId).emit('observer-answer', { observerId: socket.id, answer });
     }
   });
 
@@ -1600,19 +2046,11 @@ io.on('connection', (socket) => {
     const observedRoom = rooms.get(socket.observingRoom);
     if (observedRoom && observedRoom.hostSocketId === targetId && observedRoom.observers.has(socket.id)) {
       io.to(targetId).emit('observer-ice-candidate', { fromId: socket.id, candidate });
+      return;
     }
-  });
-
-  socket.on('host-push-question', (payload) => {
-    const roomId = normalizeRoomCode(payload.roomId || socket.roomCode);
-    const room = rooms.get(roomId);
-    if (!room) return;
-    
-    // Store question so late-joiners can receive it
-    if (!room.examQuestions) room.examQuestions = [];
-    room.examQuestions.push(payload);
-    
-    io.to(roomId).emit('new-exam-question', payload);
+    if (adminObservesController(socket.id, targetId)) {
+      io.to(targetId).emit('observer-ice-candidate', { fromId: socket.id, candidate });
+    }
   });
 
   socket.on('system-alert', (payload = {}) => {
@@ -1625,27 +2063,21 @@ io.on('connection', (socket) => {
     const penalty = applyRiskPenalty(room, payload.penalty, 0);
     room.alertCount += 1;
     pushEvent(roomId, payload.type === 'anticheat_violation' ? 'anticheat' : 'system', `${participantName}: ${payload.message || 'Activity detected'}`);
-    if (global.dbConnected) {
-      Alert.create({
-        room: roomId,
-        hostEmail: room.hostEmail || undefined,
-        type: payload.type || 'activity',
-        event: payload.event || undefined,
-        message: `${participantName}: ${payload.message || 'Activity detected'}`,
-        evidenceUrl: payload.evidenceUrl || undefined,
-        penalty,
-      }).catch((err) => console.error('Alert save error:', err));
-    } else {
-      mockStore.addAlert({
-        room: roomId,
-        hostEmail: room.hostEmail || undefined,
-        type: payload.type || 'activity',
-        event: payload.event || undefined,
-        message: `${participantName}: ${payload.message || 'Activity detected'}`,
-        evidenceUrl: payload.evidenceUrl || undefined,
-        penalty,
-      });
-    }
+    const alertRecord = {
+      room: roomId,
+      hostEmail: room.hostEmail || undefined,
+      type: payload.type || 'activity',
+      event: payload.event || undefined,
+      message: `${participantName}: ${payload.message || 'Activity detected'}`,
+      evidenceUrl: isUploadPath(payload.evidenceUrl) ? payload.evidenceUrl : undefined,
+      penalty,
+      features: sanitizeFeatures(payload.features),
+      sourceSocketId: socket.id,
+    };
+    // Admins need the stored id so a live alert can be marked (e.g. false positive) right away
+    const saved = global.dbConnected
+      ? Alert.create(alertRecord).catch((err) => { console.error('Alert save error:', err); return null; })
+      : Promise.resolve(mockStore.addAlert(alertRecord));
 
     // Anchor anti-cheat alerts to the blockchain
     if (global.blockchainActive && payload.type === 'anticheat_violation') {
@@ -1658,7 +2090,16 @@ io.on('connection', (socket) => {
       );
     }
 
-    io.to('admins').emit('system-alert', { ...payload, room: roomId, participant: participantName, evidenceUrl: payload.evidenceUrl || undefined, penalty });
+    saved.then((doc) => {
+      io.to('admins').emit('system-alert', {
+        ...payload,
+        _id: doc?._id ? String(doc._id) : undefined,
+        room: roomId,
+        participant: participantName,
+        evidenceUrl: signUploadUrl(payload.evidenceUrl) || undefined,
+        penalty,
+      });
+    });
     emitRoomState(roomId);
     broadcastSessions();
   });
@@ -1685,7 +2126,7 @@ io.on('connection', (socket) => {
       type: data.type || 'anticheat_violation',
       event: data.event || data.reason || undefined,
       message: `${participant.name}: ${message}`,
-      evidenceUrl: data.evidenceUrl || undefined,
+      evidenceUrl: isUploadPath(data.evidenceUrl) ? data.evidenceUrl : undefined,
       penalty,
     };
     if (global.dbConnected) {
@@ -1707,7 +2148,7 @@ io.on('connection', (socket) => {
       type: alertDoc.type,
       event: alertDoc.event,
       message,
-      evidenceUrl: alertDoc.evidenceUrl,
+      evidenceUrl: signUploadUrl(alertDoc.evidenceUrl) || undefined,
       penalty,
     });
     emitRoomState(roomCode);
@@ -1742,14 +2183,16 @@ io.on('connection', (socket) => {
   });
 
   // --- Exam Content ---
-  socket.on('host-push-question', (question) => {
-    const roomId = normalizeRoomCode(question.roomId || socket.roomCode);
+  socket.on('host-push-question', (payload = {}) => {
+    const roomId = normalizeRoomCode(payload.roomId || socket.roomCode);
     const room = rooms.get(roomId);
-    if (!room || room.mode !== 'supervised' || socket.role !== 'host') return;
-    
+    if (!room || room.mode !== 'supervised' || socket.id !== room.hostSocketId) return;
+    const question = sanitizeExamQuestion(payload);
+    if (!question || room.exam.questions.some(q => q.id === question.id)) return;
+
     room.exam.questions.push(question);
-    room.controllers.forEach(controller => {
-      io.to(controller.socketId).emit('new-exam-question', question);
+    room.controllers.forEach((controller, controllerId) => {
+      io.to(controllerId).emit('new-exam-question', publicExamQuestion(question));
     });
     pushEvent(roomId, 'exam', `New ${question.type} question pushed to controllers`);
     emitRoomState(roomId);
@@ -1759,11 +2202,13 @@ io.on('connection', (socket) => {
     const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
     const room = rooms.get(normalizedRoomId);
     if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
-    
+    if (!room.exam.questions.some(q => q.id === questionId)) return;
+
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
-    
+    if (room.exam.answers[questionId][socket.id]?.isFinal) return;
+
     room.exam.answers[questionId][socket.id] = {
-      ...answer,
+      ...sanitizeExamAnswer(answer),
       isFinal: false,
       timestamp: Date.now()
     };
@@ -1776,19 +2221,26 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('controller-submit-answer', ({ questionId, answer }) => {
+  socket.on('controller-submit-answer', ({ questionId, answer } = {}) => {
     const roomId = socket.roomCode;
     const room = rooms.get(roomId);
     if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
-    
+    const question = room.exam.questions.find(q => q.id === questionId);
+    if (!question) return;
+
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
-    
+    if (room.exam.answers[questionId][socket.id]?.isFinal) return;
+
+    const finalAnswer = sanitizeExamAnswer(answer);
+    const correct = gradeExamAnswer(question, finalAnswer);
     room.exam.answers[questionId][socket.id] = {
-      ...answer,
+      ...finalAnswer,
       isFinal: true,
+      correct,
       timestamp: Date.now()
     };
-    
+    if (correct !== null) socket.emit('exam-answer-result', { questionId, correct });
+
     io.to(room.hostSocketId).emit('host-live-answer-update', {
       questionId,
       controllerId: socket.id,
@@ -1801,9 +2253,11 @@ io.on('connection', (socket) => {
     socket.disconnect(true);
   });
 
-  socket.on('recording-uploaded', ({ room, url }) => {
-    const liveRoom = rooms.get(room);
-    if (liveRoom) {
+  socket.on('recording-uploaded', ({ room, url } = {}) => {
+    const liveRoom = rooms.get(normalizeRoomCode(room));
+    // Only participants of the room may attach recordings, and only files we stored ourselves
+    const isMember = liveRoom && (socket.id === liveRoom.hostSocketId || liveRoom.controllers.has(socket.id));
+    if (isMember && isUploadPath(url)) {
       if (!liveRoom.recordings) liveRoom.recordings = [];
       liveRoom.recordings.push(url);
       broadcastSessions();
@@ -1827,6 +2281,14 @@ io.on('connection', (socket) => {
     if (socket.userEmail) onlineEmails.delete(socket.userEmail);
 
     rooms.forEach((room, roomId) => {
+      // Before keys are handed out a leaver is simply removed; later it is treated as dropped and its
+      // masks are recovered from the other participants' Shamir shares
+      const flRound = room.federated?.active;
+      if (flRound?.participants.has(socket.id)) {
+        if (flRound.phase === 'advertise') flRound.participants.delete(socket.id);
+        else setImmediate(() => maybeAdvanceFederatedRound(roomId));
+      }
+
       const pending = room.pendingControllers.get(socket.id);
       if (pending) {
         room.pendingControllers.delete(socket.id);
@@ -1871,4 +2333,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, server, io };
+module.exports = { app, server, io, sendFalsePositiveLabel };

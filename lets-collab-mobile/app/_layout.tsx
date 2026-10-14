@@ -75,6 +75,7 @@ export default function RootLayout() {
       }}>
         <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
         <Stack.Screen name="login" options={{ animation: 'fade' }} />
+        <Stack.Screen name="session/[code]" options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
         <Stack.Screen name="index" options={{ animation: 'fade' }} />
         <Stack.Screen name="+not-found" options={{ animation: 'fade' }} />
       </Stack>

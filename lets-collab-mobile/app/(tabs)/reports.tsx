@@ -1,13 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, ImageBackground, TouchableOpacity, Platform, Alert, Dimensions } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { BACKEND_URL, getAuthHeaders } from '../../lib/api';
 import { ChevronDown, ChevronUp, Download, FileText, Code, Network, Sun, Moon, Users, Shield, RefreshCw } from 'lucide-react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { AnimatedPressable } from '../../components/AnimatedPressable';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
+import { shareExport, toCsv, writeExportFile } from '../../lib/exportFile';
 
 const { width } = Dimensions.get('window');
 
@@ -46,9 +46,10 @@ export default function ReportsScreen() {
     }
   };
 
-  useEffect(() => {
+  // Reload whenever the tab is focused (also renews signed evidence links)
+  useFocusEffect(useCallback(() => {
     fetchReports();
-  }, []);
+  }, []));
 
   const handleExport = async (format: string) => {
     try {
@@ -81,23 +82,13 @@ export default function ReportsScreen() {
         const { uri } = await Print.printToFileAsync({ html });
         fileUri = uri;
       } else if (format === 'JSON') {
-        const jsonString = JSON.stringify(data, null, 2);
-        fileUri = `${FileSystem.documentDirectory}report_${timestamp}.json`;
-        await FileSystem.writeAsStringAsync(fileUri, jsonString, { encoding: FileSystem.EncodingType.UTF8 });
+        fileUri = writeExportFile(`report_${timestamp}.json`, JSON.stringify(data, null, 2));
       } else if (format === 'CSV') {
-        let csvString = 'Time,User,Type,Penalty\n';
-        data.alerts.forEach((a: any) => {
-          csvString += `"${a.time}","${a.hostEmail}","${a.type}","${a.penalty}"\n`;
-        });
-        fileUri = `${FileSystem.documentDirectory}report_${timestamp}.csv`;
-        await FileSystem.writeAsStringAsync(fileUri, csvString, { encoding: FileSystem.EncodingType.UTF8 });
+        const csv = toCsv(['Time', 'User', 'Type', 'Penalty'], data.alerts.map((a: any) => [a.time, a.hostEmail, a.type, a.penalty]));
+        fileUri = writeExportFile(`report_${timestamp}.csv`, csv);
       }
 
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri);
-      } else {
-        Alert.alert("Export Successful", `${format} file saved.`);
-      }
+      await shareExport(fileUri, format);
     } catch (error) {
       console.error(error);
       Alert.alert("Export Failed", "Could not generate file.");

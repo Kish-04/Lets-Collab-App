@@ -1,5 +1,4 @@
 import * as tf from '@tensorflow/tfjs'
-import { getBackendUrl } from './utils'
 
 // Next.js 15 dev overlay suppression for internal TFJS Wasm logs
 if (typeof window !== "undefined") {
@@ -20,12 +19,20 @@ export class FederatedLearner {
     private xs: FederatedFeatures[] = [];
     private ys: number[][] = [];
     private isTraining: boolean = false;
+    private learned: boolean = false;
+    // Last global model (or the seeded initial model) and the round it came from; deltas are relative to it
+    private baseWeights: number[];
+    private modelRound = 0;
+    private samplesSinceSync = 0;
 
     constructor() {
+        // Seeded initialisers give every participant the identical starting model, so their
+        // deltas can be averaged before any global model exists
         this.model = tf.sequential();
-        this.model.add(tf.layers.dense({ units: 8, activation: 'relu', inputShape: [3] }));
-        this.model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
-        
+        this.model.add(tf.layers.dense({ units: 8, activation: 'relu', inputShape: [3], kernelInitializer: tf.initializers.glorotUniform({ seed: 1337 }) }));
+        this.model.add(tf.layers.dense({ units: 1, activation: 'sigmoid', kernelInitializer: tf.initializers.glorotUniform({ seed: 7331 }) }));
+        this.baseWeights = this.model.getWeights().flatMap(w => Array.from(w.dataSync()));
+
         this.model.compile({
             optimizer: tf.train.adam(0.01),
             loss: 'binaryCrossentropy',
@@ -45,6 +52,39 @@ export class FederatedLearner {
 
     public getPendingSampleCount() {
         return this.xs.length;
+    }
+
+    // True once the model has been trained locally or received a federated aggregate
+    public hasLearned() {
+        return this.learned;
+    }
+
+    public getModelRound() {
+        return this.modelRound;
+    }
+
+    public getBaseWeights() {
+        return this.baseWeights.slice();
+    }
+
+    // Samples trained on locally since the last global model was applied (the FedAvg weight)
+    public getSamplesSinceSync() {
+        return this.samplesSinceSync;
+    }
+
+    // Local update relative to the last global model; only this (masked) ever leaves the device
+    public async getDelta(): Promise<number[]> {
+        const current = await this.getSerializedWeights();
+        return current.map((value, index) => value - this.baseWeights[index]);
+    }
+
+    public async applyGlobal(weights: number[], round: number) {
+        const ok = await this.setSerializedWeights(weights);
+        if (!ok) return false;
+        this.baseWeights = weights.slice();
+        this.modelRound = round;
+        this.samplesSinceSync = 0;
+        return true;
     }
 
     public async trainLocalModel(epochs: number = 10) {
@@ -69,8 +109,11 @@ export class FederatedLearner {
             xsTensor.dispose();
             ysTensor.dispose();
 
+            this.samplesSinceSync += this.xs.length;
+
             this.xs = [];
             this.ys = [];
+            this.learned = true;
 
             const losses = history.history.loss || [];
             return losses[losses.length - 1] ?? null;
@@ -79,19 +122,7 @@ export class FederatedLearner {
         } finally {
             this.isTraining = false;
             console.error = originalError;
-            this.syncGlobalWeights();
         }
-    }
-
-    public async syncGlobalWeights() {
-        try {
-            const weights = await this.getSerializedWeights();
-            await fetch(`${getBackendUrl()}/api/federated-weights`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ weights })
-            });
-        } catch (err) {}
     }
 
     public async getSerializedWeights(): Promise<number[]> {
@@ -119,6 +150,7 @@ export class FederatedLearner {
 
             this.model.setWeights(tensors);
             tensors.forEach(t => t.dispose());
+            this.learned = true;
             return true;
         } catch (e) {
             return false;

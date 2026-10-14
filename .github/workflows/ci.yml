@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web - typecheck, lint, unit + realtime tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      # --ignore-scripts skips the Electron native rebuild (robotjs/vigem) that CI does not need
+      - run: npm ci --ignore-scripts
+      - run: npm ci
+        working-directory: server
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: Unit and multi-client realtime tests
+        run: npm test
+
+  server:
+    name: Server - API, contracts, chain integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - name: API and contract tests
+        run: npm test
+      - name: Audit logger against a local chain node
+        run: npm run test:chain
+
+  e2e:
+    name: Browser end-to-end (two Chrome profiles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [web, server]
+    env:
+      E2E_NEXT_MODE: start
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm ci
+        working-directory: server
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+      - name: Build Next.js (pre-compile so e2e uses next start, not next dev)
+        run: npx next build
+      - name: Run e2e tests
+        run: xvfb-run --auto-servernum npm run test:e2e
+
+  mobile:
+    name: Mobile - typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: lets-collab-mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: lets-collab-mobile/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit

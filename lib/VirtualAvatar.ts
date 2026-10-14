@@ -1,4 +1,5 @@
 import { loadExternalScript } from './utils';
+import type { Avatar3DStyle } from './Avatar3D';
 
 const getFaceApi = () => {
     if (typeof window !== 'undefined' && (window as any).faceapi) {
@@ -7,9 +8,9 @@ const getFaceApi = () => {
     return null;
 };
 
-export type AvatarStyle = 'none' | 'cyberpunk' | 'neon' | 'pixel' | 'hologram' | 'sketch' | 'synthwave' | 'anime' | 'custom';
+export type AvatarStyle = 'none' | 'cyberpunk' | 'neon' | 'pixel' | 'hologram' | 'sketch' | 'synthwave' | 'anime' | 'custom' | Avatar3DStyle;
 
-const avatarSources: Record<Exclude<AvatarStyle, 'none' | 'custom'>, string> = {
+const avatarSources: Record<Exclude<AvatarStyle, 'none' | 'custom' | Avatar3DStyle>, string> = {
     cyberpunk: '/avatars/cyberpunk-visor.svg',
     neon: '/avatars/neon-mask.svg',
     pixel: '/avatars/pixel-face.svg',

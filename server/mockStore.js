@@ -115,6 +115,14 @@ function addAlert(alert) {
   return item;
 }
 
+function updateAlert(id, patch) {
+  const alert = state.alerts.find(item => String(item._id) === String(id));
+  if (!alert) return null;
+  Object.assign(alert, patch);
+  persist();
+  return alert;
+}
+
 function listAlerts(limit = 500) {
   return state.alerts.slice(0, limit);
 }
@@ -149,5 +157,6 @@ module.exports = {
   listUsers,
   publicUser,
   saveUser,
+  updateAlert,
   updateUser,
 };

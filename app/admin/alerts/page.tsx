@@ -108,7 +108,7 @@ function AlertDetailsModal({
           <div className="rounded-xl overflow-hidden border border-[var(--border)]/60 bg-[var(--elevated)]/40">
              <div className="px-4 py-3 border-b border-[var(--border)]/60 bg-[var(--elevated)]/80 flex items-center justify-between">
                 <span className="text-xs font-mono text-[var(--text-dim)] uppercase tracking-wider">AI Evidence Graph</span>
-                <span className="text-[10px] bg-[var(--accent)]/20 text-[var(--accent)] px-2 py-0.5 rounded border border-[var(--accent)]/30">CONFIDENCE: 98%</span>
+                <span className="text-[10px] bg-[var(--accent)]/20 text-[var(--accent)] px-2 py-0.5 rounded border border-[var(--accent)]/30">RISK +{alert.penalty}</span>
              </div>
              <div className="p-6 flex flex-col items-center justify-center bg-[var(--bg)]/50 min-h-[160px] relative overflow-hidden">
                 {alert.evidenceUrl ? (
@@ -116,7 +116,8 @@ function AlertDetailsModal({
                     src={alert.evidenceUrl.startsWith('http') ? alert.evidenceUrl : `${getBackendUrl()}${alert.evidenceUrl}`} 
                     alt="Evidence Snapshot" 
                     className="absolute inset-0 w-full h-full object-cover opacity-80" 
-                    onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=500&q=80' }}
+                    // Never substitute a stock image for evidence; an expired link just needs a refresh
+                    onError={(e) => { e.currentTarget.style.display = 'none' }}
                   />
                 ) : (
                   <>
@@ -238,6 +239,7 @@ export default function AlertsPage() {
         totalRisk,
         flagged: false,
         falsePositive: false,
+        evidenceUrl: payload.evidenceUrl,
       }
       setAlerts(prev => [entry, ...prev].slice(0, 200))
     })

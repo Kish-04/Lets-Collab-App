@@ -9,6 +9,10 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const GitHubStrategy = require('passport-github2').Strategy;
 
 const router = express.Router();
+router.use((req, res, next) => {
+  console.log('HIT AUTH ROUTES:', req.path);
+  next();
+});
 router.use(passport.initialize());
 const OTP_TTL_MS = 10 * 60 * 1000;
 const isProduction = process.env.NODE_ENV === 'production';
@@ -615,6 +619,7 @@ router.get('/google/callback',
 );
 
 router.get('/github', (req, res, next) => {
+  console.log('HIT GITHUB ROUTE!');
   if (!process.env.GITHUB_CLIENT_ID) {
     return res.status(501).send("GitHub Login is not configured on the server yet. Please add GITHUB_CLIENT_ID to .env");
   }

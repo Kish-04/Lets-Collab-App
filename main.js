@@ -119,6 +119,51 @@ function clampNumber(value, min, max, fallback = 0) {
 }
 
 let mainWindow = null;
+
+// ── Panic revoke ───────────────────────────────────────────────────────────────
+// The lock lives in the main process so it takes effect the instant the shortcut is pressed:
+// no network round trip, and it works even if the renderer is busy. It is lifted only when the
+// host grants control again from the UI (set-remote-input-lock false).
+const PANIC_SHORTCUTS = ['Shift+Escape', 'CommandOrControl+Alt+Escape'];
+let registeredPanicShortcuts = [];
+let remoteInputLocked = false;
+const heldRemoteKeys = new Set();
+const heldRemoteButtons = new Set();
+
+// Release anything the controller was holding (a drag, Shift/Ctrl, gamepad buttons) so nothing stays pressed
+function releaseHeldRemoteInput() {
+  if (robot) {
+    heldRemoteButtons.forEach((button) => { try { robot.mouseToggle('up', button); } catch (e) {} });
+    heldRemoteKeys.forEach((key) => { try { robot.keyToggle(key, 'up'); } catch (e) {} });
+    ['shift', 'control', 'alt', 'command'].forEach((key) => { try { robot.keyToggle(key, 'up'); } catch (e) {} });
+  }
+  heldRemoteButtons.clear();
+  heldRemoteKeys.clear();
+  if (virtualGamepad && typeof virtualGamepad.resetInputs === 'function') {
+    try { virtualGamepad.resetInputs(); } catch (e) {}
+  }
+}
+
+function triggerPanicRevoke(source) {
+  remoteInputLocked = true;
+  releaseHeldRemoteInput();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('panic-revoke-control', { source });
+  }
+}
+
+function registerPanicShortcuts() {
+  registeredPanicShortcuts = PANIC_SHORTCUTS.filter((accelerator) => {
+    try {
+      return globalShortcut.register(accelerator, () => triggerPanicRevoke(accelerator));
+    } catch (e) {
+      return false;
+    }
+  });
+  if (registeredPanicShortcuts.length === 0) {
+    console.warn('[PANIC] No panic shortcut could be registered (keys already taken by another app).');
+  }
+}
 let petWindow = null;
 let petEnabled = true;
 
@@ -244,11 +289,7 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
-  globalShortcut.register('Shift+Escape', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('panic-revoke-control');
-    }
-  });
+  registerPanicShortcuts();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -264,8 +305,56 @@ app.on('window-all-closed', () => {
 });
 
 // IPC Handlers
-ipcMain.handle('gemini:ask', async (event, prompt) => {
-  return generateReply(prompt);
+ipcMain.handle('gemini:ask', async (event, prompt, codeContext) => {
+  return generateReply(prompt, codeContext);
+});
+
+ipcMain.handle('oauth-login', async (event, provider) => {
+  const backendUrl = getConfiguredBackendUrl();
+  const authUrl = `${backendUrl}/api/auth/${provider}`;
+  
+  return new Promise((resolve) => {
+    const authWindow = new BrowserWindow({
+      width: 600,
+      height: 800,
+      parent: mainWindow,
+      modal: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    
+    // Spoof Origin for backend CORS if necessary
+    authWindow.webContents.session.webRequest.onBeforeSendHeaders(
+      (details, callback) => {
+        details.requestHeaders['Origin'] = 'http://localhost:8081';
+        callback({ cancel: false, requestHeaders: details.requestHeaders });
+      }
+    );
+
+    authWindow.loadURL(authUrl);
+    
+    const handleNavigation = (url) => {
+      try {
+        const urlObj = new URL(url);
+        if (urlObj.searchParams.get('oauth') === 'success') {
+          authWindow.close();
+          resolve(true);
+        } else if (urlObj.searchParams.get('error')) {
+          authWindow.close();
+          resolve(false);
+        }
+      } catch (e) {}
+    };
+
+    authWindow.webContents.on('will-redirect', (e, url) => handleNavigation(url));
+    authWindow.webContents.on('did-navigate', (e, url) => handleNavigation(url));
+    
+    authWindow.on('closed', () => {
+      resolve(false);
+    });
+  });
 });
 
 ipcMain.on('pet-state-update', (event, data) => {
@@ -386,9 +475,18 @@ ipcMain.on('set-clipboard-guard', (event, locked) => {
 });
 
 // Remote Input (RobotJS / ViGEmClient)
+ipcMain.handle('get-panic-shortcuts', () => registeredPanicShortcuts);
+
+ipcMain.on('set-remote-input-lock', (event, locked) => {
+  if (!isTrustedIpcSender(event, 'set-remote-input-lock')) return;
+  remoteInputLocked = Boolean(locked);
+  if (remoteInputLocked) releaseHeldRemoteInput();
+});
+
 ipcMain.on('execute-input', (event, payload) => {
   if (!isTrustedIpcSender(event, 'execute-input')) return;
   if (!payload || typeof payload !== 'object') return;
+  if (remoteInputLocked) return;
 
   if (payload.type === 'gamepad-state') {
     if (virtualGamepad) {
@@ -444,8 +542,18 @@ ipcMain.on('execute-input', (event, payload) => {
 
     switch (payload.type) {
       case 'mousemove': robot.moveMouse(realX, realY); break;
-      case 'mousedown': robot.mouseToggle("down", payload.button === 2 ? "right" : "left"); break;
-      case 'mouseup': robot.mouseToggle("up", payload.button === 2 ? "right" : "left"); break;
+      case 'mousedown': {
+        const button = payload.button === 2 ? "right" : "left";
+        robot.mouseToggle("down", button);
+        heldRemoteButtons.add(button);
+        break;
+      }
+      case 'mouseup': {
+        const button = payload.button === 2 ? "right" : "left";
+        robot.mouseToggle("up", button);
+        heldRemoteButtons.delete(button);
+        break;
+      }
       case 'wheel': robot.scrollMouse(0, payload.deltaY > 0 ? -1 : 1); break;
       case 'keydown':
       case 'keyup':
@@ -454,6 +562,8 @@ ipcMain.on('execute-input', (event, payload) => {
            if (mappedKey) {
              const modifiers = mapModifiers(payload.modifiers);
              robot.keyToggle(mappedKey, payload.type === 'keydown' ? 'down' : 'up', modifiers);
+             if (payload.type === 'keydown') heldRemoteKeys.add(mappedKey);
+             else heldRemoteKeys.delete(mappedKey);
            }
         }
         break;

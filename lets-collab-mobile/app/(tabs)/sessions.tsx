@@ -1,10 +1,15 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, ImageBackground, TouchableOpacity, Alert, Modal, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, ImageBackground, TouchableOpacity, Alert, Modal, Platform, ScrollView, Image, Linking } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
-import { BACKEND_URL, getAuthHeaders, getStoredAuthToken } from '../../lib/api';
-import { X, Activity, Bolt, Sun, Moon } from 'lucide-react-native';
+import { BACKEND_URL, getStoredAuthToken } from '../../lib/api';
+import { X, Activity, Bolt, Sun, Moon, Brain, AlertTriangle, Eye, ShieldOff, UserMinus, Ban, Film } from 'lucide-react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { AnimatedPressable } from '../../components/AnimatedPressable';
+import { AuditIntegrity } from '../../components/AuditIntegrity';
+import { ObserverView } from '../../components/ObserverView';
+
+// Evidence and recording URLs from the server are signed, short-lived /uploads paths
+const uploadUri = (url?: string) => (url ? (url.startsWith('http') ? url : `${BACKEND_URL}${url}`) : null);
 import io, { Socket } from 'socket.io-client';
 import { useFocusEffect } from 'expo-router';
 
@@ -13,6 +18,8 @@ export default function SessionsScreen() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSession, setSelectedSession] = useState<any>(null);
+  const [observeRoomId, setObserveRoomId] = useState<string | null>(null);
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
   useFocusEffect(
@@ -30,6 +37,7 @@ export default function SessionsScreen() {
 
         socket.on('connect', () => {
           console.log('Admin socket connected');
+          socket.emit('get-sessions');
           setLoading(false);
         });
 
@@ -40,9 +48,15 @@ export default function SessionsScreen() {
           }
         });
 
-        socket.on('live-sessions-update', (updatedSessions: any[]) => {
-          if (isMounted) setSessions(updatedSessions);
+        // The server pushes 'sessions-update' to the admins room on every change
+        socket.on('sessions-update', (updatedSessions: any[]) => {
+          if (!isMounted) return;
+          setSessions(updatedSessions);
+          setSelectedSession((current: any) => current ? updatedSessions.find(session => session.id === current.id) ?? null : null);
         });
+
+        socket.on('admin-action-complete', ({ message }: { message: string }) => Alert.alert('Done', message));
+        socket.on('admin-error', (message: string) => Alert.alert('Admin action failed', String(message)));
 
         socketRef.current = socket;
       };
@@ -59,25 +73,44 @@ export default function SessionsScreen() {
     }, [])
   );
 
-  const handleAction = (event: string, target?: string, targetId?: string) => {
+  const terminateSession = () => {
     if (!socketRef.current || !selectedSession) return;
-    
+    const roomId = selectedSession.id;
+
     Alert.alert("Confirm Termination", "Are you sure you want to forcibly terminate this session?", [
       { text: "Cancel", style: "cancel" },
-      { 
-        text: "Terminate", 
+      {
+        text: "Terminate",
         style: "destructive",
         onPress: () => {
-          socketRef.current?.emit("admin-action", {
-            event,
-            sessionId: selectedSession.id,
-            target,
-            targetId
-          });
+          socketRef.current?.emit('kill-session', roomId);
           setSelectedSession(null);
         }
       }
     ]);
+  };
+
+  // Same socket interventions as the web dashboard (server/index.js admin-* handlers)
+  const intervene = (label: string, emit: () => void) => {
+    Alert.alert(label, 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: label, style: 'destructive', onPress: emit },
+    ]);
+  };
+  const revokeAccess = (roomId: string, targetId?: string) =>
+    intervene('Revoke access', () => socketRef.current?.emit('admin-revoke-access', roomId, targetId));
+  const removeController = (roomId: string, targetId?: string) =>
+    intervene('Remove controller', () => socketRef.current?.emit('admin-remove-controller', { roomId, targetId }));
+  const banParticipant = (roomId: string, target: 'host' | 'controller', targetId?: string) =>
+    intervene(target === 'host' ? 'Ban host' : 'Ban controller', () => socketRef.current?.emit('admin-ban-participant', { roomId, target, targetId }));
+
+  const warnSession = () => {
+    if (!socketRef.current || !selectedSession) return;
+    socketRef.current.emit('admin-warn-user', {
+      roomId: selectedSession.id,
+      message: 'Warning from administrator: Please return your attention to the session.',
+    });
+    Alert.alert('Warning sent', `Everyone in room ${selectedSession.id} has been warned.`);
   };
 
   const isDark = theme === 'dark' || theme === 'glassmorphic';
@@ -199,6 +232,120 @@ export default function SessionsScreen() {
                   </View>
                 </View>
 
+                <ScrollView style={{ maxHeight: 440 }}>
+                <View style={[styles.infoBox, { borderBottomWidth: 1, borderBottomColor: colors.border, gap: 10 }]}>
+                  <AnimatedPressable
+                    hapticFeedback="light"
+                    onPress={() => setObserveRoomId(selectedSession.id)}
+                    style={[styles.actionBtnPrimary, { backgroundColor: colors.accent + '15', borderColor: colors.accent + '55' }]}
+                  >
+                    <Eye size={14} color={colors.accent} style={{ marginRight: 8 }} />
+                    <Text style={[styles.actionBtnPrimaryText, { color: colors.accent }]}>VIEW HOST SCREEN</Text>
+                  </AnimatedPressable>
+
+                  <Text style={[styles.metricLabel, { color: colors.textDim, marginTop: 6 }]}>INTERVENTIONS</Text>
+                  <View style={styles.actionGrid}>
+                    <TouchableOpacity onPress={() => revokeAccess(selectedSession.id)} style={[styles.gridBtn, { borderColor: colors.border }]}>
+                      <ShieldOff size={14} color={colors.amber} /><Text style={[styles.gridBtnText, { color: colors.textPrimary }]}>Revoke access</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity disabled={!selectedSession.controllerCount} onPress={() => removeController(selectedSession.id)} style={[styles.gridBtn, { borderColor: colors.border, opacity: selectedSession.controllerCount ? 1 : 0.4 }]}>
+                      <UserMinus size={14} color={colors.amber} /><Text style={[styles.gridBtnText, { color: colors.textPrimary }]}>Remove controller</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity disabled={!selectedSession.controllerCount} onPress={() => banParticipant(selectedSession.id, 'controller')} style={[styles.gridBtn, { borderColor: colors.red + '55', opacity: selectedSession.controllerCount ? 1 : 0.4 }]}>
+                      <Ban size={14} color={colors.red} /><Text style={[styles.gridBtnText, { color: colors.red }]}>Ban controller</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => banParticipant(selectedSession.id, 'host')} style={[styles.gridBtn, { borderColor: colors.red + '55' }]}>
+                      <Ban size={14} color={colors.red} /><Text style={[styles.gridBtnText, { color: colors.red }]}>Ban host</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {(selectedSession.controllers || []).map((controller: any) => (
+                    <View key={controller.id} style={[styles.controllerCard, { borderColor: colors.border }]}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <View style={{ flexShrink: 1 }}>
+                          <Text style={[styles.controllerName, { color: colors.textPrimary }]} numberOfLines={1}>{controller.name}</Text>
+                          <Text style={[styles.controllerMeta, { color: colors.textDim }]} numberOfLines={1}>{controller.email || 'No email'} | {controller.quality?.health || 'unknown'}</Text>
+                        </View>
+                        <Text style={[styles.controllerMeta, { color: colors.accent }]}>{String(controller.permission || '').toUpperCase()}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity onPress={() => revokeAccess(selectedSession.id, controller.id)}><Text style={[styles.linkBtn, { color: colors.amber }]}>Revoke</Text></TouchableOpacity>
+                        <TouchableOpacity onPress={() => removeController(selectedSession.id, controller.id)}><Text style={[styles.linkBtn, { color: colors.amber }]}>Remove</Text></TouchableOpacity>
+                        <TouchableOpacity onPress={() => banParticipant(selectedSession.id, 'controller', controller.id)}><Text style={[styles.linkBtn, { color: colors.red }]}>Ban</Text></TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={[styles.infoBox, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                  <Text style={[styles.metricLabel, { color: colors.textDim }]}>EVIDENCE GALLERY</Text>
+                  {(selectedSession.evidence || []).length ? (
+                    <View style={styles.gallery}>
+                      {[...selectedSession.evidence].reverse().map((ev: any) => (
+                        <TouchableOpacity key={ev.id} disabled={!ev.url} onPress={() => setViewerUri(uploadUri(ev.url))} style={[styles.galleryItem, { borderColor: colors.border }]}>
+                          {ev.url ? (
+                            <Image source={{ uri: uploadUri(ev.url)! }} style={styles.galleryImage} resizeMode="cover" />
+                          ) : (
+                            <View style={[styles.galleryImage, { alignItems: 'center', justifyContent: 'center' }]}><Text style={[styles.controllerMeta, { color: colors.textDim }]}>No image</Text></View>
+                          )}
+                          <Text style={[styles.controllerMeta, { color: colors.red, padding: 6 }]} numberOfLines={1}>{ev.label || 'Violation detected'}</Text>
+                          <Text style={[styles.controllerMeta, { color: colors.textDim, paddingHorizontal: 6, paddingBottom: 6 }]}>{ev.time}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={[styles.infoText, { color: colors.textDim }]}>No visual evidence captured.</Text>
+                  )}
+
+                  <Text style={[styles.metricLabel, { color: colors.textDim, marginTop: 16 }]}>SESSION RECORDINGS</Text>
+                  {(selectedSession.recordings || []).length ? (
+                    (selectedSession.recordings as string[]).map((url, i) => (
+                      <TouchableOpacity key={url} onPress={() => Linking.openURL(uploadUri(url)!)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
+                        <Film size={14} color={colors.accent} />
+                        <Text style={[styles.linkBtn, { color: colors.accent }]}>Recording chunk {i + 1}</Text>
+                      </TouchableOpacity>
+                    ))
+                  ) : (
+                    <Text style={[styles.infoText, { color: colors.textDim }]}>No recordings available.</Text>
+                  )}
+                </View>
+
+                <View style={[styles.infoBox, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                  <Text style={[styles.metricLabel, { color: colors.textDim }]}>ACTIVITY TIMELINE</Text>
+                  {(selectedSession.events || []).length ? (
+                    [...selectedSession.events].reverse().slice(0, 20).map((event: any, i: number) => (
+                      <View key={i} style={[styles.timelineItem, { borderColor: colors.border }]}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                          <Text style={[styles.controllerMeta, { color: colors.textDim }]}>{String(event.type).toUpperCase()}</Text>
+                          <Text style={[styles.controllerMeta, { color: colors.textDim }]}>{event.time}</Text>
+                        </View>
+                        <Text style={[styles.timelineText, { color: colors.textSecondary }]}>{event.message}</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={[styles.infoText, { color: colors.textDim }]}>No room events recorded yet.</Text>
+                  )}
+                </View>
+                {selectedSession.mode === 'supervised' && selectedSession.federated && (
+                  <View style={[styles.infoBox, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Brain size={14} color={colors.violet} />
+                      <Text style={[styles.metricLabel, { color: colors.textDim, marginBottom: 0 }]}>FEDERATED LEARNING (SECURE AGGREGATION)</Text>
+                    </View>
+                    <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+                      {selectedSession.federated.phase && selectedSession.federated.phase !== 'idle'
+                        ? `Round ${selectedSession.federated.round} in progress (${selectedSession.federated.phase}, ${selectedSession.federated.pendingContributors} participant(s))`
+                        : selectedSession.federated.lastAggregate
+                          ? `Last round ${selectedSession.federated.lastAggregate.round}: ${selectedSession.federated.lastAggregate.contributorCount} participant(s), ${selectedSession.federated.lastAggregate.sampleCount} sample(s)`
+                          : 'No completed rounds yet'}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={[styles.infoBox, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                  <AuditIntegrity sessionId={selectedSession.id} />
+                </View>
+
                 <View style={styles.infoBox}>
                   <Text style={[styles.metricLabel, { color: colors.textDim }]}>OBSERVATION POLICY</Text>
                   <Text style={[styles.infoText, { color: colors.textSecondary }]}>
@@ -207,12 +354,21 @@ export default function SessionsScreen() {
                       : "Host approval is required before the admin receives the live screen."}
                   </Text>
                 </View>
+                </ScrollView>
 
                 <View style={[styles.modalActions, { borderTopColor: colors.border, backgroundColor: colors.surface }]}>
+                  <AnimatedPressable
+                    hapticFeedback="light"
+                    style={[styles.actionBtnPrimary, { marginBottom: 10, backgroundColor: colors.amber + '15', borderColor: colors.amber + '55' }]}
+                    onPress={warnSession}
+                  >
+                    <AlertTriangle size={14} color={colors.amber} style={{ marginRight: 8 }} />
+                    <Text style={[styles.actionBtnPrimaryText, { color: colors.amber }]}>WARN PARTICIPANTS</Text>
+                  </AnimatedPressable>
                   <AnimatedPressable 
                     hapticFeedback="medium"
                     style={[styles.actionBtnPrimary, { backgroundColor: isDark ? 'rgba(255, 59, 92, 0.1)' : 'rgba(255, 59, 92, 0.05)', borderColor: isDark ? 'rgba(255, 59, 92, 0.3)' : 'rgba(255, 59, 92, 0.15)' }]}
-                    onPress={() => handleAction('admin-kill')}
+                    onPress={terminateSession}
                   >
                     <Text style={[styles.actionBtnPrimaryText, { color: colors.red }]}>TERMINATE SESSION</Text>
                   </AnimatedPressable>
@@ -220,6 +376,17 @@ export default function SessionsScreen() {
               </>
             )}
           </View>
+        </View>
+      </Modal>
+
+      <ObserverView roomId={observeRoomId} onClose={() => setObserveRoomId(null)} />
+
+      <Modal visible={!!viewerUri} animationType="fade" transparent={true} onRequestClose={() => setViewerUri(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }}>
+          {viewerUri && <Image source={{ uri: viewerUri }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />}
+          <TouchableOpacity onPress={() => setViewerUri(null)} style={{ position: 'absolute', top: Platform.OS === 'ios' ? 60 : 30, right: 20, padding: 10 }}>
+            <X size={24} color="#fff" />
+          </TouchableOpacity>
         </View>
       </Modal>
     </View>
@@ -266,4 +433,16 @@ const styles = StyleSheet.create({
   modalActions: { padding: 24, borderTopWidth: 1 },
   actionBtnPrimary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, borderWidth: 1 },
   actionBtnPrimaryText: { fontSize: 14, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  actionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  gridBtn: { flexBasis: '48%', flexGrow: 1, flexDirection: 'row', alignItems: 'center', gap: 6, padding: 10, borderRadius: 8, borderWidth: 1 },
+  gridBtnText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
+  controllerCard: { borderWidth: 1, borderRadius: 8, padding: 10 },
+  controllerName: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  controllerMeta: { fontSize: 10, fontFamily: 'SpaceMono' },
+  linkBtn: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  gallery: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  galleryItem: { width: '48%', borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
+  galleryImage: { width: '100%', aspectRatio: 16 / 9 },
+  timelineItem: { borderWidth: 1, borderRadius: 8, padding: 8, marginTop: 6 },
+  timelineText: { fontSize: 12, marginTop: 4, fontFamily: 'Inter_500Medium' },
 });

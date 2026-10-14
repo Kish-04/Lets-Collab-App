@@ -429,6 +429,7 @@ export default function SessionsPage() {
           status={observerStatus}
           videoRef={videoRef}
           onClose={() => {
+            socketRef.current?.emit("end-controller-observation")
             observerPcRef.current?.close()
             setObserved(null)
             setObserverStatus("")
