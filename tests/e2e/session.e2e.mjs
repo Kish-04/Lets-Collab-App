@@ -131,9 +131,9 @@ test('host and participant run a live session through the UI', { timeout: 600000
   await guest.goto(`${frontendUrl}/session?room=${roomCode}`, { waitUntil: 'domcontentloaded', timeout: 240000 })
   await guestReady.catch(() => {/* TURN fetch may be skipped if credentials are cached or unavailable */})
   await guest.locator('::-p-text(Join Room)').click()
-  // Wait for socket connection; also accept the socket.io global as fallback
+  // Wait for socket connection (window._socket is set by setupSocket in page.tsx)
   await guest.waitForFunction(() => {
-    const s = (window as any)._socket
+    const s = window._socket
     return s && s.connected
   }, { timeout: 90000 })
   await textOnPage(host, 'GuestE2E', 90000)
