@@ -53,6 +53,7 @@ import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
 import { askPet } from "@/lib/askPet"
 import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
+import { ClipboardSync, CLIPBOARD_CHANNEL } from "@/components/ircp/ClipboardSync"
 import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
@@ -666,6 +667,17 @@ function SessionContent() {
         return () => window.clearInterval(timer)
     }, [])
 
+    // The host takes clipboard text only from controllers it allowed; a controller only has the host
+    const clipboardAcceptFrom = useCallback((peerId: string) => {
+        if (role !== 'host') return true
+        const participant = participants.find(p => p.id === peerId || p.socketId === peerId)
+        return Boolean(participant?.clipboardAllowed)
+    }, [role, participants])
+    const clipboardPeerName = useCallback((peerId: string) => {
+        if (role !== 'host') return 'the host'
+        return participants.find(p => p.id === peerId || p.socketId === peerId)?.name || 'a participant'
+    }, [role, participants])
+
     const activityEntries = useMemo<ActivityEntry[]>(() => [
         ...sessionLogs.map(entry => ({ ...entry, source: 'device' as const })),
         ...(role === 'host' ? roomEvents.map(entry => ({ ...entry, source: 'room' as const })) : []),
@@ -1193,6 +1205,10 @@ function SessionContent() {
             
             const chatChannel = pc.createDataChannel('ircp-chat', { ordered: true })
             dataChannelManager.attachChannel(chatChannel, targetId, 'ircp-chat')
+
+            // Clipboard text, peer to peer; gated by the controller's clipboard permission
+            const clipboardChannel = pc.createDataChannel(CLIPBOARD_CHANNEL, { ordered: true })
+            dataChannelManager.attachChannel(clipboardChannel, targetId, CLIPBOARD_CHANNEL)
 
             // Reliable, ordered channel for Yjs CRDT sync (whiteboard, exam code mirror)
             const crdtChannel = pc.createDataChannel(CRDT_CHANNEL, { ordered: true })
@@ -2491,6 +2507,14 @@ function SessionContent() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2.5">
+                    {(role === 'host' || role === 'controller') && (
+                        <ClipboardSync
+                            canSend={role === 'host' || clipboardAllowed}
+                            acceptFrom={clipboardAcceptFrom}
+                            describePeer={clipboardPeerName}
+                            onLog={message => addLog('system', message)}
+                        />
+                    )}
                     <button
                         onClick={() => { setActivityOpen(open => !open); setChatOpen(false) }}
                         aria-label="Toggle Session Activity"
