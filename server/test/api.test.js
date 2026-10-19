@@ -66,6 +66,28 @@ describe('API Tests', () => {
     expect(res.statusCode).toEqual(200);
   });
 
+  it('should rate-limit password reset guesses for one email', async () => {
+    const email = `reset-${Date.now()}@test.local`;
+    const statuses = [];
+    for (let i = 0; i < 7; i++) {
+      const res = await request(app)
+        .post('/api/auth/reset-password')
+        .send({ email, otp: String(100000 + i), newPassword: 'a-new-password' });
+      statuses.push(res.statusCode);
+    }
+    expect(statuses.slice(0, 5).every(code => code !== 429)).toBe(true);
+    expect(statuses[6]).toEqual(429);
+  });
+
+  it('should rate-limit repeated login attempts for one email', async () => {
+    const email = `login-${Date.now()}@test.local`;
+    let last;
+    for (let i = 0; i < 12; i++) {
+      last = await request(app).post('/api/auth/login').send({ email, password: `guess-${i}` });
+    }
+    expect(last.statusCode).toEqual(429);
+  });
+
   it('should not expose the unauthenticated evidence video upload', async () => {
     const res = await request(app)
       .post('/api/upload-evidence-video')
