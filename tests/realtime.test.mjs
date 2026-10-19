@@ -326,6 +326,23 @@ test('a host that drops can resume its room, and a dropped controller comes back
   await once(intruder, 'resume-failed')
 })
 
+test('an administrator cannot silently join a collaboration room', async () => {
+  const host = await connect(user('CollabHost'))
+  host.emit('create-room', { name: 'CollabHost', mode: 'collaboration' })
+  const { roomCode } = await once(host, 'room-created')
+  const admin = await connect(user('Watcher', 'admin'))
+  const asked = once(host, 'admin-observation-request')
+  const noState = noEvent(admin, 'session-state', 800)
+  admin.emit('join-room', roomCode, 'admin', { name: 'Administrator' })
+  await once(admin, 'observation-pending')
+  assert.equal((await asked).observerId, admin.id)
+  await noState // no room state (participants, chat, E2E roster) before the host agrees
+
+  const granted = once(admin, 'observation-granted')
+  host.emit('respond-observation', { observerId: admin.id, approved: true }, roomCode)
+  assert.equal((await granted).roomCode, roomCode)
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))

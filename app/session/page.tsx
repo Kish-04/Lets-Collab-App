@@ -1453,6 +1453,13 @@ function SessionContent() {
             const pc = observerPcRefs.current.get(fromId)
             await pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
         })
+        // Administrators observing a collaboration room wait for the host's consent
+        socket.on('observation-pending', () => addLog('system', 'Waiting for the host to approve your observation request'))
+        socket.on('observation-denied', () => {
+            alert('The host declined your observation request.')
+            router.push('/admin')
+        })
+        socket.on('observation-granted', () => { setConnectionState('connecting'); addLog('system', 'Host approved observation') })
         socket.on('room-event', (event: { time: string; type: string; message: string }) => {
             setRoomEvents(prev => [...prev, { ...event, time: roomTimeToIso(event.time) }].slice(-200))
         })

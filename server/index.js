@@ -1530,11 +1530,23 @@ io.on('connection', (socket) => {
         socket.emit('join-denied', { reason: 'Administrator privileges required.' });
         return;
       }
+      // Collaboration rooms need the host's consent, exactly like request-observation; only
+      // supervised rooms (where monitoring is announced) let an administrator in directly
+      if (room.mode !== 'supervised') {
+        socket.observingRoom = normalizedRoomId;
+        room.pendingObservers.add(socket.id);
+        io.to(room.hostSocketId).emit('admin-observation-request', { observerId: socket.id });
+        socket.emit('observation-pending', { message: 'Waiting for host approval.' });
+        pushEvent(normalizedRoomId, 'system', 'Administrator asked to observe the session');
+        return;
+      }
       room.observers.add(socket.id);
       socket.join(normalizedRoomId);
       socket.roomCode = normalizedRoomId;
       socket.role = 'admin';
+      pushEvent(normalizedRoomId, 'system', 'Administrator joined the supervised session as an observer');
       socket.emit('session-state', roomState(normalizedRoomId, room, socket));
+      emitRoomState(normalizedRoomId);
       return;
     }
     if (room.hostEmail && actor.email === room.hostEmail) {
