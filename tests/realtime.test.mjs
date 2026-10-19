@@ -374,6 +374,22 @@ test('session verification checks the signed audit chain even without a blockcha
   assert.match(key.publicKey, /BEGIN PUBLIC KEY/)
 })
 
+test('a flood of socket events from one connection is cut off, then it recovers', async () => {
+  const flooder = await connect(user('Flooder'))
+  let answered = 0
+  flooder.on('sessions-count', () => { answered += 1 })
+  const limited = once(flooder, 'rate-limited')
+  for (let i = 0; i < 1500; i++) flooder.emit('get-session-count')
+  await limited
+  await new Promise(resolve => setTimeout(resolve, 500))
+  assert.ok(answered < 1000, `answered ${answered} of 1500`)
+
+  await new Promise(resolve => setTimeout(resolve, 1500)) // the bucket refills
+  const again = once(flooder, 'sessions-count')
+  flooder.emit('get-session-count')
+  await again
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))
