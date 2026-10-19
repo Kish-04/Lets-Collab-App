@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { isSignedIn } from '@/lib/serverAuth'
 
 // We will instantiate genAI inside the POST function to prevent module-level errors
 
 
 export async function POST(req: Request) {
   try {
+    // Every call spends the Gemini quota, so only signed-in users may ask
+    if (!await isSignedIn(req)) return NextResponse.json({ text: 'Sign in to talk to the pet assistant.' }, { status: 401 })
     const body = await req.json()
     const { message, imageBase64, codeContext } = body
 

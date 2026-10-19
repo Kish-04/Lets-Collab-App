@@ -88,6 +88,11 @@ describe('API Tests', () => {
     expect(last.statusCode).toEqual(429);
   });
 
+  it('should require sign-in for the Gemini pet', async () => {
+    const res = await request(app).post('/api/pet').send({ message: 'hi' });
+    expect(res.statusCode).toEqual(401);
+  });
+
   it('should not expose the unauthenticated evidence video upload', async () => {
     const res = await request(app)
       .post('/api/upload-evidence-video')

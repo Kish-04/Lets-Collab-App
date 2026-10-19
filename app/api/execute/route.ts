@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import { isSignedIn } from '@/lib/serverAuth';
 
 const execAsync = promisify(exec);
 
@@ -30,19 +31,6 @@ function executionEnabled() {
     if (process.env.CODE_EXECUTION_ENABLED === 'true') return true;
     if (process.env.CODE_EXECUTION_ENABLED === 'false') return false;
     return process.env.NODE_ENV !== 'production';
-}
-
-// Only signed-in users may run code: the token is checked by the backend that issued it
-async function isSignedIn(req: Request) {
-    const authorization = req.headers.get('authorization') || '';
-    if (!/^Bearer\s+\S+/i.test(authorization)) return false;
-    const backend = (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8081').replace(/\/+$/, '');
-    try {
-        const res = await fetch(`${backend}/api/auth/me`, { headers: { authorization }, cache: 'no-store' });
-        return res.ok;
-    } catch {
-        return false;
-    }
 }
 
 const refuse = (status: number, message: string) => NextResponse.json({ run: { output: '', stderr: message } }, { status });

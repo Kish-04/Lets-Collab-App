@@ -51,6 +51,7 @@ import { useFaceProctoring } from "@/hooks/useFaceProctoring"
 import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
+import { askPet } from "@/lib/askPet"
 import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
@@ -2193,25 +2194,19 @@ function SessionContent() {
 
         if (text.toLowerCase().startsWith('@pet')) {
             setPetState('Thinking')
+            // The answer is shown only to the asker (the room got the encrypted @pet message itself)
+            const showPetLine = (line: string) => setChatMessages(prev => [...prev, {
+                id: `pet-${Date.now()}`,
+                time: new Date().toISOString(),
+                senderId: 'system',
+                senderName: 'System',
+                role: 'admin',
+                text: line,
+            }])
             try {
-                const res = await fetch('/api/pet', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: text.replace(/^@pet/i, '').trim(), roomCode: activeRoom })
-                })
-                const data = await res.json()
-                if (data.reply) {
-                    setChatMessages(prev => [...prev, {
-                        id: Date.now().toString(),
-                        time: new Date().toISOString(),
-                        senderId: 'system',
-                        senderName: 'System',
-                        role: 'admin',
-                        text: `🐶 [Pet AI]: ${data.reply}`
-                    }])
-                }
-            } catch (err) {
-                console.error(err)
+                showPetLine(`🐶 [Pet AI]: ${await askPet(text.replace(/^@pet/i, '').trim() || 'Hello!')}`)
+            } catch (err: any) {
+                showPetLine(`🐶 [Pet AI]: ${err?.message || 'The pet assistant is unavailable right now.'}`)
             } finally {
                 setPetState('Idle')
             }

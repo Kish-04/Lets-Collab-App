@@ -94,7 +94,17 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-app.post('/api/pet', async (req, res) => {
+// Each call spends the Gemini quota: signed-in users only, 20 questions per user per minute
+const petLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { default: false },
+  keyGenerator: (req) => String(req.user?._id || req.ip),
+  message: { text: 'I need a short break. Ask me again in a minute!' },
+});
+app.post('/api/pet', protectAuthenticated, petLimiter, async (req, res) => {
   try {
     const { message, imageBase64, codeContext } = req.body;
     const geminiApiKey = process.env.GEMINI_API_KEY || '';
