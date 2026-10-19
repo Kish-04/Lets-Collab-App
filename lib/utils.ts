@@ -21,18 +21,16 @@ function normalizeUrl(value?: string | null) {
 
 function getRuntimeBackendUrl() {
   if (typeof window === 'undefined') return ''
+  // No query-string override: a link like ?backendUrl=https://evil would send the user's token and
+  // all session signaling to whoever wrote the link.
   let storedBackendUrl = ''
-  let qsBackendUrl = ''
   try {
     storedBackendUrl = window.localStorage.getItem('ircp_backend_url') || ''
-    const urlParams = new URLSearchParams(window.location.search)
-    qsBackendUrl = urlParams.get('backendUrl') || ''
   } catch {
     storedBackendUrl = ''
   }
   return normalizeUrl(
     window.electronConfig?.backendUrl ||
-    qsBackendUrl ||
     window.__LETSCOLLAB_BACKEND_URL__ ||
     storedBackendUrl
   )
