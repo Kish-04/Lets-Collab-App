@@ -32,7 +32,8 @@ export default function TabOneScreen() {
   const [data, setData] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
-  const [debugResponse, setDebugResponse] = useState<string>("");
+  // Non-admin accounts (students, participants) use this tab only to join a session
+  const [participantOnly, setParticipantOnly] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const isDark = theme === 'dark' || theme === 'glassmorphic';
   
@@ -76,8 +77,6 @@ export default function TabOneScreen() {
     try {
       const headers = await getAuthHeaders();
       const noCacheUrl = `${BACKEND_URL}/api/admin/reports?_t=${Date.now()}`;
-      setDebugResponse("Fetching from " + noCacheUrl);
-      
       const response = await fetch(noCacheUrl, { 
         headers: {
           ...headers,
@@ -87,20 +86,25 @@ export default function TabOneScreen() {
         } 
       });
       
-      if (response.status === 401 || response.status === 403) {
-        console.warn("Unauthorized, logging out...");
-        setDebugResponse("Status " + response.status + " Logging out");
+      // 401: the token is missing or expired, so sign out. 403: a valid account that is not an
+      // admin; keep it signed in so it can join sessions from the box above.
+      if (response.status === 401) {
         handleLogout();
         return;
       }
+      if (response.status === 403) {
+        setParticipantOnly(true);
+        setError(false);
+        return;
+      }
+      setParticipantOnly(false);
 
       const text = await response.text();
-      setDebugResponse("Status " + response.status + " Text: " + text.substring(0, 100));
       let json = null;
       try {
          json = JSON.parse(text);
-      } catch (e) {
-         setDebugResponse("Status " + response.status + " Parse Error");
+      } catch {
+         json = null;
       }
       
       if (response.ok && json && json.success) {
@@ -112,7 +116,6 @@ export default function TabOneScreen() {
       }
     } catch (e: any) {
       console.error("Fetch exception:", e);
-      setDebugResponse("Fetch exception: " + e.message);
       setError(true);
     }
   };
@@ -234,15 +237,17 @@ export default function TabOneScreen() {
             </View>
           </View>
 
-          {error ? (
+          {participantOnly ? (
+            <View style={[styles.errorContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>Enter the room code from your host or exam invite above to join a session. Analytics are only shown to administrators.</Text>
+            </View>
+          ) : error ? (
             <View style={[styles.errorContainer, { backgroundColor: isDark ? 'rgba(255, 59, 92, 0.1)' : 'rgba(255, 59, 92, 0.05)', borderColor: isDark ? 'rgba(255, 59, 92, 0.3)' : 'rgba(255, 59, 92, 0.2)' }]}>
               <Text style={[styles.errorText, { color: colors.red }]}>Could not connect to backend analytics.</Text>
             </View>
           ) : (
             <>
               <View style={styles.statsGrid}>
-                {/* Debug info kept for user verification */}
-                <Text style={{color: 'red', fontSize: 10, position: 'absolute', top: -15, zIndex: 10}}>Debug Info: data is {data ? "present" : "null"}</Text>
                 <Text style={[styles.chartTitle, { color: colors.textPrimary, marginBottom: 0, marginLeft: 4 }]}>System Activity History</Text>
                 <ActivityHeatmap sessions={data?.sessionHistory || []} />
               </View>
