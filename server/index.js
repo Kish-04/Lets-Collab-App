@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 // Fallback to root .env if it exists
 require('dotenv').config();
@@ -966,7 +967,7 @@ function transcriptDigest(session) {
 // Every on-chain anchor is a paid transaction, and several events can be triggered at will by
 // clients. Anchors are always recorded off-chain; only the chain write is budgeted. Session
 // archive/termination and panic revokes always go on-chain (they are bounded by room creation).
-const CHAIN_ALWAYS = new Set(['SESSION_ARCHIVED', 'SESSION_TERMINATED', 'PANIC_REVOKE']);
+const CHAIN_ALWAYS = new Set(['SESSION_ARCHIVED', 'SESSION_TERMINATED', 'PANIC_REVOKE', 'EVIDENCE_PURGED']);
 const CHAIN_NOISY = new Set(['AI_ANTI_CHEAT_ALERT', 'PERMISSION_VIOLATION']);
 const CHAIN_NOISY_INTERVAL_MS = Number(process.env.CHAIN_NOISY_INTERVAL_MS || 20000);
 const CHAIN_ROOM_WINDOW_MS = 10 * 60 * 1000;
@@ -992,6 +993,23 @@ function chainWriteAllowed(room, eventType, now = Date.now()) {
 // How long a dropped host or controller can take to come back before the room or seat is given up
 const HOST_RECONNECT_GRACE_MS = Number(process.env.HOST_RECONNECT_GRACE_MS ?? 45000);
 const CONTROLLER_RECONNECT_GRACE_MS = Number(process.env.CONTROLLER_RECONNECT_GRACE_MS ?? 45000);
+
+// Deletes local /uploads files behind evidence/recording URLs; never touches anything outside uploads/
+function deleteUploadedFiles(urls) {
+  const uploadsRoot = path.resolve(__dirname, 'uploads');
+  let deleted = 0;
+  urls.forEach((url) => {
+    const bare = String(url).split('?')[0];
+    if (!isUploadPath(bare)) return;
+    const target = path.resolve(uploadsRoot, bare.slice('/uploads/'.length));
+    if (!target.startsWith(uploadsRoot + path.sep)) return;
+    try {
+      fs.unlinkSync(target);
+      deleted += 1;
+    } catch { /* already gone */ }
+  });
+  return deleted;
+}
 
 async function closeRoomAfterHostLeft(roomId) {
   const room = rooms.get(roomId);
@@ -2433,17 +2451,53 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('secret-delete-recordings', async ({ roomId }) => {
+  // "Code Black": an administrator purges a room's recordings and evidence. It must be confirmed with
+  // the room code and a reason, deletes the stored files (not just the references), and is itself
+  // anchored on the audit chain (who, why, how many items, digest of what was removed).
+  socket.on('secret-delete-recordings', async ({ roomId, reason, confirmCode } = {}) => {
     if (!(await isAdminSocket(socket))) return;
-    const liveRoom = rooms.get(roomId);
+    const roomCode = normalizeRoomCode(roomId);
+    const why = String(reason || '').trim().slice(0, 300);
+    if (!roomCode || normalizeRoomCode(confirmCode) !== roomCode || why.length < 5) {
+      socket.emit('admin-error', 'Evidence purge refused: confirm with the room code and give a reason (at least 5 characters).');
+      return;
+    }
+    const actor = await authenticatedUser(socket);
+    const removed = [];
+    const liveRoom = rooms.get(roomCode);
     if (liveRoom) {
+      removed.push(...(liveRoom.recordings || []), ...(liveRoom.evidence || []).map(item => item?.url));
       liveRoom.recordings = [];
       liveRoom.evidence = [];
-      broadcastSessions();
     }
     if (global.dbConnected) {
-      await SessionLog.updateMany({ roomCode: roomId }, { $set: { evidence: [] } });
+      const logs = await SessionLog.find({ roomCode }).lean().catch(() => []);
+      logs.forEach(log => removed.push(...(log.evidence || []).map(item => item?.url), ...(log.recordings || [])));
+      await SessionLog.updateMany({ roomCode }, { $set: { evidence: [] } }).catch(err => console.error('[CODE BLACK]', err.message));
+    } else {
+      removed.push(...mockStore.purgeSessionEvidence(roomCode));
     }
+
+    const urls = Array.from(new Set(removed.filter(url => typeof url === 'string' && url)));
+    const filesDeleted = deleteUploadedFiles(urls);
+    const record = {
+      room: roomCode,
+      reason: why,
+      items: urls.length,
+      filesDeleted,
+      itemsDigest: crypto.createHash('sha256').update(urls.sort().join('\n')).digest('hex'),
+    };
+    if (liveRoom) {
+      pushEvent(roomCode, 'system', `Administrator purged ${urls.length} evidence item(s): ${why}`);
+      anchorEvent(roomCode, 'EVIDENCE_PURGED', record, liveRoom.hostEmail, actor?.email || '');
+    } else {
+      const { payload } = hashAuditPayload(record);
+      logToChain(roomCode, hashIdentity(''), hashIdentity(actor?.email || ''), 'EVIDENCE_PURGED', payload)
+        .catch(err => console.error('[AUDIT]', err.message));
+    }
+    console.warn(`[CODE BLACK] ${actor?.email || 'admin'} purged ${urls.length} item(s) for ${roomCode}: ${why}`);
+    socket.emit('admin-action-complete', { message: `Purged ${urls.length} evidence item(s) (${filesDeleted} file(s) deleted). The purge is recorded on the audit chain.` });
+    broadcastSessions();
   });
 
   socket.on('disconnect', async () => {

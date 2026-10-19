@@ -343,6 +343,20 @@ test('an administrator cannot silently join a collaboration room', async () => {
   assert.equal((await granted).roomCode, roomCode)
 })
 
+test('Code Black needs the room code and a reason, and is anchored', async () => {
+  const { host, roomCode } = await supervisedRoom(1)
+  const admin = await connect(user('Purger', 'admin'))
+  admin.emit('secret-delete-recordings', { roomId: roomCode })
+  assert.match(await once(admin, 'admin-error'), /refused/)
+  admin.emit('secret-delete-recordings', { roomId: roomCode, confirmCode: 'WRONG', reason: 'privacy request' })
+  assert.match(await once(admin, 'admin-error'), /refused/)
+
+  const anchored = once(host, 'chain-log', entry => entry.type === 'evidence_purged')
+  admin.emit('secret-delete-recordings', { roomId: roomCode, confirmCode: roomCode.toLowerCase(), reason: 'privacy request' })
+  assert.match((await once(admin, 'admin-action-complete')).message, /Purged \d+ evidence item/)
+  await anchored
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))

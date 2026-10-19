@@ -146,6 +146,20 @@ function listSessionLogs(limit = 500) {
   return state.sessionLogs.slice(0, limit);
 }
 
+// Clears evidence and recordings stored for a room's archived sessions; returns what was removed
+function purgeSessionEvidence(roomCode) {
+  const removed = [];
+  state.sessionLogs.forEach((log) => {
+    if (log.roomCode !== roomCode) return;
+    (log.evidence || []).forEach(item => removed.push(item && item.url ? item.url : item));
+    (log.recordings || []).forEach(url => removed.push(url));
+    log.evidence = [];
+    log.recordings = [];
+  });
+  if (removed.length) persist();
+  return removed;
+}
+
 module.exports = {
   addAlert,
   addSessionLog,
@@ -154,6 +168,7 @@ module.exports = {
   findUserById,
   listAlerts,
   listSessionLogs,
+  purgeSessionEvidence,
   listUsers,
   publicUser,
   saveUser,

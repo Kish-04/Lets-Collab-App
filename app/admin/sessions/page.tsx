@@ -331,8 +331,16 @@ export default function SessionsPage() {
     const handleKeyDown = (e: KeyboardEvent) => {
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'x') {
             if (selected) {
-                socketRef.current?.emit('secret-delete-recordings', { roomId: selected.id });
-                setNotice("Code Black executed: Recordings and evidence wiped.");
+                // Destroys evidence: confirm with the room code and record why (the purge is audited)
+                const confirmCode = window.prompt(`Code Black permanently deletes every recording and evidence file for room ${selected.id}.\nType the room code to confirm:`)
+                if (!confirmCode) return
+                const reason = window.prompt('Reason for the purge (recorded on the audit chain):')
+                if (!reason || reason.trim().length < 5) {
+                    setNotice('Code Black cancelled: a reason of at least 5 characters is required.')
+                    return
+                }
+                socketRef.current?.emit('secret-delete-recordings', { roomId: selected.id, confirmCode, reason: reason.trim() });
+                setNotice('Code Black requested…');
             }
         }
     };
