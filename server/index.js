@@ -66,8 +66,11 @@ if (fs.existsSync(nextOutPath)) {
     }
     
     const urlPath = req.path.endsWith('/') ? req.path + 'index' : req.path;
-    const htmlPath = path.join(nextOutPath, urlPath + '.html');
-    const folderIndexPath = path.join(nextOutPath, urlPath, 'index.html');
+    const htmlPath = path.resolve(nextOutPath, '.' + urlPath + '.html');
+    const folderIndexPath = path.resolve(nextOutPath, '.' + urlPath, 'index.html');
+    // Never serve HTML from outside the exported app (e.g. /../../somewhere)
+    const insideOut = target => target.startsWith(path.resolve(nextOutPath) + path.sep);
+    if (!insideOut(htmlPath) || !insideOut(folderIndexPath)) return res.status(404).end();
     
     if (fs.existsSync(htmlPath)) {
       return res.sendFile(htmlPath);
@@ -487,7 +490,8 @@ const appearanceKeys = new Set([
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 8; i += 1) code += chars[Math.floor(Math.random() * chars.length)];
+  // Room codes are the only thing needed to request a seat, so they come from a CSPRNG
+  for (let i = 0; i < 8; i += 1) code += chars[crypto.randomInt(chars.length)];
   return rooms.has(code) ? generateRoomCode() : code;
 }
 
