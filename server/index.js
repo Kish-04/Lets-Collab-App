@@ -153,15 +153,30 @@ The user said: "${message}"${codeContext && codeContext.code ? '\n\nThe user is 
 
 app.post('/api/profile', protectAuthenticated, async (req, res) => {
   try {
-    const { name, newPassword } = req.body;
+    const { newPassword, currentPassword } = req.body;
+    const name = typeof req.body.name === 'string' ? req.body.name.trim().slice(0, 80) : '';
     const userEmail = req.user.email;
     if (!userEmail) return res.status(401).json({ success: false, message: 'Not authorized' });
+    if (newPassword !== undefined && (typeof newPassword !== 'string' || newPassword.length < 8)) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
+    }
 
     let updated = false;
-    let user = null;
+    let user = global.dbConnected
+      ? await User.findOne({ email: userEmail })
+      : mockStore.findUserByEmail(userEmail);
+
+    // A session token alone must not be enough to take over the account
+    if (user && newPassword) {
+      const matches = typeof currentPassword === 'string' && currentPassword.length > 0 && (global.dbConnected
+        ? await user.matchPassword(currentPassword)
+        : await bcrypt.compare(currentPassword, user.password || ''));
+      if (!matches) {
+        return res.status(403).json({ success: false, message: 'Current password is incorrect. If you signed up with Google or GitHub, use "Forgot password" to set one.' });
+      }
+    }
 
     if (global.dbConnected) {
-      user = await User.findOne({ email: userEmail });
       if (user) {
         if (name) user.name = name;
         if (newPassword) user.password = newPassword; // Pre-save hook hashes it
@@ -169,8 +184,6 @@ app.post('/api/profile', protectAuthenticated, async (req, res) => {
         updated = true;
       }
     } else {
-      const mockStore = require('./mockStore');
-      user = mockStore.findUserByEmail(userEmail);
       if (user) {
         if (name) user.name = name;
         if (newPassword) {

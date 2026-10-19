@@ -88,6 +88,26 @@ describe('API Tests', () => {
     expect(last.statusCode).toEqual(429);
   });
 
+  it('should need the current password to change it', async () => {
+    const bcrypt = require('bcrypt');
+    const mockStore = require('../mockStore');
+    const { signJwt } = require('../config');
+    const user = mockStore.createUser({
+      name: 'Profile User',
+      email: `profile-${Date.now()}@test.local`,
+      password: await bcrypt.hash('old-password-1', 4),
+      isVerified: true,
+    });
+    const auth = { Authorization: `Bearer ${signJwt({ id: user._id })}` };
+    const change = body => request(app).post('/api/profile').set(auth).send(body);
+
+    expect((await change({ name: 'Renamed', newPassword: 'new-password-1' })).statusCode).toEqual(403);
+    expect((await change({ newPassword: 'new-password-1', currentPassword: 'wrong-guess' })).statusCode).toEqual(403);
+    expect((await change({ newPassword: 'short', currentPassword: 'old-password-1' })).statusCode).toEqual(400);
+    expect((await change({ newPassword: 'new-password-1', currentPassword: 'old-password-1' })).statusCode).toEqual(200);
+    expect((await change({ name: 'Just A Rename' })).statusCode).toEqual(200);
+  });
+
   it('should require sign-in for the Gemini pet', async () => {
     const res = await request(app).post('/api/pet').send({ message: 'hi' });
     expect(res.statusCode).toEqual(401);
