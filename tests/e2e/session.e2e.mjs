@@ -56,6 +56,7 @@ async function pageAs(user) {
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
   page.on('pageerror', err => console.log(`[${user.name} page error]`, err.message))
+  page.on('console', msg => { if (msg.type() === 'error') console.log(`[${user.name} console]`, msg.text()) })
   await page.evaluateOnNewDocument((u, backend) => {
     localStorage.setItem('ircp_user', JSON.stringify({ token: u.token, name: u.name, email: u.email, role: u.role }))
     localStorage.setItem('ircp_name', u.name)
@@ -147,8 +148,24 @@ test('host and participant run a live session through the UI', { timeout: 600000
 
   // End-to-end encrypted chat, both directions, through the real chat UI
   const sendChat = async (page, text) => {
-    if (!(await page.$('input[placeholder="Message everyone"]'))) await page.click('[aria-label="Toggle Session Chat"]')
-    await page.waitForFunction(() => document.body.innerText.includes('E2E ') && !document.body.innerText.includes('E2E pending'), { timeout: 60000 })
+    await page.bringToFront() // background tabs are throttled on slow CI runners
+    const chatInput = 'input[placeholder="Message everyone"]'
+    // DOM click, not a coordinate click: a toast or panel overlapping the header must not swallow it
+    if (!(await page.$(chatInput))) await page.$eval('[aria-label="Toggle Session Chat"]', button => button.click())
+    await page.waitForSelector(chatInput, { visible: true, timeout: 30000 })
+    await page.waitForFunction(() => document.body.innerText.includes('E2E ') && !document.body.innerText.includes('E2E pending'), { timeout: 120000 })
+      .catch(async err => {
+        const state = await page.evaluate(() => ({
+          socketId: window._socket?.id,
+          connected: window._socket?.connected,
+          room: window._roomCode?.current,
+          secure: window.isSecureContext,
+          subtle: Boolean(window.crypto?.subtle),
+          chatBadge: Array.from(document.querySelectorAll('span')).map(s => s.innerText).filter(t => t.startsWith('E2E')),
+        }))
+        console.log('[sendChat] E2E key never arrived:', JSON.stringify(state))
+        throw err
+      })
     await page.type('input[placeholder="Message everyone"]', text)
     await page.keyboard.press('Enter')
   }
