@@ -440,6 +440,16 @@ test('exam answer keys never reach candidates and grading happens on the server'
   assert.deepEqual((await state).examQuestions, [])
 })
 
+test('a freeform answer padded with guesses is not graded correct', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const received = once(candidate, 'new-exam-question')
+  host.emit('host-push-question', { id: 'cap', type: 'freeform', prompt: 'Capital of France?', answerKey: 'paris|city of paris', roomId: roomCode })
+  await received
+  const result = once(candidate, 'exam-answer-result')
+  candidate.emit('controller-submit-answer', { questionId: 'cap', answer: { text: 'london paris berlin rome' }, roomId: roomCode })
+  assert.deepEqual(await result, { questionId: 'cap', correct: false })
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

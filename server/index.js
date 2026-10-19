@@ -579,12 +579,39 @@ function sanitizeExamAnswer(answer = {}) {
 }
 
 /** Server-side grading (the candidate never sees the key); null when the question has no key. */
+// Answers are compared exactly after normalising case, whitespace and trailing punctuation; a key may
+// list accepted alternatives separated by "|" (e.g. "paris|city of paris"). Substring matching let a
+// candidate pass by padding the answer with guesses.
+function normalizeExamText(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim().replace(/[.!?;,]+$/, '').trim();
+}
+
 function gradeExamAnswer(question, answer) {
   if (!question.answerKey) return null;
-  const key = question.answerKey.toLowerCase().trim();
-  if (question.type === 'mc' || question.type === 'poll') return (answer.text || '').toLowerCase().trim() === key;
-  if (question.type === 'code') return (answer.output || '').toLowerCase().trim().includes(key);
-  return (answer.text || '').toLowerCase().trim().includes(key);
+  const accepted = String(question.answerKey).split('|').map(normalizeExamText).filter(Boolean);
+  if (accepted.length === 0) return null;
+  // Code output is produced in the candidate's browser, so this checks what they report, not a
+  // server-side run; the host sees the code itself in the live view
+  const given = normalizeExamText(question.type === 'code' ? answer.output : answer.text);
+  return accepted.includes(given);
+}
+
+// What is kept of an exam when the session is archived: questions with keys and every final answer,
+// without bulky voice recordings
+function examArchive(room) {
+  const answers = {};
+  Object.entries(room.exam?.answers || {}).forEach(([questionId, byController]) => {
+    answers[questionId] = {};
+    Object.entries(byController).forEach(([controllerId, entry]) => {
+      const participant = room.controllers.get(controllerId);
+      const { audio, ...rest } = entry || {};
+      answers[questionId][controllerId] = { ...rest, hadAudio: Boolean(audio), name: participant?.name, email: participant?.email };
+    });
+  });
+  return {
+    questions: (room.exam?.questions || []).map(({ voicePrompt, ...question }) => question),
+    answers,
+  };
 }
 
 function examQuestionsFor(room, targetSocket) {
@@ -1199,6 +1226,7 @@ async function archiveSession(roomCode, reason) {
     latestTxHash: room.latestTxHash,
     anchors: room.anchors,
     federated: federatedSummary(room),
+    examData: room.mode === 'supervised' ? examArchive(room) : undefined,
   };
   endedSessions.unshift(archived);
   if (endedSessions.length > 100) endedSessions.pop();
