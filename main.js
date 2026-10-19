@@ -101,10 +101,24 @@ function isTrustedRendererUrl(value) {
     const urlObj = new URL(value);
     const isApp = urlObj.protocol === 'app:';
     const isLocalhost = urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1';
-    return isApp || isLocalhost;
+    // Installed builds only ever load the bundled app:// pages; a local dev server is trusted only
+    // in unpackaged development runs, so another local web page cannot drive execute-input
+    return isApp || (!app.isPackaged && isLocalhost);
   } catch (e) {
     return false;
   }
+}
+
+// A window that navigates keeps its preload API, so it may only move between trusted pages;
+// web links open in the default browser instead
+function lockNavigation(win) {
+  const guard = (event, url) => {
+    if (isTrustedRendererUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+  };
+  win.webContents.on('will-navigate', guard);
+  win.webContents.on('will-redirect', guard);
 }
 
 function isTrustedIpcSender(event, channel) {
@@ -218,6 +232,8 @@ function createWindow() {
     }
   });
 
+  lockNavigation(petWindow);
+  petWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   loadURL(petWindow).then(() => {
     petWindow.loadURL('app://-/pet.html');
     petWindow.hide();
@@ -230,6 +246,7 @@ function createWindow() {
   mainWindow.on('closed', () => { if (petWindow && !petWindow.isDestroyed()) petWindow.close(); });
 
   // Security checks
+  lockNavigation(mainWindow);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
     return { action: 'deny' };
@@ -308,10 +325,13 @@ app.on('window-all-closed', () => {
 
 // IPC Handlers
 ipcMain.handle('gemini:ask', async (event, prompt, codeContext) => {
+  if (!isTrustedIpcSender(event, 'gemini:ask')) return '';
   return generateReply(prompt, codeContext);
 });
 
 ipcMain.handle('oauth-login', async (event, provider) => {
+  if (!isTrustedIpcSender(event, 'oauth-login')) return false;
+  if (provider !== 'google' && provider !== 'github') return false;
   const backendUrl = getConfiguredBackendUrl();
   const authUrl = `${backendUrl}/api/auth/${provider}`;
   
@@ -360,10 +380,12 @@ ipcMain.handle('oauth-login', async (event, provider) => {
 });
 
 ipcMain.on('pet-state-update', (event, data) => {
+  if (!isTrustedIpcSender(event, 'pet-state-update')) return;
   if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send('pet-sync-state', data);
 });
 
 ipcMain.on('set-pet-enabled', (event, enabled) => {
+  if (!isTrustedIpcSender(event, 'set-pet-enabled')) return;
   petEnabled = enabled;
   if (petWindow && !petWindow.isDestroyed()) {
     if (!enabled) petWindow.hide();
@@ -372,6 +394,7 @@ ipcMain.on('set-pet-enabled', (event, enabled) => {
 });
 
 ipcMain.on('move-pet-window', (event, { x, y }) => {
+  if (!isTrustedIpcSender(event, 'move-pet-window')) return;
   if (petWindow && !petWindow.isDestroyed()) {
     const [currentX, currentY] = petWindow.getPosition();
     petWindow.setPosition(Math.round(currentX + x), Math.round(currentY + y));
@@ -379,12 +402,15 @@ ipcMain.on('move-pet-window', (event, { x, y }) => {
 });
 
 ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
+  if (!isTrustedIpcSender(event, 'set-ignore-mouse-events')) return;
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.setIgnoreMouseEvents(ignore, { forward: true });
   }
 });
 
-ipcMain.handle('get-shareable-sources', async () => {
+ipcMain.handle('get-shareable-sources', async (event) => {
+  // Thumbnails of every window and screen: only for the app's own pages
+  if (!isTrustedIpcSender(event, 'get-shareable-sources')) return [];
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 300, height: 200 }, fetchWindowIcons: true });
     let screenIndex = 0;
@@ -402,7 +428,8 @@ ipcMain.handle('get-shareable-sources', async () => {
   }
 });
 
-ipcMain.handle('set-share-source', (_event, sourceId) => {
+ipcMain.handle('set-share-source', (event, sourceId) => {
+  if (!isTrustedIpcSender(event, 'set-share-source')) return false;
   pendingShareSourceId = typeof sourceId === 'string' ? sourceId : null;
   
   if (sharedWindowBoundsInterval) {
@@ -441,11 +468,13 @@ ipcMain.handle('set-share-source', (_event, sourceId) => {
 });
 
 ipcMain.on('toggle-fullscreen', (event) => {
+  if (!isTrustedIpcSender(event, 'toggle-fullscreen')) return;
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.setFullScreen(!win.isFullScreen());
 });
 
 ipcMain.on('enable-kiosk-mode', (event, enable) => {
+  if (!isTrustedIpcSender(event, 'enable-kiosk-mode')) return;
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) {
     win.setKiosk(enable);
@@ -477,7 +506,7 @@ ipcMain.on('set-clipboard-guard', (event, locked) => {
 });
 
 // Remote Input (RobotJS / ViGEmClient)
-ipcMain.handle('get-panic-shortcuts', () => registeredPanicShortcuts);
+ipcMain.handle('get-panic-shortcuts', (event) => (isTrustedIpcSender(event, 'get-panic-shortcuts') ? registeredPanicShortcuts : []));
 
 ipcMain.on('set-remote-input-lock', (event, locked) => {
   if (!isTrustedIpcSender(event, 'set-remote-input-lock')) return;
