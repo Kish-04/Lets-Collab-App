@@ -10,13 +10,18 @@ interface ExamControllerOverlayProps {
     questions: ExamQuestion[];
     onDraftUpdate: (questionId: string, answer: any) => void;
     onSubmit: (questionId: string, answer: any) => void;
+    // Server grading result per submitted question (true = correct)
+    results?: Record<string, boolean>;
 }
 
-export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: ExamControllerOverlayProps) {
+export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit, results = {} }: ExamControllerOverlayProps) {
     const [answers, setAnswers] = useState<Record<string, any>>({});
     const [isRecording, setIsRecording] = useState<Record<string, boolean>>({});
     const [currentIndex, setCurrentIndex] = useState(0);
-    const [feedback, setFeedback] = useState<Record<string, { status: 'correct' | 'wrong' }>>({});
+    const [submitted, setSubmitted] = useState<Record<string, boolean>>({});
+    const feedback: Record<string, { status: 'correct' | 'wrong' }> = Object.fromEntries(
+        Object.entries(results).map(([id, correct]) => [id, { status: correct ? 'correct' : 'wrong' }])
+    );
     const mediaRecorderRefs = useRef<Record<string, MediaRecorder>>({});
     const audioChunksRefs = useRef<Record<string, Blob[]>>({});
     const yDocRef = useRef<Y.Doc>(new Y.Doc());
@@ -120,6 +125,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
     };
 
     const handleSubmit = async (qId: string) => {
+        if (submitted[qId]) return;
         const q = questions.find(question => question.id === qId);
         let finalAnswer = answers[qId] || { text: q?.type === 'code' ? q.starterCode || '' : '' };
         
@@ -149,6 +155,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
         }
         
         // Grading happens on the server (candidates never receive the answer key)
+        setSubmitted(prev => ({ ...prev, [qId]: true }));
         onSubmit(qId, finalAnswer);
     };
 
@@ -160,7 +167,9 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
     return (
         <div className="w-full h-full flex flex-col p-6 font-sans text-[var(--text-primary)] relative">
             <button
-                onClick={() => questions.forEach(q => handleSubmit(q.id))}
+                onClick={() => {
+                    if (window.confirm('Submit every answer and close the exam? You cannot change them afterwards.')) questions.forEach(q => handleSubmit(q.id))
+                }}
                 className="absolute top-6 right-6 w-8 h-8 flex items-center justify-center rounded-full bg-[var(--elevated)] border border-[var(--border)]/60 text-[var(--text-primary)] hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all font-bold"
                 title="Close and Submit All"
             >
@@ -309,6 +318,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
                         )}
                         <button 
                             onClick={() => handleSubmit(q.id)}
+                            disabled={submitted[q.id]}
                             className="bg-gradient-to-r from-blue-600 to-indigo-600 text-[var(--text-primary)] font-bold px-8 py-2.5 rounded-xl shadow-lg hover:shadow-blue-500/25 hover:from-blue-500 hover:to-indigo-500 transition-all active:scale-[0.98]"
                         >
                             Submit Answer

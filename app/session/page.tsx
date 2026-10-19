@@ -362,6 +362,7 @@ function SessionContent() {
 
     // Exam State
     const [examQuestions, setExamQuestions] = useState<ExamQuestion[]>([])
+    const [examResults, setExamResults] = useState<Record<string, boolean>>({})
     const [examLiveAnswers, setExamLiveAnswers] = useState<Record<string, Record<string, any>>>({})
     // ── Refs ──────────────────────────────────────────────────────────────────
     const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -1626,7 +1627,8 @@ function SessionContent() {
         socket.on('new-exam-question', (question: ExamQuestion) => {
             setExamQuestions(prev => prev.some(q => q.id === question.id) ? prev : [...prev, question]);
         });
-        socket.on('exam-answer-result', ({ correct }: { questionId: string; correct: boolean }) => {
+        socket.on('exam-answer-result', ({ questionId, correct }: { questionId: string; correct: boolean }) => {
+            setExamResults(prev => ({ ...prev, [questionId]: correct }))
             addLog('system', correct ? 'Your submitted answer was marked correct' : 'Your submitted answer was marked incorrect')
         });
         socket.on('host-live-answer-update', ({ questionId, controllerId, controllerName, answer }) => {
@@ -3044,10 +3046,12 @@ function SessionContent() {
                     <div className="pointer-events-auto w-full h-full max-w-4xl">
                         <ExamControllerOverlay 
                             questions={examQuestions} 
+                            results={examResults}
                             onDraftUpdate={(qId, answer) => socketRef.current?.emit('controller-draft-answer', { questionId: qId, answer, roomId: roomCodeRef.current || joinInput })}
                             onSubmit={(qId, answer) => {
                                 socketRef.current?.emit('controller-submit-answer', { questionId: qId, answer, roomId: roomCodeRef.current || joinInput });
-                                setExamQuestions(prev => prev.filter(q => q.id !== qId));
+                                // Keep the question on screen briefly so the server's grading result can show
+                                setTimeout(() => setExamQuestions(prev => prev.filter(q => q.id !== qId)), 3000);
                             }}
                         />
                     </div>
