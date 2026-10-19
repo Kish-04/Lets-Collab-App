@@ -362,6 +362,7 @@ function SessionContent() {
     const socketRef = useRef<Socket | null>(null)
     const pcRef = useRef<RTCPeerConnection | null>(null)
     const hostPcRefs = useRef<Map<string, RTCPeerConnection>>(new Map())
+    const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map())
     const localStreamRef = useRef<MediaStream | null>(null)
     const activeLocalStreamRef = useRef<MediaStream | null>(null)
     const screenStreamRef = useRef<MediaStream | null>(null)
@@ -1116,6 +1117,19 @@ function SessionContent() {
         socketRef.current?.emit('observer-offer', { observerId, offer })
     }
 
+    // The host keeps one connection per controller; everyone else has a single connection
+    const peerKey = (fromId?: string) => currentRoleRef.current === 'host' && fromId ? fromId : 'remote'
+    const peerConnectionFor = (fromId?: string) => currentRoleRef.current === 'host' && fromId
+        ? hostPcRefs.current.get(fromId)
+        : pcRef.current
+    const flushPendingIce = async (pc: RTCPeerConnection, fromId?: string) => {
+        const key = peerKey(fromId)
+        const queued = pendingIceRef.current.get(key)
+        if (!queued) return
+        pendingIceRef.current.delete(key)
+        for (const candidate of queued) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
+    }
+
     const createPC = async (targetId?: string) => {
         let servers = iceServersRef.current;
         if (!servers || servers.length === 0) {
@@ -1311,6 +1325,7 @@ function SessionContent() {
                     pc = await createPC(payload.fromId);
                 }
                 await pc.setRemoteDescription(new RTCSessionDescription(payload.offer))
+                await flushPendingIce(pc, payload.fromId)
                 addMediaTracksToPeer(pc)
                 const answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
@@ -1327,15 +1342,27 @@ function SessionContent() {
         })
         socket.on('answer', async (payload: any) => {
             try {
-                const pc = payload?.fromId ? hostPcRefs.current.get(payload.fromId) : pcRef.current
-                await pc?.setRemoteDescription(new RTCSessionDescription(payload.answer))
+                // The server always sets fromId, but only the host keeps one connection per peer;
+                // a controller's single connection is pcRef (renegotiations it starts answer here)
+                const pc = peerConnectionFor(payload?.fromId)
+                if (!pc) return
+                await pc.setRemoteDescription(new RTCSessionDescription(payload.answer))
+                await flushPendingIce(pc, payload?.fromId)
             } catch (err) {
                 console.error('[DEBUG] Error setting remote answer:', err);
             }
         })
         socket.on('ice-candidate', async (payload: any) => {
-            const pc = currentRoleRef.current === 'host' && payload?.fromId ? hostPcRefs.current.get(payload.fromId) : pcRef.current
-            await pc?.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch(() => {})
+            if (!payload?.candidate) return
+            const pc = peerConnectionFor(payload.fromId)
+            // Candidates can arrive before the connection exists or before its remote description is
+            // set; queue them instead of dropping them, or relay-only (TURN) connections fail
+            if (!pc || !pc.remoteDescription) {
+                const key = peerKey(payload.fromId)
+                pendingIceRef.current.set(key, [...(pendingIceRef.current.get(key) || []), payload.candidate].slice(-100))
+                return
+            }
+            await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch(() => {})
         })
         socket.on('access-granted', (nextPermission: PermissionLevel, options: { clipboardAllowed?: boolean } = {}) => {
             setPermission(nextPermission)
