@@ -236,6 +236,21 @@ test('panic revoke drops every controller to view-only and tells them why', asyn
   await Promise.all(revoked)
 })
 
+test('malformed events from any socket do not crash the server', async () => {
+  const { host, roomCode } = await supervisedRoom(1)
+  const stranger = await connect(user('Stranger'))
+  for (const event of ['accept-role-swap', 'reject-role-swap', 'request-role-swap', 'controller-draft-answer', 'admin-warn-user', 'secret-delete-recordings']) {
+    stranger.emit(event)
+    stranger.emit(event, null)
+  }
+  host.emit('access-granted', 'view', null, roomCode)
+  await new Promise(resolve => setTimeout(resolve, 300))
+  // The server is still alive and serving rooms
+  const probe = await connect(user('Probe'))
+  probe.emit('create-room', { name: 'Probe', mode: 'collaboration' })
+  assert.match((await once(probe, 'room-created')).roomCode, /^[A-Z0-9]{4,}$/)
+})
+
 test('an admin false-positive verdict reaches the device as a training label', async () => {
   const { controllers, roomCode } = await supervisedRoom(1)
   const adminAccount = user('Reviewer', 'admin')

@@ -1154,6 +1154,27 @@ function endControllerObservation(adminSocket) {
   io.to(target.controllerId).emit('controller-observation-ended', { adminId: adminSocket.id });
 }
 
+// Socket.IO runs listeners without a try/catch, so one malformed event (a missing or null payload
+// that a handler destructures) would throw and take the whole process down. Registered before any
+// other connection handler so every listener below is wrapped.
+function guardSocketListener(socket, event, listener) {
+  return (...args) => {
+    if (args[0] === undefined || args[0] === null) args[0] = {};
+    const report = (err) => console.error(`[Socket] '${event}' from ${socket.id} failed:`, err?.message || err);
+    try {
+      const result = listener(...args);
+      if (result && typeof result.catch === 'function') result.catch(report);
+    } catch (err) {
+      report(err);
+    }
+  };
+}
+
+io.on('connection', (socket) => {
+  const on = socket.on.bind(socket);
+  socket.on = (event, listener) => on(event, guardSocketListener(socket, event, listener));
+});
+
 io.on('connection', (socket) => {
   socket.on('request-controller-observation', async ({ roomId, targetId } = {}) => {
     if (!await isAdminSocket(socket)) return;
