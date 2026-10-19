@@ -322,3 +322,31 @@ test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)
 })
+
+test('violation evidence must be an image or video from a member of the room', async () => {
+  const host = await connect(user('EvidenceHost'))
+  host.emit('create-room', { name: 'EvidenceHost', mode: 'supervised' })
+  const { roomCode } = await once(host, 'room-created')
+  const member = user('EvidenceCand')
+  const candidate = await connect(member)
+  candidate.emit('join-room', roomCode, 'controller', { name: 'EvidenceCand' })
+  await once(host, 'connection-request')
+  host.emit('respond-join', { controllerId: candidate.id, approved: true, permission: 'view' }, roomCode)
+  await once(candidate, 'join-approved')
+
+  const upload = (token, type, name) => {
+    const form = new FormData()
+    form.append('evidenceFile', new Blob(['<script>alert(1)</script>'], { type }), name)
+    form.append('roomCode', roomCode)
+    return fetch(`${baseUrl}/api/admin/upload-violation-screenshot`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form })
+  }
+  const outsider = user('Outsider')
+  assert.equal((await upload(outsider.token, 'image/png', 'shot.png')).status, 403)
+  assert.equal((await upload(outsider.token, 'text/html', 'evil.html')).status, 415)
+  assert.equal((await upload(outsider.token, 'image/svg+xml', 'evil.svg')).status, 415)
+
+  // A member's PNG is stored under a server-chosen name, whatever the client called it
+  const ok = await upload(member.token, 'image/png', '../../evil.html')
+  assert.equal(ok.status, 200)
+  assert.match((await ok.json()).url, /^\/uploads\/evidence\/\d+-[0-9a-f-]{36}\.png$/)
+})

@@ -3,6 +3,7 @@ const multer = require('multer');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const router = express.Router();
 const User = require('./User');
 const Alert = require('./alert');
@@ -115,11 +116,27 @@ const s3 = new S3Client({
   forcePathStyle: true,
 });
 
+// Evidence is only ever images or recorded video. Anything else (HTML, SVG, scripts) would be served
+// from the API origin to admins, so it is refused, and the stored name never reuses the client's.
+const EVIDENCE_TYPES = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'video/webm': 'webm',
+  'video/mp4': 'mp4',
+};
+
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
     fileSize: Number(process.env.EVIDENCE_MAX_BYTES || 25 * 1024 * 1024),
+  },
+  fileFilter: (req, file, cb) => {
+    if (EVIDENCE_TYPES[file.mimetype]) return cb(null, true);
+    const err = new Error('Evidence must be a PNG, JPEG or WebP image, or a WebM or MP4 video.');
+    err.status = 415;
+    cb(err);
   },
 });
 
@@ -129,8 +146,21 @@ function uploadEvidenceFile(req, res, next) {
     if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ success: false, message: 'Evidence file is too large.' });
     }
-    return res.status(400).json({ success: false, message: err.message || 'Invalid evidence upload.' });
+    return res.status(err.status || 400).json({ success: false, message: err.message || 'Invalid evidence upload.' });
   });
+}
+
+function evidenceFileName(file) {
+  return `${Date.now()}-${crypto.randomUUID()}.${EVIDENCE_TYPES[file.mimetype]}`;
+}
+
+// Admins, the room's host, and its approved controllers may attach evidence to a live room
+function canUploadToRoom(user, room) {
+  if (!room) return false;
+  if (user.role === 'admin') return true;
+  if (!user.email) return false;
+  if (room.hostEmail === user.email) return true;
+  return Array.from(room.controllers?.values() || []).some(participant => participant.email === user.email);
 }
 
 router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async (req, res) => {
@@ -146,8 +176,7 @@ router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async 
       return res.status(403).json({ success: false, message: 'Only the session host or an admin can upload evidence for this room.' });
     }
 
-    const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const fileName = `evidence/${Date.now()}-${safeName}`;
+    const fileName = `evidence/${evidenceFileName(req.file)}`;
     const bucket = process.env.S3_BUCKET_NAME || 'ircp-evidence-bucket';
 
     if (process.env.NODE_ENV === 'production' || process.env.USE_S3 === 'true') {
@@ -213,13 +242,14 @@ router.post('/upload-violation-screenshot', protectAuthenticated, uploadEvidence
     const label = req.body.label || 'Violation Detected';
     const liveRoom = roomCode ? findLiveRoom(roomCode) : null;
     
-    // Allow if they are in the active room (either as host, controller, or observer)
     if (!liveRoom) {
       return res.status(404).json({ success: false, message: 'Room not found or no longer active' });
     }
+    if (!canUploadToRoom(req.user, liveRoom)) {
+      return res.status(403).json({ success: false, message: 'Only members of this session can attach evidence to it.' });
+    }
 
-    const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const fileName = `evidence/${Date.now()}-${safeName}`;
+    const fileName = `evidence/${evidenceFileName(req.file)}`;
 
     const uploadPath = path.join(__dirname, 'uploads', 'evidence');
     fs.mkdirSync(uploadPath, { recursive: true });

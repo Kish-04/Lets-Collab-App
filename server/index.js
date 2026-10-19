@@ -45,7 +45,10 @@ const corsOptions = createCorsOptions();
 app.use(cors(corsOptions));
 app.use(cookieParser());
 // Evidence and recordings require a short-lived signed URL (issued to admins only)
-app.use('/uploads', requireSignedUpload, express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', requireSignedUpload, express.static(path.join(__dirname, 'uploads'), {
+  // Evidence is served from the API origin: never let a browser sniff a file into HTML
+  setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),
+}));
 app.use(express.json({ limit: '2mb' }));
 
 // Serve the statically exported Next.js app (if available)
