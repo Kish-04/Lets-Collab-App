@@ -32,7 +32,8 @@ export class DataChannelManager {
         else channel.onopen = notifyOpen;
 
         channel.onclose = () => {
-            this.channels.delete(id);
+            // A late close from a replaced connection must not remove the newer channel
+            if (this.channels.get(id) === channel) this.channels.delete(id);
         };
     }
 
@@ -86,8 +87,8 @@ export class DataChannelManager {
     public clearAll() {
         this.channels.forEach(channel => channel.close());
         this.channels.clear();
-        this.listeners.clear();
-        // Open listeners belong to long-lived subscribers (CRDT docs) that unsubscribe themselves
+        // Message and open listeners belong to mounted components (file transfer, whiteboard, CRDT docs)
+        // that unsubscribe themselves; wiping them on a role swap silently broke those features
     }
 
     public getBufferedAmount(label: string, targetPeerId: string): number {
