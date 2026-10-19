@@ -583,12 +583,18 @@ export default function LiveSessionScreen() {
       const socket = io(BACKEND_URL, {
         auth: { token },
         transports: ['websocket'],
-        reconnection: false,
+        // A mobile network blip must not end an exam: retry for about half a minute before giving up
+        reconnection: true,
+        reconnectionAttempts: 8,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
         timeout: 15000,
       });
       socketRef.current = socket;
+      let everConnected = false;
 
       socket.on('connect', () => {
+        everConnected = true;
         // A (re)connected socket is a new room member: announce the chat key again on the next session-state.
         e2eAnnouncedRef.current = false;
         socket.emit('join-room', roomCode, 'controller', {
@@ -599,11 +605,29 @@ export default function LiveSessionScreen() {
       });
 
       socket.on('connect_error', (err: any) => {
-        endSession(`Could not reach the session server: ${err?.message || 'connection error'}`);
+        // Before the first connection there is nothing to resume; afterwards the manager keeps retrying
+        if (!everConnected) endSession(`Could not reach the session server: ${err?.message || 'connection error'}`);
       });
+      socket.io.on('reconnect_failed', () => endSession('Connection to the session server was lost.'));
 
       socket.on('disconnect', (reason: string) => {
-        if (reason !== 'io client disconnect') endSession('Connection to the session server was lost.');
+        if (reason === 'io client disconnect') return;
+        if (reason === 'io server disconnect') {
+          endSession('The session server closed the connection.');
+          return;
+        }
+        // Temporary loss: the server drops this member, so the call is rebuilt after re-joining.
+        // Keep the camera and mic (supervised rooms need them); close only the peer connection.
+        dataChannelsRef.current.forEach(channel => { try { channel.close(); } catch { } });
+        dataChannelsRef.current = [];
+        if (pcRef.current) {
+          try { pcRef.current.close(); } catch { }
+          pcRef.current = null;
+        }
+        pendingCandidatesRef.current = [];
+        setRemoteStreams({ main: null, secondary: null });
+        setPhase('connecting');
+        setStatusMessage('Connection lost. Reconnecting...');
       });
 
       socket.on('join-pending', async ({ mode: roomMode }: { mode?: SessionMode }) => {
