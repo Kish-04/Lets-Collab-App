@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { generateReply } = require('./gemini-service');
 const { isBlockedRemoteKey } = require('./remoteInputPolicy');
+const { mapBrowserKeyToRobotJS, mapModifiers } = require('./remoteKeyMap');
 
 const getLogPath = (filename) => {
   try {
@@ -576,28 +577,3 @@ ipcMain.on('execute-input', (event, payload) => {
   } catch (err) {}
 });
 
-function mapModifiers(mods) {
-  if (!mods) return [];
-  const active = [];
-  if (mods.shift) active.push('shift');
-  if (mods.ctrl) active.push('ctrl');
-  if (mods.alt) active.push('alt');
-  if (mods.meta) active.push('command');
-  return active;
-}
-
-function mapBrowserKeyToRobotJS(key, code) {
-  const keyLower = key.toLowerCase();
-  const aliases = { arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right', esc: 'escape', pageup: 'pageup', pagedown: 'pagedown' };
-  if (aliases[keyLower]) return aliases[keyLower];
-  
-  const exactMatches = ['backspace', 'delete', 'enter', 'tab', 'escape', 'up', 'down', 'right', 'left', 'home', 'end', 'pageup', 'pagedown', 'space'];
-  if (exactMatches.includes(keyLower)) return keyLower;
-
-  if (keyLower === " " || keyLower === "spacebar") return "space";
-  if (keyLower.length === 1 && keyLower.match(/[a-z0-9]/)) return keyLower;
-
-  if (code && code.toLowerCase().startsWith('key')) return code[3].toLowerCase();
-  if (code && code.toLowerCase().startsWith('digit')) return code[5];
-  return null;
-}
