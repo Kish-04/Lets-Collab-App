@@ -526,7 +526,8 @@ ipcMain.on('execute-input', (event, payload) => {
   if (!robot) return;
 
   // Security check: Block inputs if sharing a specific window that is currently minimized or closed
-  if (pendingShareSourceId && pendingShareSourceId.startsWith('window:') && currentSharedWindowBounds === 'hidden') {
+  // (Only a window share ever sets 'hidden'; pendingShareSourceId is already cleared once sharing starts.)
+  if (currentSharedWindowBounds === 'hidden') {
     return;
   }
 
