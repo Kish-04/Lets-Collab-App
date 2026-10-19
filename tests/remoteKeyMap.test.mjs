@@ -18,6 +18,8 @@ test('letters, digits and named keys', () => {
   assert.equal(map('Enter', 'Enter'), 'enter')
   assert.equal(map(' ', 'Space'), 'space')
   assert.equal(map('Insert', 'Insert'), 'insert')
+  assert.equal(map('Meta', 'MetaLeft'), 'command') // the Windows key reaches the host
+  assert.deepEqual(mapModifiers({ meta: true }), ['command']) // ...and Win+R etc. as a combo
 })
 
 test('punctuation needed to type code', () => {

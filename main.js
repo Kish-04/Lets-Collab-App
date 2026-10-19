@@ -3,7 +3,6 @@ const serve = require('electron-serve');
 const path = require('path');
 const fs = require('fs');
 const { generateReply } = require('./gemini-service');
-const { isBlockedRemoteKey } = require('./remoteInputPolicy');
 const { mapBrowserKeyToRobotJS, mapModifiers } = require('./remoteKeyMap');
 
 const getLogPath = (filename) => {
@@ -589,10 +588,8 @@ ipcMain.on('execute-input', (event, payload) => {
       case 'wheel': robot.scrollMouse(0, payload.deltaY > 0 ? -1 : 1); break;
       case 'keydown':
       case 'keyup':
-        if (isBlockedRemoteKey(payload)) {
-          console.warn('[remote-input] blocked a system key combo from the controller:', payload.key);
-          break;
-        }
+        // Every key is passed through: what a controller may do is the host's choice of permission,
+        // and Shift+Esc / Ctrl+Alt+Esc drops every controller to view-only at any moment
         if (payload.key) {
            const mappedKey = mapBrowserKeyToRobotJS(payload.key, payload.code);
            if (mappedKey) {

@@ -9,6 +9,7 @@ const NAMED_KEYS = {
   arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right',
   home: 'home', end: 'end', pageup: 'pageup', pagedown: 'pagedown', insert: 'insert',
   ' ': 'space', spacebar: 'space', capslock: 'capslock', printscreen: 'printscreen',
+  meta: 'command', os: 'command', contextmenu: 'menu', // Windows/Command key on its own, menu key
 };
 
 const CODE_CHARS = {
