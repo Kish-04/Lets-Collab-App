@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
+import { getAuthHeaders } from '@/lib/utils';
 import { ExamQuestion } from './ExamHostDashboard';
 import * as Y from 'yjs';
 import { bindSharedDoc } from '@/lib/CrdtSync';
@@ -98,7 +99,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
         try {
             const res = await fetch('/api/execute', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                 body: JSON.stringify({
                     language: language,
                     version: '*', 
