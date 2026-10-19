@@ -487,6 +487,20 @@ test('TURN relay credentials are only issued to signed-in users', async () => {
   }
 })
 
+test('a host connection that opens a second room closes the first instead of orphaning it', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const ended = once(candidate, 'kill-session')
+  host.emit('create-room', { name: 'Host', mode: 'collaboration' })
+  const { roomCode: second } = await once(host, 'room-created')
+  assert.notEqual(second, roomCode)
+  await ended
+
+  // ...and a hosting connection cannot quietly become a controller elsewhere
+  const other = await supervisedRoom(0)
+  host.emit('join-room', other.roomCode, 'controller', { name: 'Host' })
+  assert.match((await once(host, 'join-denied')).reason, /hosting/)
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

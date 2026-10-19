@@ -1499,6 +1499,10 @@ io.on('connection', (socket) => {
       socket.emit('session-error', { message: 'Too many rooms created. Please wait a few minutes and try again.' });
       return;
     }
+    // One room per host connection: a previous room of this socket is closed properly, not orphaned
+    if (socket.role === 'host' && socket.roomCode && rooms.get(socket.roomCode)?.hostSocketId === socket.id) {
+      await closeRoomAfterHostLeft(socket.roomCode);
+    }
 
     const code = generateRoomCode();
     const room = {
@@ -1635,6 +1639,11 @@ io.on('connection', (socket) => {
     }
     if (room.hostEmail && actor.email === room.hostEmail) {
       socket.emit('join-denied', { reason: 'The host cannot join their own room as a controller.' });
+      return;
+    }
+    // Switching this connection to a controller would orphan the room it hosts
+    if (socket.role === 'host' && socket.roomCode && rooms.get(socket.roomCode)?.hostSocketId === socket.id) {
+      socket.emit('join-denied', { reason: 'End the session you are hosting before joining another one.' });
       return;
     }
     if (room.controllers.has(socket.id)) {
@@ -2596,6 +2605,13 @@ io.on('connection', (socket) => {
         broadcastSessions();
       }
     });
+
+    // Any other room still pointing at this connection as its host has no way back: close it
+    for (const [otherId, other] of Array.from(rooms.entries())) {
+      if (otherId !== socket.roomCode && other.hostSocketId === socket.id && !other.hostDisconnectedAt) {
+        await closeRoomAfterHostLeft(otherId);
+      }
+    }
 
     const roomId = socket.roomCode;
     const room = rooms.get(roomId);
