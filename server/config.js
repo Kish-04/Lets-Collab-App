@@ -77,15 +77,17 @@ function isOriginAllowed(origin, allowedOrigins) {
   if (allowedOrigins.includes('*')) return true;
   if (allowedOrigins.includes(origin)) return true;
 
-  if (origin === 'app://-') {
+  // The desktop app loads app://- and rewrites the Origin of its requests to http://localhost:8081
+  // (main.js). In production only those exact origins are accepted, not every local port, since
+  // this allow-list is also what guards Socket.IO connections.
+  const desktopOrigins = parseCsv(process.env.DESKTOP_ORIGINS || 'app://-,http://localhost:8081');
+  if (desktopOrigins.includes(origin)) return true;
+
+  // Local development: any port on localhost
+  if (!isProduction && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))) {
     return true;
   }
-  
-  // Always allow the desktop app (which uses random ports on localhost)
-  if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
-    return true;
-  }
-  
+
   return false;
 }
 
@@ -124,6 +126,7 @@ module.exports = {
   getAllowedOrigins,
   getAuditHashSecret,
   getJwtSecret,
+  isOriginAllowed,
   signJwt,
   verifyJwt,
 };

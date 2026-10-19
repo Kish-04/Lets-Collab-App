@@ -49,3 +49,20 @@ test('evidence files need a valid, unexpired signature bound to the exact path',
   assert.ok(!isUploadPath('/uploads/../index.js'))
   assert.ok(isUploadPath('/uploads/evidence/1-shot.png'))
 })
+
+test('production CORS accepts the desktop app but not other local ports', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const probe = `
+    const { isOriginAllowed } = require('./config.js')
+    const allowed = ['https://lets-collab.example']
+    const origins = ['https://lets-collab.example', 'app://-', 'http://localhost:8081', 'http://localhost:3000', 'http://127.0.0.1:5555', 'https://evil.example']
+    console.log(JSON.stringify(origins.map(origin => isOriginAllowed(origin, allowed))))
+  `
+  const run = env => JSON.parse(spawnSync(process.execPath, ['-e', probe], {
+    cwd: path.join(repoRoot, 'server'),
+    env: { ...process.env, JWT_SECRET: 'cors_test_secret_with_more_than_32_characters', ...env },
+    encoding: 'utf8',
+  }).stdout.trim())
+  assert.deepEqual(run({ NODE_ENV: 'production' }), [true, true, true, false, false, false])
+  assert.deepEqual(run({ NODE_ENV: 'development' }), [true, true, true, true, true, false])
+})
