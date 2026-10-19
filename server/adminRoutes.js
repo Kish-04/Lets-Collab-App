@@ -56,20 +56,6 @@ async function loadAuthenticatedUser(req, res) {
       : mockStore.findUserById(decoded.id);
 
     if (!user || user.banned) {
-      console.log('[loadAuthenticatedUser] user not found or banned in DB');
-      if (decoded.id === 'admin-id' || decoded.email === 'kishankarthiks222@gmail.com' || decoded.email === 'admin@letscollab.com') {
-        const emailToUse = decoded.email || 'admin@letscollab.com';
-        const mockStore = require('./mockStore');
-        user = mockStore.createUser({
-          _id: 'admin-id',
-          name: 'System Administrator',
-          email: emailToUse,
-          password: 'mock',
-          role: 'admin',
-          isVerified: true
-        });
-        return user;
-      }
       res.status(403).json({ success: false, message: 'Not authorized for this account' });
       return null;
     }

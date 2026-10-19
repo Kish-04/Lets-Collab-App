@@ -8,7 +8,6 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const cookie = require('cookie');
-const multer = require('multer');
 const connectDB = require('./db');
 const authRoutes = require('./authRoutes');
 const bcrypt = require('bcrypt');
@@ -90,22 +89,6 @@ initBlockchain();
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, 'uploads'))
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname)
-  }
-})
-const uploadVideo = multer({ storage: storage })
-
-app.post('/api/upload-evidence-video', uploadVideo.single('video'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No video file' });
-    const url = '/uploads/' + req.file.filename;
-    res.json({ url });
-});
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 app.post('/api/pet', async (req, res) => {

@@ -49,4 +49,28 @@ describe('API Tests', () => {
     expect(res.statusCode).toEqual(401);
     expect(res.body.success).toBe(false);
   });
+
+  it('should not accept built-in admin credentials', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@letscollab.com', password: 'admin123' });
+    expect(res.statusCode).toEqual(401);
+    expect(res.body.token).toBeUndefined();
+  });
+
+  it('should not treat a token for a missing user as an admin', async () => {
+    const { signJwt } = require('../config');
+    const token = signJwt({ id: 'admin-id', email: 'admin@letscollab.com' });
+    const res = await request(app).get('/api/admin/users').set('Authorization', `Bearer ${token}`);
+    expect(res.statusCode).toEqual(403);
+    const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+    expect(me.statusCode).toEqual(404);
+  });
+
+  it('should not expose the unauthenticated evidence video upload', async () => {
+    const res = await request(app)
+      .post('/api/upload-evidence-video')
+      .attach('video', Buffer.from('fake video data'), '../escape.webm');
+    expect(res.statusCode).toEqual(404);
+  });
 });
