@@ -252,6 +252,15 @@ test('a controller cannot take the host role unless the host asked for a swap', 
   assert.equal((await completed).newHostId, candidate.id)
 })
 
+test('a burst of alerts sends one chain transaction, not one per alert', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const anchored = []
+  host.on('chain-log', entry => { if (entry.type === 'permission_violation') anchored.push(entry) })
+  for (let i = 0; i < 10; i++) host.emit('permission-violation', { roomCode, controllerId: candidate.id, action: `spam ${i}` })
+  await new Promise(resolve => setTimeout(resolve, 1500))
+  assert.equal(anchored.length, 1)
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))

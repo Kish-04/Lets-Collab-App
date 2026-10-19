@@ -948,10 +948,52 @@ function transcriptDigest(session) {
   };
 }
 
+// Every on-chain anchor is a paid transaction, and several events can be triggered at will by
+// clients. Anchors are always recorded off-chain; only the chain write is budgeted. Session
+// archive/termination and panic revokes always go on-chain (they are bounded by room creation).
+const CHAIN_ALWAYS = new Set(['SESSION_ARCHIVED', 'SESSION_TERMINATED', 'PANIC_REVOKE']);
+const CHAIN_NOISY = new Set(['AI_ANTI_CHEAT_ALERT', 'PERMISSION_VIOLATION']);
+const CHAIN_NOISY_INTERVAL_MS = Number(process.env.CHAIN_NOISY_INTERVAL_MS || 20000);
+const CHAIN_ROOM_WINDOW_MS = 10 * 60 * 1000;
+const CHAIN_ROOM_MAX = Number(process.env.CHAIN_MAX_TX_PER_ROOM || 40);
+const CHAIN_GLOBAL_MAX_PER_MIN = Number(process.env.CHAIN_MAX_TX_PER_MINUTE || 120);
+const chainGlobalWrites = [];
+
+function chainWriteAllowed(room, eventType, now = Date.now()) {
+  if (CHAIN_ALWAYS.has(eventType)) return true;
+  if (!room.chainBudget) room.chainBudget = { writes: [], lastByType: {} };
+  const budget = room.chainBudget;
+  if (CHAIN_NOISY.has(eventType) && now - (budget.lastByType[eventType] || 0) < CHAIN_NOISY_INTERVAL_MS) return false;
+  budget.writes = budget.writes.filter(at => now - at < CHAIN_ROOM_WINDOW_MS);
+  if (budget.writes.length >= CHAIN_ROOM_MAX) return false;
+  while (chainGlobalWrites.length && now - chainGlobalWrites[0] >= 60000) chainGlobalWrites.shift();
+  if (chainGlobalWrites.length >= CHAIN_GLOBAL_MAX_PER_MIN) return false;
+  budget.writes.push(now);
+  budget.lastByType[eventType] = now;
+  chainGlobalWrites.push(now);
+  return true;
+}
+
+// Each new room gets its own chain budget and a ROOM_CREATED anchor, so creation itself is capped
+const ROOM_CREATE_WINDOW_MS = 10 * 60 * 1000;
+const ROOM_CREATE_MAX = Number(process.env.MAX_ROOMS_PER_USER_PER_10_MIN || 10);
+const roomCreations = new Map();
+
+function roomCreationAllowed(userKey, now = Date.now()) {
+  const recent = (roomCreations.get(userKey) || []).filter(at => now - at < ROOM_CREATE_WINDOW_MS);
+  if (recent.length >= ROOM_CREATE_MAX) {
+    roomCreations.set(userKey, recent);
+    return false;
+  }
+  recent.push(now);
+  roomCreations.set(userKey, recent);
+  return true;
+}
+
 function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = '') {
   const room = rooms.get(code);
   if (!room) return;
-  
+
   // Keyed hash so emails on the public chain cannot be recovered by dictionary lookup
   const hashedHost = hashIdentity(hostEmail);
   const hashedController = hashIdentity(controllerEmail);
@@ -960,6 +1002,11 @@ function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = ''
   const { payload, dataHash } = hashAuditPayload(data);
   const anchor = { eventType, payload, dataHash, txHash: null, createdAt: new Date().toISOString() };
   room.anchors.push(anchor);
+
+  if (!chainWriteAllowed(room, eventType)) {
+    anchor.chainSkipped = 'rate_limited'; // still covered by the SESSION_ARCHIVED digest
+    return;
+  }
 
   logToChain(code, hashedHost, hashedController, eventType, payload)
     .then((txHash) => {
@@ -1323,7 +1370,11 @@ io.on('connection', (socket) => {
       socket.emit('session-error', { message: 'Authentication required. Please sign in again before creating a room.' });
       return;
     }
-    
+    if (!roomCreationAllowed(String(actor._id || actor.email))) {
+      socket.emit('session-error', { message: 'Too many rooms created. Please wait a few minutes and try again.' });
+      return;
+    }
+
     const code = generateRoomCode();
     const room = {
       hostSocketId: socket.id,
