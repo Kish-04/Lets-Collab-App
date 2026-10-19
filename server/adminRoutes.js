@@ -490,16 +490,23 @@ router.post('/alerts/:id/status', async (req, res) => {
   }
 });
 
+// Same effect as the dashboard socket actions: logged, anchored, and kill really ends the room
+const roomCodeParam = (req) => String(req.params.id || '').trim().toUpperCase();
+
 router.post('/rooms/:id/warn', (req, res) => {
-  const { io } = require('./index');
-  io.to(req.params.id).emit('system-warning', req.body.message || 'Warning from administrator.');
+  const { warnRoom } = require('./index');
+  if (!warnRoom(roomCodeParam(req), req.body && req.body.message)) {
+    return res.status(404).json({ success: false, message: 'Session not found or already ended.' });
+  }
   res.json({ success: true, message: 'Warning sent.' });
 });
 
-router.post('/rooms/:id/kill', (req, res) => {
-  const { io } = require('./index');
-  io.to(req.params.id).emit('kill-session');
-  res.json({ success: true, message: 'Session killed.' });
+router.post('/rooms/:id/kill', async (req, res) => {
+  const { terminateRoom } = require('./index');
+  if (!await terminateRoom(roomCodeParam(req), 'admin')) {
+    return res.status(404).json({ success: false, message: 'Session not found or already ended.' });
+  }
+  res.json({ success: true, message: 'Session ended.' });
 });
 
 module.exports = { router, onlineEmails, setRoomLookup, protectAuthenticated, protectAdmin };

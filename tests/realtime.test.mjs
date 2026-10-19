@@ -517,6 +517,24 @@ test('a host connection that opens a second room closes the first instead of orp
   assert.match((await once(host, 'join-denied')).reason, /hosting/)
 })
 
+test('the admin REST kill really ends and archives the room', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const admin = user('RestAdmin', 'admin')
+  const call = (action, body) => fetch(`${baseUrl}/api/admin/rooms/${roomCode.toLowerCase()}/${action}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${admin.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  })
+  const warned = once(candidate, 'system-warning')
+  assert.equal((await call('warn', { message: 'Eyes on your own screen' })).status, 200)
+  assert.equal(await warned, 'Eyes on your own screen')
+
+  const ended = Promise.all([once(candidate, 'kill-session'), once(host, 'kill-session')])
+  assert.equal((await call('kill')).status, 200)
+  await ended
+  assert.equal((await call('kill')).status, 404) // gone, not just signalled
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

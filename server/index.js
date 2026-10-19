@@ -1078,6 +1078,30 @@ function deleteUploadedFiles(urls) {
   return deleted;
 }
 
+// Ends a live session for everyone: archived, anchored, then removed (socket and REST admin paths)
+async function terminateRoom(roomCode, by = 'admin') {
+  const room = rooms.get(roomCode);
+  if (!room) return false;
+  clearTimeout(room.hostGraceTimer);
+  await archiveSession(roomCode, 'Session terminated by host or administrator');
+  anchorEvent(roomCode, 'SESSION_TERMINATED', { by }, room.hostEmail);
+  io.to(roomCode).emit('kill-session');
+  room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
+  rooms.delete(roomCode);
+  broadcastSessions();
+  return true;
+}
+
+function warnRoom(roomCode, message = 'Warning from administrator: Please return your attention to the session.') {
+  const room = rooms.get(roomCode);
+  if (!room) return false;
+  const text = String(message || '').slice(0, 500) || 'Warning from administrator.';
+  io.to(roomCode).emit('system-warning', text);
+  pushEvent(roomCode, 'warning', `Administrator warning: ${text}`);
+  anchorEvent(roomCode, 'ADMIN_WARNING', { by: 'admin', message: text }, room.hostEmail, room.hostEmail || '');
+  return true;
+}
+
 async function closeRoomAfterHostLeft(roomId) {
   const room = rooms.get(roomId);
   if (!room) return;
@@ -2185,12 +2209,7 @@ io.on('connection', (socket) => {
   socket.on('kill-session', async (roomId) => {
     const room = rooms.get(roomId);
     if (!room || !await canModerate(socket, room)) return;
-    await archiveSession(roomId, 'Session terminated by host or administrator');
-    anchorEvent(roomId, 'SESSION_TERMINATED', { by: socket.id === room.hostSocketId ? 'host' : 'admin' }, room.hostEmail);
-    io.to(roomId).emit('kill-session');
-    room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
-    rooms.delete(roomId);
-    broadcastSessions();
+    await terminateRoom(roomId, socket.id === room.hostSocketId ? 'host' : 'admin');
   });
 
   socket.on('admin-revoke-access', async (roomId, targetId) => {
@@ -2222,10 +2241,7 @@ io.on('connection', (socket) => {
   socket.on('admin-warn-user', async ({ roomId, message = "Warning from administrator: Please return your attention to the session." }) => {
     const room = rooms.get(roomId);
     if (!room || !await isAdminSocket(socket)) return;
-    io.to(roomId).emit('system-warning', message);
-    pushEvent(roomId, 'warning', `Administrator warning: ${message}`);
-    const targetEmail = room.hostEmail || '';
-    anchorEvent(roomId, 'ADMIN_WARNING', { by: 'admin', message }, room.hostEmail, targetEmail);
+    warnRoom(roomId, message);
   });
 
   socket.on('admin-ban-participant', async ({ roomId, target = 'controller', targetId } = {}) => {
@@ -2695,4 +2711,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, server, io, sendFalsePositiveLabel };
+module.exports = { app, server, io, sendFalsePositiveLabel, terminateRoom, warnRoom };
