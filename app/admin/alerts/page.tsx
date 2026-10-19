@@ -267,25 +267,31 @@ export default function AlertsPage() {
   }
 
   const updateAlertStatus = async (id: string, updates: { flagged?: boolean, falsePositive?: boolean }) => {
-    // Optimistic UI updates
-    setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...updates } : a))
-    if (selectedAlert?._id === id) {
-      setSelectedAlert(prev => prev ? { ...prev, ...updates } : null)
+    const previous = alerts.find(a => a._id === id)
+    const apply = (patch: Partial<Alert>) => {
+      setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...patch } : a))
+      setSelectedAlert(prev => prev && prev._id === id ? { ...prev, ...patch } : prev)
     }
+    // Optimistic UI update, rolled back if the server does not save it
+    apply(updates)
 
+    let saved = false
     try {
-      const res = await fetch(`${getBackendUrl()}/api/admin/alerts/${id}/status`, {
+      // Without the JSON content type express.json leaves req.body empty and nothing is stored,
+      // which also meant false positives never reached the device as federated training labels
+      const res = await fetch(`${getBackendUrl()}/api/admin/alerts/${encodeURIComponent(id)}/status`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(updates),
       })
-      const data = await res.json()
-      if (!data.success) {
-        console.log('Update failed')
-      }
+      const data = await res.json().catch(() => ({}))
+      saved = res.ok && Boolean(data.success)
     } catch (e) {
       console.error('Failed to update alert', e)
-      console.log('Update failed')
+    }
+    if (!saved && previous) {
+      apply({ flagged: previous.flagged, falsePositive: previous.falsePositive })
+      window.alert('This verdict could not be saved. Alerts that were never stored (for example while the database was offline) cannot be reviewed.')
     }
   }
 
