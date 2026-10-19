@@ -937,6 +937,7 @@ function SessionContent() {
     const selectedClipboardAllowed = selectedParticipant?.clipboardAllowed ?? clipboardAllowed
 
     const startStats = (pc: RTCPeerConnection) => {
+        if (statsTimerRef.current) clearInterval(statsTimerRef.current) // one stats loop, not one per peer/role swap
         statsTimerRef.current = setInterval(async () => {
             const stats = await pc.getStats().catch(() => null)
             if (!stats) return
@@ -1658,6 +1659,26 @@ function SessionContent() {
             }
         })
     }, [joinInput, addLog, router])
+
+    // Leaving the page (Leave, End, kicked, back button) must release the camera, mic and screen
+    // capture, close every peer connection and leave the room; otherwise they keep running.
+    useEffect(() => () => {
+        const stopTracks = (stream: MediaStream | null) => stream?.getTracks().forEach(track => track.stop())
+        stopTracks(screenStreamRef.current)
+        stopTracks(activeLocalStreamRef.current)
+        stopTracks(localStreamRef.current)
+        pcRef.current?.close()
+        hostPcRefs.current.forEach(pc => pc.close())
+        hostPcRefs.current.clear()
+        observerPcRefs.current.forEach(pc => pc.close())
+        observerPcRefs.current.clear()
+        if (statsTimerRef.current) clearInterval(statsTimerRef.current)
+        statsTimerRefs.current.forEach(timer => clearInterval(timer))
+        statsTimerRefs.current.clear()
+        pendingIceRef.current.clear()
+        socketRef.current?.disconnect()
+        socketRef.current = null
+    }, [])
 
     // Sync Pet state with Electron Floating Window
     useEffect(() => {
