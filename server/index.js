@@ -1170,6 +1170,20 @@ function guardSocketListener(socket, event, listener) {
   };
 }
 
+// Role swaps need a request from one side and an answer from the other: remember who asked whom
+const ROLE_SWAP_TTL_MS = 2 * 60 * 1000;
+function rememberRoleSwap(room, requesterId, responderId) {
+  if (!room.roleSwapRequests) room.roleSwapRequests = new Map();
+  room.roleSwapRequests.set(`${requesterId}>${responderId}`, Date.now() + ROLE_SWAP_TTL_MS);
+}
+function takeRoleSwap(room, requesterId, responderId) {
+  const key = `${requesterId}>${responderId}`;
+  const expiresAt = room.roleSwapRequests?.get(key);
+  if (!expiresAt) return false;
+  room.roleSwapRequests.delete(key);
+  return expiresAt > Date.now();
+}
+
 io.on('connection', (socket) => {
   const on = socket.on.bind(socket);
   socket.on = (event, listener) => on(event, guardSocketListener(socket, event, listener));
@@ -1477,12 +1491,14 @@ io.on('connection', (socket) => {
     
     // Host requesting controller
     if (socket.id === room.hostSocketId && room.controllers.has(targetId)) {
+      rememberRoleSwap(room, socket.id, targetId);
       io.to(targetId).emit('role-swap-requested', { fromId: socket.id, fromName: room.hostName });
       pushEvent(normalizedRoomId, 'system', `Host requested role swap with controller`);
-    } 
+    }
     // Controller requesting host
     else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId)) {
       const controller = room.controllers.get(socket.id);
+      rememberRoleSwap(room, socket.id, room.hostSocketId);
       io.to(room.hostSocketId).emit('role-swap-requested', { fromId: socket.id, fromName: controller.name });
       pushEvent(normalizedRoomId, 'system', `${controller.name} requested to become host`);
     }
@@ -1495,12 +1511,13 @@ io.on('connection', (socket) => {
 
     let newHostId, oldHostId, newHostParticipant;
 
-    if (socket.id === room.hostSocketId && room.controllers.has(targetId)) {
+    // A swap only happens when the other side actually asked for it
+    if (socket.id === room.hostSocketId && room.controllers.has(targetId) && takeRoleSwap(room, targetId, socket.id)) {
       // Host accepts controller's request
       oldHostId = socket.id;
       newHostId = targetId;
       newHostParticipant = room.controllers.get(targetId);
-    } else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId)) {
+    } else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId) && takeRoleSwap(room, room.hostSocketId, socket.id)) {
       // Controller accepts host's request
       newHostId = socket.id;
       oldHostId = room.hostSocketId;
@@ -1508,6 +1525,7 @@ io.on('connection', (socket) => {
     } else {
       return;
     }
+    room.roleSwapRequests.clear(); // roles changed, so every other pending request is stale
 
     const oldHostName = room.hostName;
     const oldHostEmail = room.hostEmail;
@@ -1551,7 +1569,9 @@ io.on('connection', (socket) => {
     broadcastSessions();
   });
 
-  socket.on('reject-role-swap', ({ requesterId }) => {
+  socket.on('reject-role-swap', ({ requesterId, roomId }) => {
+    const room = rooms.get(normalizeRoomCode(roomId || socket.roomCode));
+    if (!room || !takeRoleSwap(room, requesterId, socket.id)) return;
     io.to(requesterId).emit('role-swap-rejected');
   });
 

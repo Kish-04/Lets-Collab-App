@@ -236,6 +236,22 @@ test('panic revoke drops every controller to view-only and tells them why', asyn
   await Promise.all(revoked)
 })
 
+test('a controller cannot take the host role unless the host asked for a swap', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const takeover = noEvent(host, 'role-swap-completed')
+  candidate.emit('accept-role-swap', { roomId: roomCode })
+  candidate.emit('accept-role-swap', { targetId: host.id, roomId: roomCode })
+  await takeover
+
+  // A real request from the host, answered by the controller, still swaps roles
+  const requested = once(candidate, 'role-swap-requested')
+  host.emit('request-role-swap', { targetId: candidate.id, roomId: roomCode })
+  assert.equal((await requested).fromId, host.id)
+  const completed = once(host, 'role-swap-completed')
+  candidate.emit('accept-role-swap', { targetId: host.id, roomId: roomCode })
+  assert.equal((await completed).newHostId, candidate.id)
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))
