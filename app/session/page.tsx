@@ -2404,6 +2404,27 @@ function SessionContent() {
         };
     }, [sessionMode, role, connectionState, reportMalpractice, router]);
 
+    // A second display during a supervised exam is reported once when detected (and again if it is
+    // re-attached). screen.isExtended is available in Chromium 100+ (Chrome, Edge, Electron); other
+    // browsers fall back to the aspect-ratio check done when the screen is shared.
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected') return;
+        const screenInfo = window.screen as Screen & { isExtended?: boolean } & EventTarget
+        if (typeof screenInfo.isExtended !== 'boolean') return;
+        let extended = false
+        const check = () => {
+            const now = Boolean(screenInfo.isExtended)
+            if (now && !extended) {
+                reportMalpractice('Second display connected during a supervised exam', 30, federatedFeaturesForEvent('SECOND_SCREEN'))
+            }
+            if (now !== extended) addLog('system', now ? 'Multiple displays detected' : 'Only one display connected')
+            extended = now
+        }
+        check()
+        screenInfo.addEventListener?.('change', check)
+        return () => screenInfo.removeEventListener?.('change', check)
+    }, [sessionMode, role, connectionState, reportMalpractice, federatedFeaturesForEvent, addLog]);
+
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'controller') return;
         
