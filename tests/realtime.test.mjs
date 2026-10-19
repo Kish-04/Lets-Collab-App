@@ -261,6 +261,21 @@ test('a burst of alerts sends one chain transaction, not one per alert', async (
   assert.equal(anchored.length, 1)
 })
 
+test('the room activity log reaches the host but never a candidate', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const candidateStates = []
+  candidate.on('session-state', state => candidateStates.push(state))
+  const leaked = noEvent(candidate, 'room-event', 1000)
+  const seen = once(host, 'room-event', event => /blocked/.test(event.message))
+  host.emit('permission-violation', { roomCode, controllerId: candidate.id, action: 'Win+R' })
+  assert.match((await seen).message, /Win\+R/)
+  await leaked
+  host.emit('access-granted', 'view', {}, roomCode) // triggers a fresh session-state for everyone
+  await new Promise(resolve => setTimeout(resolve, 300))
+  assert.ok(candidateStates.length > 0)
+  assert.ok(candidateStates.every(state => state.events === undefined))
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))

@@ -496,8 +496,11 @@ function initials(name = 'User') {
 function pushEvent(roomCode, type, message) {
   const room = rooms.get(roomCode);
   if (!room) return;
-  room.events.push({ time: nowTime(), type, message });
+  const event = { time: nowTime(), type, message };
+  room.events.push(event);
   if (room.events.length > 140) room.events.shift();
+  // The host's activity panel shows the room log live; candidates never receive it
+  if (room.hostSocketId) io.to(room.hostSocketId).emit('room-event', event);
 }
 
 function createFederatedState() {
@@ -870,6 +873,8 @@ function roomState(code, room, socket) {
     examQuestions: examQuestionsFor(room, socket),
     evidence: room.evidence.slice(-80),
     federated: federatedSummary(room),
+    // Room activity (joins, permissions, alerts, chain anchors) is for the host only
+    ...(socket && socket.id === room.hostSocketId ? { events: room.events.slice(-60) } : {}),
   };
 }
 

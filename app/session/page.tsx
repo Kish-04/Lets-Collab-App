@@ -9,7 +9,7 @@ declare global {
     }
 }
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import type { FormEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense } from 'react'
@@ -17,7 +17,7 @@ import { io, Socket } from "socket.io-client"
 import { motion } from "framer-motion"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer, X,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft, ShieldOff
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft, ShieldOff, Activity
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -52,6 +52,7 @@ import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
 import { askPet } from "@/lib/askPet"
+import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
 import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
@@ -61,6 +62,15 @@ import {
 type Role = "host" | "controller" | "admin"
 type PermissionLevel = "view" | "mouse" | "keyboard" | "full"
 type ConnectionState = "idle" | "waiting" | "connecting" | "connected"
+// Server room events carry only a local "HH:MM:SS"; anchor them to today so they sort with device logs
+function roomTimeToIso(time: string) {
+    const match = /^(d{1,2}):(d{2}):(d{2})$/.exec(String(time || ''))
+    if (!match) return new Date().toISOString()
+    const at = new Date()
+    at.setHours(Number(match[1]), Number(match[2]), Number(match[3]), 0)
+    return at.toISOString()
+}
+
 type LogEntry = {
     time: string // ISO 8601 string
     type: "system" | "user" | "input" | "permission" | "anticheat" | "chain" | "chat" | "quality" | "recording"
@@ -235,6 +245,10 @@ function SessionContent() {
     const e2eKeyRequestAtRef = useRef(0)
     const [chatInput, setChatInput] = useState("")
     const [chatOpen, setChatOpen] = useState(false)
+    const [activityOpen, setActivityOpen] = useState(false)
+    // Host only: the room log and risk score kept by the server
+    const [roomEvents, setRoomEvents] = useState<{ time: string; type: string; message: string }[]>([])
+    const [roomRisk, setRoomRisk] = useState<number | null>(null)
     const [showPet, setShowPet] = useState(true)
 
     useEffect(() => {
@@ -650,6 +664,11 @@ function SessionContent() {
         }, 3000)
         return () => window.clearInterval(timer)
     }, [])
+
+    const activityEntries = useMemo<ActivityEntry[]>(() => [
+        ...sessionLogs.map(entry => ({ ...entry, source: 'device' as const })),
+        ...(role === 'host' ? roomEvents.map(entry => ({ ...entry, source: 'room' as const })) : []),
+    ].sort((a, b) => Date.parse(a.time) - Date.parse(b.time)), [sessionLogs, roomEvents, role])
 
     const addLog = useCallback((type: LogEntry['type'], message: string) => {
         setSessionLogs(prev => [...prev, { time: new Date().toISOString(), type, message }].slice(-100))
@@ -1310,6 +1329,8 @@ function SessionContent() {
             setChatMessages(state.messages || [])
             announceE2E(socket, state.roomCode)
             setObserverCount(state.observerCount || 0)
+            if (Array.isArray(state.events)) setRoomEvents(state.events.map((event: any) => ({ ...event, time: roomTimeToIso(event.time) })))
+            if (typeof state.riskScore === 'number') setRoomRisk(state.riskScore)
             setExamQuestions(state.examQuestions || [])
         })
         socket.on('join-approved', ({ permission: approvedPermission, clipboardAllowed: approvedClipboard }: any) => {
@@ -1411,6 +1432,9 @@ function SessionContent() {
         socket.on('observer-ice-candidate', async ({ fromId, candidate }: { fromId: string; candidate: RTCIceCandidateInit }) => {
             const pc = observerPcRefs.current.get(fromId)
             await pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
+        })
+        socket.on('room-event', (event: { time: string; type: string; message: string }) => {
+            setRoomEvents(prev => [...prev, { ...event, time: roomTimeToIso(event.time) }].slice(-200))
         })
         socket.on('chat-message', (message: ChatMessage) => {
             setChatMessages(prev => [...prev, message].slice(-100))
@@ -2438,7 +2462,16 @@ function SessionContent() {
                 </div>
                 <div className="flex items-center gap-2.5">
                     <button
-                        onClick={() => setChatOpen(open => !open)}
+                        onClick={() => { setActivityOpen(open => !open); setChatOpen(false) }}
+                        aria-label="Toggle Session Activity"
+                        aria-pressed={activityOpen}
+                        title="Session activity"
+                        className={cn("relative p-1.5 rounded-lg border transition-colors", activityOpen ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)]")}
+                    >
+                        <Activity className="w-4 h-4" />
+                    </button>
+                    <button
+                        onClick={() => { setChatOpen(open => !open); setActivityOpen(false) }}
                         aria-label="Toggle Session Chat"
                         className={cn("relative p-1.5 rounded-lg border transition-colors", chatOpen ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)]")}
                     >
@@ -3024,6 +3057,15 @@ function SessionContent() {
                         {/* Malpractice Warnings Removed as per user request */}
                     </div>
                 </main>
+
+            {activityOpen && (
+                <SessionActivityPanel
+                    entries={activityEntries}
+                    isHost={role === 'host'}
+                    riskScore={roomRisk}
+                    onClose={() => setActivityOpen(false)}
+                />
+            )}
 
             {chatOpen && (
                 <div className="fixed right-4 top-16 z-[500] flex h-[min(560px,calc(100vh-5rem))] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
