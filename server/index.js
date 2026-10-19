@@ -989,6 +989,31 @@ function chainWriteAllowed(room, eventType, now = Date.now()) {
   return true;
 }
 
+// How long a dropped host or controller can take to come back before the room or seat is given up
+const HOST_RECONNECT_GRACE_MS = Number(process.env.HOST_RECONNECT_GRACE_MS ?? 45000);
+const CONTROLLER_RECONNECT_GRACE_MS = Number(process.env.CONTROLLER_RECONNECT_GRACE_MS ?? 45000);
+
+async function closeRoomAfterHostLeft(roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  clearTimeout(room.hostGraceTimer);
+  await archiveSession(roomId, 'Host disconnected; session closed');
+  io.to(roomId).emit('kill-session');
+  room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
+  rooms.delete(roomId);
+  broadcastSessions();
+}
+
+// Exam answers are keyed by socket id; a reconnecting candidate keeps (and stays locked by) its own
+function moveExamAnswers(room, fromId, toId) {
+  if (!fromId || fromId === toId) return;
+  Object.values(room.exam?.answers || {}).forEach((byController) => {
+    if (!byController[fromId]) return;
+    byController[toId] = byController[fromId];
+    delete byController[fromId];
+  });
+}
+
 // Each new room gets its own chain budget and a ROOM_CREATED anchor, so creation itself is capped
 const ROOM_CREATE_WINDOW_MS = 10 * 60 * 1000;
 const ROOM_CREATE_MAX = Number(process.env.MAX_ROOMS_PER_USER_PER_10_MIN || 10);
@@ -1171,6 +1196,7 @@ function removeController(roomCode, controllerId, reason) {
       controller.role = null;
     }
     room.controllers.delete(id);
+    if (participant.email) room.recentControllers?.delete(participant.email); // a removed controller must ask again
     io.to(room.hostSocketId).emit('controller-left', { controllerId: id, controller: participantPayload(participant) });
     removed = true;
   });
@@ -1525,6 +1551,16 @@ io.on('connection', (socket) => {
     socket.pendingRoomCode = normalizedRoomId;
     socket.role = 'pending-controller';
     socket.userEmail = pending.email;
+
+    // The same account coming back after a dropped connection keeps its approval and permission
+    const returning = actor.email && room.recentControllers?.get(actor.email);
+    if (returning && returning.expiresAt > Date.now()) {
+      room.recentControllers.delete(actor.email);
+      moveExamAnswers(room, returning.socketId, socket.id);
+      pushEvent(normalizedRoomId, 'join', `${pending.name} reconnected`);
+      activateController(normalizedRoomId, socket.id, returning.permission, { clipboardAllowed: returning.clipboardAllowed });
+      return;
+    }
     socket.emit('join-pending', {
       roomCode: normalizedRoomId,
       mode: room.mode,
@@ -2343,7 +2379,35 @@ io.on('connection', (socket) => {
   });
 
   socket.on('leave-session', () => {
+    socket.leftOnPurpose = true; // leaving on purpose skips the reconnect grace period
     socket.disconnect(true);
+  });
+
+  // A host whose connection dropped takes its room back within the grace period
+  socket.on('resume-host', async ({ roomId } = {}) => {
+    const roomCode = normalizeRoomCode(roomId);
+    const room = rooms.get(roomCode);
+    const actor = await authenticatedUser(socket);
+    if (!room || !room.hostDisconnectedAt || !actor?.email || actor.email !== room.hostEmail) {
+      socket.emit('resume-failed', { reason: 'The session ended while you were disconnected.' });
+      return;
+    }
+    clearTimeout(room.hostGraceTimer);
+    room.hostGraceTimer = null;
+    room.hostDisconnectedAt = null;
+    room.hostSocketId = socket.id;
+    socket.join(roomCode);
+    socket.roomCode = roomCode;
+    socket.role = 'host';
+    socket.userEmail = room.hostEmail;
+    onlineEmails.add(room.hostEmail);
+    pushEvent(roomCode, 'system', 'Host reconnected');
+    socket.emit('room-created', { roomCode });
+    emitRoomState(roomCode); // new host id: the E2E roster changes, so chat keys are re-shared
+    // Rebuild the call with every controller that is still here
+    room.controllers.forEach((_, controllerId) => socket.emit('controller-joined', { controllerId }));
+    io.to(roomCode).emit('host-resumed');
+    broadcastSessions();
   });
 
   socket.on('recording-uploaded', ({ room, url } = {}) => {
@@ -2399,11 +2463,18 @@ io.on('connection', (socket) => {
     const roomId = socket.roomCode;
     const room = rooms.get(roomId);
     if (!room) return;
-    if (socket.role === 'host') {
-      await archiveSession(roomId, 'Host disconnected; session closed');
-      io.to(roomId).emit('kill-session');
-      room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
-      rooms.delete(roomId);
+    if (socket.role === 'host' && room.hostSocketId === socket.id) {
+      // A network blip should not end everyone's session: hold the room for the host to resume
+      if (socket.leftOnPurpose || HOST_RECONNECT_GRACE_MS <= 0) {
+        await closeRoomAfterHostLeft(roomId);
+        return;
+      }
+      clearTimeout(room.hostGraceTimer);
+      room.hostDisconnectedAt = Date.now();
+      room.hostGraceTimer = setTimeout(() => { void closeRoomAfterHostLeft(roomId); }, HOST_RECONNECT_GRACE_MS);
+      room.hostGraceTimer.unref?.();
+      pushEvent(roomId, 'system', `Host connection lost; holding the session for ${Math.round(HOST_RECONNECT_GRACE_MS / 1000)} s`);
+      io.to(roomId).emit('host-reconnecting', { graceMs: HOST_RECONNECT_GRACE_MS });
       broadcastSessions();
       return;
     }
@@ -2411,6 +2482,15 @@ io.on('connection', (socket) => {
       const participant = room.controllers.get(socket.id);
       participant.leftAt = Date.now();
       room.controllers.delete(socket.id);
+      if (participant.email && !socket.leftOnPurpose && CONTROLLER_RECONNECT_GRACE_MS > 0) {
+        if (!room.recentControllers) room.recentControllers = new Map();
+        room.recentControllers.set(participant.email, {
+          socketId: socket.id,
+          permission: participant.permission,
+          clipboardAllowed: participant.clipboardAllowed,
+          expiresAt: Date.now() + CONTROLLER_RECONNECT_GRACE_MS,
+        });
+      }
       pushEvent(roomId, 'join', `${participant.name} disconnected`);
       anchorEvent(roomId, 'USER_LEFT', { role: 'controller', email: participant.email }, room.hostEmail, participant.email);
       io.to(room.hostSocketId).emit('controller-left', { controllerId: socket.id, controller: participantPayload(participant) });

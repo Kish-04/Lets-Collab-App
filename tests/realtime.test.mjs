@@ -276,6 +276,56 @@ test('the room activity log reaches the host but never a candidate', async () =>
   assert.ok(candidateStates.every(state => state.events === undefined))
 })
 
+test('a host that drops can resume its room, and a dropped controller comes back approved', async () => {
+  const hostAccount = user('GraceHost')
+  const candAccount = user('GraceCand')
+  let host = await connect(hostAccount)
+  host.emit('create-room', { name: 'GraceHost', mode: 'supervised' })
+  const { roomCode } = await once(host, 'room-created')
+  let candidate = await connect(candAccount)
+  candidate.emit('join-room', roomCode, 'controller', { name: 'GraceCand' })
+  await once(host, 'connection-request')
+  host.emit('respond-join', { controllerId: candidate.id, approved: true, permission: 'keyboard' }, roomCode)
+  await once(candidate, 'join-approved')
+
+  // Host connection drops: the room is held, not killed
+  const reconnecting = once(candidate, 'host-reconnecting')
+  const killed = noEvent(candidate, 'kill-session', 800)
+  host.disconnect()
+  await reconnecting
+  await killed
+
+  host = await connect(hostAccount)
+  const resumed = once(candidate, 'host-resumed')
+  const renegotiate = once(host, 'controller-joined', ({ controllerId }) => controllerId === candidate.id)
+  host.emit('resume-host', { roomId: roomCode })
+  assert.equal((await once(host, 'room-created')).roomCode, roomCode)
+  await resumed
+  await renegotiate
+
+  // Controller connection drops and comes back: approved again with its permission, no host prompt
+  candidate.disconnect()
+  await once(host, 'controller-left')
+  candidate = await connect(candAccount)
+  const noPrompt = noEvent(host, 'connection-request', 800)
+  candidate.emit('join-room', roomCode, 'controller', { name: 'GraceCand' })
+  assert.equal((await once(candidate, 'join-approved')).permission, 'keyboard')
+  await noPrompt
+
+  // Leaving on purpose gives the seat up: the next join asks the host again
+  candidate.emit('leave-session')
+  await once(host, 'controller-left')
+  candidate = await connect(candAccount)
+  const prompt = once(host, 'connection-request')
+  candidate.emit('join-room', roomCode, 'controller', { name: 'GraceCand' })
+  await prompt
+
+  // Someone else cannot take over a held room
+  const intruder = await connect(user('Intruder'))
+  intruder.emit('resume-host', { roomId: roomCode })
+  await once(intruder, 'resume-failed')
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))

@@ -1289,7 +1289,10 @@ function SessionContent() {
         (window as any)._roomCode = roomCodeRef;
         socket.on('connect', () => {
             e2eAnnouncedRef.current = false
-            if (asRole === 'host') {
+            if (asRole === 'host' && roomCodeRef.current) {
+                // Reconnected after a drop: take the existing room back instead of opening a new one
+                socket.emit('resume-host', { roomId: roomCodeRef.current })
+            } else if (asRole === 'host') {
                 socket.emit('create-room', { name: localStorage.getItem('ircp_name') || 'Host', mode: sessionModeRef.current, appearance: readPersonalAppearance() })
             } else if (asRole === 'admin') {
                 const room = code || joinInput
@@ -1618,6 +1621,31 @@ function SessionContent() {
             alert('The session has ended.')
             router.push('/app')
         })
+        socket.on('disconnect', (reason: string) => {
+            if (reason === 'io client disconnect') return
+            // The server keeps the seat (host or controller) for a grace period; the call itself is
+            // rebuilt after reconnecting, so drop the stale peer connections now
+            hostPcRefs.current.forEach(pc => pc.close())
+            hostPcRefs.current.clear()
+            pcRef.current?.close()
+            pcRef.current = null
+            pendingIceRef.current.clear()
+            addLog('system', 'Connection to the session server lost; reconnecting...')
+            if (currentRoleRef.current !== 'host') setConnectionState('connecting')
+        })
+        socket.on('resume-failed', ({ reason }: { reason?: string } = {}) => {
+            alert(reason || 'The session ended while you were disconnected.')
+            router.push('/app')
+        })
+        socket.on('host-reconnecting', () => {
+            addLog('system', 'The host lost connection; waiting for them to come back...')
+            // The host comes back on a new connection and sends a fresh offer
+            pcRef.current?.close()
+            pcRef.current = null
+            pendingIceRef.current.clear()
+            setConnectionState('connecting')
+        })
+        socket.on('host-resumed', () => addLog('system', 'The host is back; reconnecting the call'))
         socket.on('stats-update', (data: any) => {
             if (data) {
                 setPacketLoss(data.packetLoss);
