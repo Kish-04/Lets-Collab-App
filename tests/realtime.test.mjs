@@ -357,6 +357,23 @@ test('Code Black needs the room code and a reason, and is anchored', async () =>
   await anchored
 })
 
+test('session verification checks the signed audit chain even without a blockchain', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  host.emit('permission-violation', { roomCode, controllerId: candidate.id, action: 'Alt+Tab' })
+  await new Promise(resolve => setTimeout(resolve, 200))
+  const admin = user('Auditor', 'admin')
+  const res = await fetch(`${baseUrl}/api/sessions/${roomCode}/verify`, { headers: { Authorization: `Bearer ${admin.token}` } })
+  const report = await res.json()
+  assert.equal(res.status, 200)
+  assert.equal(report.signedChain.status, 'intact')
+  assert.ok(report.signedChain.length >= 3) // ROOM_CREATED, USER_JOINED, PERMISSION_VIOLATION
+  assert.equal(report.intact, true)
+
+  const key = await (await fetch(`${baseUrl}/api/audit/public-key`)).json()
+  assert.equal(key.keyId, report.signedChain.keyId)
+  assert.match(key.publicKey, /BEGIN PUBLIC KEY/)
+})
+
 test('malformed events from any socket do not crash the server', async () => {
   const { host, roomCode } = await supervisedRoom(1)
   const stranger = await connect(user('Stranger'))

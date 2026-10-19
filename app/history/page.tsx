@@ -97,7 +97,10 @@ function SessionHistoryViewer() {
             !verification.success ? (
               <p className="mt-4 text-sm text-red-400">{verification.message}</p>
             ) : !verification.chainActive ? (
-              <p className="mt-4 text-sm text-gray-400">{verification.message}</p>
+              <div className="mt-4 space-y-2 text-sm">
+                <p className="text-gray-400">{verification.message}</p>
+                <SignedChainLine chain={verification.signedChain} />
+              </div>
             ) : (
               <div className="mt-4 space-y-3 text-sm">
                 <p className={`font-bold ${verification.intact ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -112,6 +115,7 @@ function SessionHistoryViewer() {
                     chat &amp; evidence: {verification.transcript.status.replace('_', ' ')}
                   </span>
                 </div>
+                <SignedChainLine chain={verification.signedChain} />
                 {verification.results.filter((r: any) => r.status === 'tampered' || r.status === 'missing_local').map((r: any, i: number) => (
                   <div key={i} className="p-3 rounded-lg bg-red-950/30 border border-red-900/50 font-mono text-xs break-all">
                     <p className="text-red-300 font-bold">{r.eventType} - {r.status === 'tampered' ? 'payload altered' : 'record deleted locally'}</p>
@@ -191,5 +195,26 @@ function SessionHistoryViewer() {
         )}
       </div>
     </div>
+  );
+}
+
+// Result of the server's signed, hash-linked audit chain (works with or without the blockchain)
+function SignedChainLine({ chain }: { chain?: { status: string; length: number; brokenAt?: number; eventType?: string; reason?: string; keyId?: string; unsignedLegacy?: number } }) {
+  if (!chain) return null;
+  if (chain.status === 'unsigned') {
+    return <p className="font-mono text-xs text-gray-400">Signed audit chain: none recorded for this session (recorded before signing was enabled).</p>;
+  }
+  if (chain.status === 'broken') {
+    return (
+      <p className="font-mono text-xs text-red-400">
+        Signed audit chain BROKEN at entry {chain.brokenAt} ({chain.eventType}): {chain.reason}.
+      </p>
+    );
+  }
+  return (
+    <p className="font-mono text-xs text-emerald-400">
+      Signed audit chain intact: {chain.length} entries, key {chain.keyId}
+      {chain.unsignedLegacy ? ` (${chain.unsignedLegacy} older unsigned)` : ''}.
+    </p>
   );
 }

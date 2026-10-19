@@ -31,6 +31,7 @@ const { ethers } = require('ethers');
 const { decodeSubmission, recoverSum, applyAggregate } = require('./secureAggregation');
 const { buildIceServers } = require('./turn');
 const { isUploadPath, requireSignedUpload, signUploadUrl } = require('./uploadAccess');
+const auditChain = require('./auditChain');
 const rateLimit = require('express-rate-limit');
 const { createCorsOptions, ensureServerConfig, verifyJwt } = require('./config');
 const mockStore = require('./mockStore');
@@ -348,8 +349,17 @@ app.get('/api/sessions/:sessionId/verify', protectAdmin, async (req, res) => {
     if (!session) {
       return res.status(404).json({ success: false, message: 'Session not found' });
     }
+    // Signed hash chain: detects edited, removed, reordered or inserted anchors without the blockchain
+    const signedChain = auditChain.verifyChain(session.anchors || []);
     if (!global.blockchainActive) {
-      return res.json({ success: true, chainActive: false, message: 'Blockchain is inactive; nothing to verify against.' });
+      return res.json({
+        success: true,
+        chainActive: false,
+        message: 'Blockchain is inactive; the signed audit chain was checked instead.',
+        sessionId,
+        signedChain,
+        intact: signedChain.status !== 'broken',
+      });
     }
 
     const chainLogs = await querySessionLogs(sessionId);
@@ -375,13 +385,19 @@ app.get('/api/sessions/:sessionId/verify', protectAdmin, async (req, res) => {
       sessionId,
       live: Boolean(liveRoom),
       ...report,
-      intact: report.intact && transcript.status !== 'tampered',
+      intact: report.intact && transcript.status !== 'tampered' && signedChain.status !== 'broken',
+      signedChain,
       transcript,
     });
   } catch (error) {
     console.error('Verify Error:', error);
     res.status(500).json({ success: false, message: 'Failed to verify session audit trail' });
   }
+});
+
+// Public half of the audit signing key, so auditors can verify exported sessions offline
+app.get('/api/audit/public-key', (req, res) => {
+  res.json({ keyId: auditChain.keyId, algorithm: 'Ed25519', publicKey: auditChain.publicKeyPem, ephemeral: auditChain.ephemeralKey });
 });
 
 const turnCredentialLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
@@ -1059,6 +1075,7 @@ function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = ''
   // Keep the exact hashed payload off-chain so auditors can recompute and compare it later
   const { payload, dataHash } = hashAuditPayload(data);
   const anchor = { eventType, payload, dataHash, txHash: null, createdAt: new Date().toISOString() };
+  auditChain.appendToChain(room.anchors, anchor); // hash-linked and signed, independent of the chain write
   room.anchors.push(anchor);
 
   if (!chainWriteAllowed(room, eventType)) {

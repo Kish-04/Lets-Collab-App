@@ -46,6 +46,7 @@ const sessionLogSchema = new mongoose.Schema({
     dataHash: String,
     txHash: String,
     createdAt: String,
+    chain: { type: mongoose.Schema.Types.Mixed }, // { seq, prev, hash, sig, keyId } (auditChain.js)
   }],
   federated: { type: mongoose.Schema.Types.Mixed },
   examData: { type: mongoose.Schema.Types.Mixed },
