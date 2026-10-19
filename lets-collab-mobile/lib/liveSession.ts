@@ -1,4 +1,4 @@
-import { BACKEND_URL } from './api';
+import { BACKEND_URL, getAuthHeaders } from './api';
 
 export type SessionMode = 'collaboration' | 'supervised';
 export type PermissionLevel = 'view' | 'mouse' | 'keyboard' | 'full';
@@ -38,7 +38,8 @@ export function normalizeRoomCode(value: string | undefined | null) {
 /** Same endpoint and fallback as `getIceServers()` in the web app's lib/utils.ts. */
 export async function fetchIceServers(): Promise<IceServer[]> {
   try {
-    const res = await fetch(`${BACKEND_URL}/api/turn/credentials`);
+    // Signed-in users get TURN relay credentials; without a token the server returns STUN only
+    const res = await fetch(`${BACKEND_URL}/api/turn/credentials`, { headers: await getAuthHeaders() });
     if (res.ok) {
       const servers = await res.json();
       if (Array.isArray(servers) && servers.length > 0) return servers;

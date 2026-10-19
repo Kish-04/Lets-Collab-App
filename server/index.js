@@ -29,7 +29,7 @@ const {
 } = require('./blockchainLogger');
 const { ethers } = require('ethers');
 const { decodeSubmission, recoverSum, applyAggregate } = require('./secureAggregation');
-const { buildIceServers } = require('./turn');
+const { buildIceServers, stunOnly } = require('./turn');
 const { isUploadPath, requireSignedUpload, signUploadUrl } = require('./uploadAccess');
 const auditChain = require('./auditChain');
 const rateLimit = require('express-rate-limit');
@@ -405,12 +405,15 @@ const turnCredentialLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standard
 app.get('/api/turn/credentials', turnCredentialLimiter, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
-    // Tie ephemeral credentials to the signed-in user when there is one (useful in coturn logs)
-    let identity = 'guest';
-    const token = req.cookies?.auth_token || String(req.headers.authorization || '').replace(/^Bearers+/i, '');
+    // Relay credentials cost bandwidth and last for hours, so only signed-in users get them (tied to
+    // the account in coturn logs); anyone else gets public STUN servers
+    const header = String(req.headers.authorization || '');
+    const token = /^Bearer\s+\S+/i.test(header) ? header.replace(/^Bearer\s+/i, '') : req.cookies?.auth_token;
+    let identity = null;
     if (token) {
-      try { identity = String(verifyJwt(token).id || 'guest'); } catch (err) { identity = 'guest'; }
+      try { identity = String(verifyJwt(token).id || '') || null; } catch { identity = null; }
     }
+    if (!identity) return res.json(stunOnly());
 
     const configured = buildIceServers(process.env, identity);
     if (configured) return res.json(configured.iceServers);

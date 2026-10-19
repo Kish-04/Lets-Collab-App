@@ -473,6 +473,20 @@ test('a controller cannot write draft answers into another room', async () => {
   await injected
 })
 
+test('TURN relay credentials are only issued to signed-in users', async () => {
+  process.env.TURN_URLS = 'turn:turn.example.test:3478'
+  process.env.TURN_SECRET = 'realtime-test-turn-secret'
+  try {
+    const anonymous = await (await fetch(`${baseUrl}/api/turn/credentials`)).json()
+    assert.ok(anonymous.every(server => !JSON.stringify(server.urls).includes('turn:')), 'no relay for anonymous callers')
+    const signedIn = await (await fetch(`${baseUrl}/api/turn/credentials`, { headers: { Authorization: `Bearer ${user('TurnUser').token}` } })).json()
+    assert.ok(signedIn.some(server => JSON.stringify(server.urls).includes('turn:') && server.credential))
+  } finally {
+    delete process.env.TURN_URLS
+    delete process.env.TURN_SECRET
+  }
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

@@ -23,6 +23,12 @@ function createTurnRestCredentials({ secret, urls, identity = 'guest', ttlSecond
 }
 
 /** Returns the RTCIceServer list for the configured TURN mode, or null when no mode is configured. */
+// Public STUN only: what callers without an account get (no relay through our TURN servers)
+function stunOnly(env = process.env) {
+  const stun = parseList(env.STUN_URLS);
+  return [{ urls: stun.length ? stun : DEFAULT_STUN }];
+}
+
 function buildIceServers(env = process.env, identity = 'guest') {
   const stun = parseList(env.STUN_URLS);
   const stunServers = { urls: stun.length ? stun : DEFAULT_STUN };
@@ -49,4 +55,4 @@ function buildIceServers(env = process.env, identity = 'guest') {
   return null;
 }
 
-module.exports = { buildIceServers, createTurnRestCredentials, parseList };
+module.exports = { buildIceServers, createTurnRestCredentials, parseList, stunOnly };
