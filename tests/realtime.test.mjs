@@ -462,6 +462,17 @@ test('a 2 MB voice answer is delivered instead of dropping the connection', asyn
   await disconnected
 })
 
+test('a controller cannot write draft answers into another room', async () => {
+  const roomA = await supervisedRoom(1)
+  const roomB = await supervisedRoom(1)
+  const received = once(roomB.controllers[0], 'new-exam-question')
+  roomB.host.emit('host-push-question', { id: 'qb', type: 'freeform', prompt: 'B only', roomId: roomB.roomCode })
+  await received
+  const injected = noEvent(roomB.host, 'host-live-answer-update', 800)
+  roomA.controllers[0].emit('controller-draft-answer', { questionId: 'qb', answer: { text: 'injected' }, roomId: roomB.roomCode })
+  await injected
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

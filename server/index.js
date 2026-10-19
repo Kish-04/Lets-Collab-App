@@ -1463,10 +1463,12 @@ io.on('connection', (socket) => {
     if (admin) socket.join('admins');
   });
 
-  socket.on('identify-user', (email) => {
-    if (!email) return;
-    socket.userEmail = email;
-    onlineEmails.add(email);
+  // Online status comes from the signed-in account, never from an email the client names
+  socket.on('identify-user', async () => {
+    const actor = await authenticatedUser(socket);
+    if (!actor?.email) return;
+    socket.userEmail = actor.email;
+    onlineEmails.add(actor.email);
   });
 
   socket.on('create-room', async (meta = {}) => {
@@ -2409,6 +2411,8 @@ io.on('connection', (socket) => {
     const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
     const room = rooms.get(normalizedRoomId);
     if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
+    // Only a candidate of this room may write drafts into its exam
+    if (!room.controllers.has(socket.id)) return;
     if (!room.exam.questions.some(q => q.id === questionId)) return;
 
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
@@ -2549,7 +2553,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', async () => {
-    if (socket.userEmail) onlineEmails.delete(socket.userEmail);
+    // Still online while the same account has another connection open
+    if (socket.userEmail && !Array.from(io.sockets.sockets.values()).some(other => other.id !== socket.id && other.userEmail === socket.userEmail)) {
+      onlineEmails.delete(socket.userEmail);
+    }
 
     rooms.forEach((room, roomId) => {
       // Before keys are handed out a leaver is simply removed; later it is treated as dropped and its
