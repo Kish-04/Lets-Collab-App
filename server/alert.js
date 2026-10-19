@@ -14,6 +14,7 @@ const alertSchema = new mongoose.Schema({
     // so an admin's false-positive verdict can be sent back as a training label
     features: { type: [Number], default: undefined },
     sourceSocketId: { type: String },
+    sourceEmail: { type: String }, // lets a training label reach the device after it reconnects
 }, { timestamps: true });
 
 alertSchema.index({ createdAt: -1 });

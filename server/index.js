@@ -654,12 +654,35 @@ function sanitizeFeatures(features) {
 }
 
 /** An admin judged an alert a false positive: send it back to the device that raised it as a label-0 sample. */
+// A false-positive verdict becomes a label-0 training sample on the device that raised the alert.
+// If that connection is gone, any open connection of the same account gets it; otherwise it waits
+// (up to 50 per account, in memory) until the account hosts or joins a session again.
+const pendingLabels = new Map();
+
 function sendFalsePositiveLabel(alert) {
-  if (!alert?.sourceSocketId || !Array.isArray(alert.features) || alert.features.length !== 3) return false;
-  const target = io.sockets.sockets.get(alert.sourceSocketId);
-  if (!target) return false;
-  target.emit('fl-label-correction', { alertId: String(alert._id), features: alert.features, label: 0 });
+  if (!Array.isArray(alert?.features) || alert.features.length !== 3) return false;
+  const label = { alertId: String(alert._id), features: alert.features, label: 0 };
+  const original = alert.sourceSocketId && io.sockets.sockets.get(alert.sourceSocketId);
+  if (original) {
+    original.emit('fl-label-correction', label);
+    return true;
+  }
+  if (!alert.sourceEmail) return false;
+  const sameAccount = Array.from(io.sockets.sockets.values()).find(other => other.userEmail === alert.sourceEmail);
+  if (sameAccount) {
+    sameAccount.emit('fl-label-correction', label);
+    return true;
+  }
+  const queued = (pendingLabels.get(alert.sourceEmail) || []).filter(item => item.alertId !== label.alertId);
+  pendingLabels.set(alert.sourceEmail, [...queued, label].slice(-50));
   return true;
+}
+
+function deliverPendingLabels(socket) {
+  const queued = socket.userEmail && pendingLabels.get(socket.userEmail);
+  if (!queued) return;
+  pendingLabels.delete(socket.userEmail);
+  queued.forEach(label => socket.emit('fl-label-correction', label));
 }
 
 function sanitizeWeights(weights) {
@@ -1500,6 +1523,7 @@ function activateController(roomCode, controllerId, permission = 'view', options
   socket.role = 'controller';
   socket.userEmail = participant.email;
   if (participant.email) onlineEmails.add(participant.email);
+  deliverPendingLabels(socket);
 
   pushEvent(roomCode, 'join', `${participant.name} approved as controller (${participant.permission})`);
   socket.emit('join-approved', { roomCode, permission: participant.permission, clipboardAllowed: participant.clipboardAllowed });
@@ -1596,6 +1620,7 @@ io.on('connection', (socket) => {
     socket.role = 'host';
     socket.userEmail = room.hostEmail;
     if (room.hostEmail) onlineEmails.add(room.hostEmail);
+    deliverPendingLabels(socket);
 
     pushEvent(code, 'system', `${room.mode === 'supervised' ? 'Supervised session' : 'Collaboration room'} created by ${room.hostName}`);
     pushEvent(code, 'permission', 'Guest connections require host approval before screen access');
@@ -2359,6 +2384,7 @@ io.on('connection', (socket) => {
       penalty,
       features: sanitizeFeatures(payload.features),
       sourceSocketId: socket.id,
+      sourceEmail: participant.email || undefined,
     };
     // Admins need the stored id so a live alert can be marked (e.g. false positive) right away
     const saved = global.dbConnected

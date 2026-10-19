@@ -428,6 +428,41 @@ test('an admin false-positive verdict reaches the device as a training label', a
   assert.equal(label.label, 0)
 })
 
+test('a training label reaches the device even after it reconnected', async () => {
+  const hostAccount = user('LabelHost')
+  const candAccount = user('LabelCand')
+  const host = await connect(hostAccount)
+  host.emit('create-room', { name: 'LabelHost', mode: 'supervised' })
+  const { roomCode } = await once(host, 'room-created')
+  let candidate = await connect(candAccount)
+  candidate.emit('join-room', roomCode, 'controller', { name: 'LabelCand' })
+  await once(host, 'connection-request')
+  host.emit('respond-join', { controllerId: candidate.id, approved: true, permission: 'view' }, roomCode)
+  await once(candidate, 'join-approved')
+
+  const adminAccount = user('LateReviewer', 'admin')
+  const admin = await connect(adminAccount)
+  await new Promise(resolve => setTimeout(resolve, 300))
+  const live = once(admin, 'system-alert', payload => payload.room === roomCode)
+  candidate.emit('system-alert', { room: roomCode, type: 'anticheat_violation', event: 'NO_FACE', message: 'No face', penalty: 10, features: [1, 0.5, 0.2] })
+  const alert = await live
+
+  // The device drops before the admin reviews the alert
+  candidate.disconnect()
+  await once(host, 'controller-left')
+  const res = await fetch(`${baseUrl}/api/admin/alerts/${alert._id}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminAccount.token}` },
+    body: JSON.stringify({ falsePositive: true }),
+  })
+  assert.equal((await res.json()).labelSent, true) // queued for the account
+
+  candidate = await connect(candAccount)
+  const correction = once(candidate, 'fl-label-correction')
+  candidate.emit('join-room', roomCode, 'controller', { name: 'LabelCand' })
+  assert.deepEqual((await correction).features, [1, 0.5, 0.2])
+})
+
 test('exam answer keys never reach candidates and grading happens on the server', async () => {
   const { host, controllers, roomCode } = await supervisedRoom(1)
   const candidate = controllers[0]
