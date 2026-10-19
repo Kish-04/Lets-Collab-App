@@ -38,7 +38,8 @@ const mockStore = require('./mockStore');
 
 const app = express();
 app.use((req, res, next) => {
-  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  // Path only: query strings carry OAuth codes, upload signatures and other secrets
+  console.log(`[REQUEST] ${req.method} ${req.path}`);
   next();
 });
 ensureServerConfig();
@@ -1523,7 +1524,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('create-room', async (meta = {}) => {
-    console.log(`[Socket] create-room requested by socket: ${socket.id}`, meta);
+    console.log(`[Socket] create-room requested by socket: ${socket.id}`);
     let actor = await authenticatedUser(socket);
     
     if (!actor) {

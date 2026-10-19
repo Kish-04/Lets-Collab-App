@@ -57,7 +57,6 @@ async function loadAuthenticatedUser(req, res) {
       : mockStore.findUserById(decoded.id);
 
     if (!user || user.banned) {
-      console.log('[loadAuthenticatedUser] user not found or banned in DB');
       if (decoded.id === 'admin-id' || decoded.email === 'kishankarthiks222@gmail.com' || decoded.email === 'admin@letscollab.com') {
         const emailToUse = decoded.email || 'admin@letscollab.com';
         const mockStore = require('./mockStore');
@@ -90,17 +89,13 @@ async function protectAuthenticated(req, res, next) {
 }
 
 async function protectAdmin(req, res, next) {
-  console.log('[protectAdmin] Invoked for', req.url);
   const user = await loadAuthenticatedUser(req, res);
   if (!user) {
-    console.log('[protectAdmin] loadAuthenticatedUser returned null');
     return;
   }
   if (user.role !== 'admin') {
-    console.log('[protectAdmin] User is not admin:', user.role);
     return res.status(403).json({ success: false, message: 'Not authorized as an admin' });
   }
-  console.log('[protectAdmin] Admin authorized:', user.email);
   req.user = user;
   next();
 }
@@ -347,13 +342,9 @@ router.post('/users/:id/role', async (req, res) => {
 });
 
 router.get('/reports', async (req, res) => {
-  console.log('[API /reports] Request received!');
-  console.log('[API /reports] global.dbConnected:', Boolean(global.dbConnected));
-  console.log('[API /reports] req.user:', req.user ? req.user.email : 'None');
   
   try {
     if (!global.dbConnected) {
-      console.log('[API /reports] Returning mock data because dbConnected is false!');
       const userActivity = mockStore.listUsers().map(user => ({
         name: user.name,
         email: user.email,
@@ -406,9 +397,7 @@ router.get('/reports', async (req, res) => {
       });
     }
 
-    console.log('[API /reports] DB is connected. Querying User.find({})...');
     const users = await User.find({}).select('-password -otp -otpExpires').sort({ sessionCount: -1 });
-    console.log('[API /reports] Found users:', users.length);
     const userActivity = users.map(user => ({
       name: user.name,
       email: user.email,

@@ -10,10 +10,6 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const GitHubStrategy = require('passport-github2').Strategy;
 
 const router = express.Router();
-router.use((req, res, next) => {
-  console.log('HIT AUTH ROUTES:', req.path);
-  next();
-});
 router.use(passport.initialize());
 const OTP_TTL_MS = 10 * 60 * 1000;
 const isProduction = process.env.NODE_ENV === 'production';
@@ -102,6 +98,12 @@ function getEmailJsConfig() {
   };
 }
 
+// "alice@example.com" -> "a***@example.com" for logs
+function maskEmail(email) {
+  const [local, domain] = String(email || '').split('@');
+  return domain ? `${local.slice(0, 1)}***@${domain}` : '***';
+}
+
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
@@ -179,7 +181,7 @@ async function sendEmailJsOTP(toEmail, otp, name = 'User') {
     });
 
     if (response.ok) {
-      console.log(`[EMAILJS] OTP sent to ${toEmail}`);
+      console.log(`[EMAILJS] OTP sent to ${maskEmail(toEmail)}`);
       return true;
     }
 
@@ -238,7 +240,7 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
       if (response.error) {
         console.error(`[EMAIL ERROR] Resend failed: ${response.error.message}`);
       } else {
-        console.log(`[EMAIL] OTP sent to ${toEmail}`);
+        console.log(`[EMAIL] OTP sent to ${maskEmail(toEmail)}`);
         delivered = true;
       }
     } catch (err) {
@@ -246,7 +248,8 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
     }
   }
 
-  const terminalOtpAllowed = (!isProduction && process.env.LOG_OTP !== 'false') || process.env.LOG_OTP === 'true';
+  // Never in production: an OTP in the logs is a password reset for whoever can read them
+  const terminalOtpAllowed = !isProduction && process.env.LOG_OTP !== 'false';
   if (terminalOtpAllowed) {
     console.log('\n=============================================');
     console.log('[OTP TERMINAL LOG]');
@@ -604,7 +607,7 @@ router.get('/google', (req, res, next) => {
 router.get('/google/callback', 
   (req, res, next) => {
     passport.authenticate('google', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
-      console.log('[Passport Auth Result]', { err, user: !!user, info });
+      if (err) console.error('[OAuth] sign-in failed:', err.message || err);
       if (err || !user) {
         let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
         if (frontendUrl.endsWith('/app')) {
@@ -633,7 +636,6 @@ router.get('/google/callback',
 );
 
 router.get('/github', (req, res, next) => {
-  console.log('HIT GITHUB ROUTE!');
   if (!process.env.GITHUB_CLIENT_ID) {
     return res.status(501).send("GitHub Login is not configured on the server yet. Please add GITHUB_CLIENT_ID to .env");
   }
@@ -643,7 +645,7 @@ router.get('/github', (req, res, next) => {
 router.get('/github/callback', 
   (req, res, next) => {
     passport.authenticate('github', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
-      console.log('[Passport Auth Result]', { err, user: !!user, info });
+      if (err) console.error('[OAuth] sign-in failed:', err.message || err);
       if (err || !user) {
         let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
         if (frontendUrl.endsWith('/app')) {
