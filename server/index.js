@@ -440,6 +440,9 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  // Exam voice prompts (3 MB) and recorded voice answers (5 MB) travel as one message; the 1 MB
+  // default disconnected the sender instead of delivering them
+  maxHttpBufferSize: Number(process.env.SOCKET_MAX_MESSAGE_BYTES || 6 * 1024 * 1024),
 });
 
 app.set('io', io);

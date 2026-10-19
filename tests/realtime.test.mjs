@@ -450,6 +450,18 @@ test('a freeform answer padded with guesses is not graded correct', async () => 
   assert.deepEqual(await result, { questionId: 'cap', correct: false })
 })
 
+test('a 2 MB voice answer is delivered instead of dropping the connection', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const received = once(candidate, 'new-exam-question')
+  host.emit('host-push-question', { id: 'voice', type: 'freeform', prompt: 'Explain aloud', roomId: roomCode })
+  await received
+  const disconnected = noEvent(candidate, 'disconnect', 1500)
+  const hostView = once(host, 'host-live-answer-update', update => update.questionId === 'voice')
+  candidate.emit('controller-submit-answer', { questionId: 'voice', answer: { text: '', audio: `data:audio/webm;base64,${'A'.repeat(2 * 1024 * 1024)}` }, roomId: roomCode })
+  assert.ok((await hostView).answer.audio.length > 2 * 1024 * 1024)
+  await disconnected
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)
