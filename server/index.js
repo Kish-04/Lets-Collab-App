@@ -2521,17 +2521,24 @@ io.on('connection', (socket) => {
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
     if (room.exam.answers[questionId][socket.id]?.isFinal) return;
 
+    // Drafts arrive on every keystroke: a recording is only sent when it changes. No audio field
+    // keeps the stored recording; audio: null removes it.
+    const previous = room.exam.answers[questionId][socket.id];
+    const audioChanged = Object.prototype.hasOwnProperty.call(answer || {}, 'audio');
+    const draft = sanitizeExamAnswer(answer);
     room.exam.answers[questionId][socket.id] = {
-      ...sanitizeExamAnswer(answer),
+      ...draft,
+      audio: audioChanged ? draft.audio : previous?.audio,
       isFinal: false,
       timestamp: Date.now()
     };
-    
+
+    const { audio, ...withoutAudio } = room.exam.answers[questionId][socket.id];
     io.to(room.hostSocketId).emit('host-live-answer-update', {
       questionId,
       controllerId: socket.id,
       controllerName: room.controllers.get(socket.id)?.name || 'Unknown',
-      answer: room.exam.answers[questionId][socket.id]
+      answer: audioChanged ? { ...withoutAudio, audio: audio || null } : withoutAudio,
     });
   });
 

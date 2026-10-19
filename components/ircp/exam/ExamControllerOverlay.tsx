@@ -53,7 +53,9 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit, resu
     const handleAnswerChange = (qId: string, val: string) => {
         const newAns = { ...answers[qId], text: val };
         setAnswers(prev => ({ ...prev, [qId]: newAns }));
-        onDraftUpdate(qId, newAns);
+        // Typing sends the text only; the server keeps an existing recording
+        const { audio: _keptOnServer, ...textDraft } = newAns;
+        onDraftUpdate(qId, textDraft);
     };
 
     const toggleRecording = async (qId: string) => {
@@ -230,7 +232,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit, resu
                                                 const newAns = { ...answers[q.id] };
                                                 delete newAns.audio;
                                                 setAnswers(prev => ({ ...prev, [q.id]: newAns }));
-                                                onDraftUpdate(q.id, newAns);
+                                                onDraftUpdate(q.id, { ...newAns, audio: null }); // null removes it on the server
                                             }}
                                             className="text-red-400 hover:text-red-300 font-bold px-2"
                                         >

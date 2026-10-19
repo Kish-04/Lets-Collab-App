@@ -570,6 +570,29 @@ test('the admin REST kill really ends and archives the room', async () => {
   assert.equal((await call('kill')).status, 404) // gone, not just signalled
 })
 
+test('exam drafts keep a recording without re-sending it on every keystroke', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const received = once(candidate, 'new-exam-question')
+  host.emit('host-push-question', { id: 'spoken', type: 'freeform', prompt: 'Say it', roomId: roomCode })
+  await received
+  const audio = `data:audio/webm;base64,${'B'.repeat(200000)}`
+
+  const withAudio = once(host, 'host-live-answer-update')
+  candidate.emit('controller-draft-answer', { questionId: 'spoken', answer: { text: '', audio }, roomId: roomCode })
+  assert.equal((await withAudio).answer.audio, audio)
+
+  const typed = once(host, 'host-live-answer-update')
+  candidate.emit('controller-draft-answer', { questionId: 'spoken', answer: { text: 'and in words' }, roomId: roomCode })
+  const update = (await typed).answer
+  assert.equal(update.text, 'and in words')
+  assert.equal('audio' in update, false) // not re-sent
+
+  // Removing the recording is explicit (audio: null) and reaches the host as such
+  const removed = once(host, 'host-live-answer-update')
+  candidate.emit('controller-draft-answer', { questionId: 'spoken', answer: { text: 'words only', audio: null }, roomId: roomCode })
+  assert.equal((await removed).answer.audio, null)
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

@@ -1686,7 +1686,10 @@ function SessionContent() {
             setExamLiveAnswers(prev => {
                 const newLive = { ...prev };
                 if (!newLive[questionId]) newLive[questionId] = {};
-                newLive[questionId][controllerId] = { ...answer, controllerName };
+                // Updates may leave the recording out (unchanged); audio: null means it was removed
+                const merged = { ...(prev[questionId]?.[controllerId] || {}), ...answer, controllerName };
+                if (answer?.audio === null) delete merged.audio;
+                newLive[questionId][controllerId] = merged;
                 return newLive;
             });
         });
