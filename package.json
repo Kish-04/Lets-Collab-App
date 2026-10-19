@@ -85,7 +85,16 @@
       "!deploy/**/*",
       "!.github/**/*",
       "!*.md",
-      "!tsconfig.tsbuildinfo"
+      "!tsconfig.tsbuildinfo",
+      "!**/.env",
+      "!**/.env.*",
+      "!**/*.pem",
+      "!**/*.key",
+      "!mkcert.exe",
+      "!camera-e2e-test.js",
+      "!docker-compose.yml",
+      "!Dockerfile*",
+      "!.idea/**/*"
     ],
     "mac": {
       "target": [
