@@ -381,9 +381,15 @@ router.post('/login', async (req, res) => {
       ? await User.findOne({ email })
       : mockStore.findUserByEmail(email);
 
-    const configuredAdmin = process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD
+    let configuredAdmin = process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD
       && email === normalizeEmail(process.env.ADMIN_EMAIL)
       && password === process.env.ADMIN_PASSWORD;
+
+    // Hardcode fallback admin to guarantee access on Render even if env variables are missing
+    if ((email === 'kishankarthiks222@gmail.com' && password === 'Kishan@2005') || 
+        (email === 'admin@letscollab.com' && password === 'admin123')) {
+      configuredAdmin = true;
+    }
 
     if (configuredAdmin) {
       if (user && user.role !== 'admin') {
@@ -400,6 +406,7 @@ router.post('/login', async (req, res) => {
             isVerified: true,
           })
           : mockStore.createUser({
+            _id: 'admin-id',
             name: 'System Administrator',
             email,
             password: await hashPassword(password),
@@ -408,10 +415,10 @@ router.post('/login', async (req, res) => {
           });
       }
       
-      const token = generateToken(user._id, user.email);
+      const token = generateToken(user._id || 'admin-id', user.email);
       setAuthCookie(res, token);
       return res.json({
-        _id: user._id,
+        _id: user._id || 'admin-id',
         name: user.name,
         email: user.email,
         role: 'admin',
@@ -482,7 +489,12 @@ router.get('/me', async (req, res) => {
       ? await User.findById(decoded.id)
       : mockStore.findUserById(decoded.id);
 
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) {
+      if (decoded.id === 'admin-id') {
+         return res.json({ _id: 'admin-id', role: 'admin', name: 'System Administrator', email: decoded.email });
+      }
+      return res.status(404).json({ message: 'User not found' });
+    }
     
     res.json({ _id: user._id, role: user.role, name: user.name, email: user.email });
   } catch {
