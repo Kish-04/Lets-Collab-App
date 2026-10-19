@@ -790,6 +790,11 @@ function SessionContent() {
     }, [connectionState, stopLocalMedia])
 
     const toggleLocalMic = async () => {
+        // Audio proctoring listens to this track, so a candidate may not mute it (same rule as the camera)
+        if (sessionMode === 'supervised' && role === 'controller' && !localMicMuted) {
+            addLog('system', 'Microphone cannot be muted during a supervised session.');
+            return;
+        }
         if (localStreamRef.current) {
             const audioTrack = localStreamRef.current.getAudioTracks()[0]
             if (audioTrack) {
@@ -2048,50 +2053,6 @@ function SessionContent() {
         return () => cancelAnimationFrame(animationFrameId);
     }, [role, connectionState, mouseEnabled]);
 
-    // Anti-cheat focus tracking for supervised controllers
-    useEffect(() => {
-        if (role !== 'controller' || sessionMode !== 'supervised' || connectionState !== 'connected') return;
-
-        const handleTabSwitch = async (reason: string) => {
-            const url = await captureScreenshotEvidence(localCamRef.current, reason);
-            
-            socketRef.current?.emit('anti-cheat-alert', {
-                roomId: roomCodeRef.current,
-                type: 'anticheat_violation',
-                reason: 'tab-switch',
-                message: reason,
-                evidenceUrl: url,
-                penalty: 100
-            });
-            
-            // Allow socket emission to complete before blocking with alert
-            await new Promise(r => setTimeout(r, 100));
-            
-            alert(`Session Terminated: ${reason}`);
-            socketRef.current?.emit('leave-session');
-            router.push('/app');
-        };
-
-        const onBlur = () => {
-            if ((window as any).isSelectingFile) return;
-            handleTabSwitch('Application lost focus (external app/click)');
-        };
-        const onVisibilityChange = () => {
-            if ((window as any).isSelectingFile) return;
-            if (document.visibilityState === 'hidden') {
-                handleTabSwitch('Tab switch or minimized app detected');
-            }
-        };
-
-        window.addEventListener('blur', onBlur);
-        document.addEventListener('visibilitychange', onVisibilityChange);
-        
-        return () => {
-            window.removeEventListener('blur', onBlur);
-            document.removeEventListener('visibilitychange', onVisibilityChange);
-        };
-    }, [role, sessionMode, connectionState]);
-
     const toggleRecording = () => {
         if (!isRecording) {
             if (!mainVideoRef.current || (!mainVideoRef.current.srcObject && !localCamRef.current?.srcObject && !remoteCamRef.current?.srcObject)) {
@@ -2335,27 +2296,41 @@ function SessionContent() {
     );
 
     useEffect(() => {
-        if (sessionMode !== 'supervised' || role !== 'controller') return;
-        
-        const handleBlur = () => {
-            if ((window as any).isRequestingPermissions) return;
+        // One policy for leaving the exam window: warn on the first switch, end the session on the second.
+        // blur and visibilitychange both fire for a single switch, so events within 2 s count once;
+        // permission prompts and file pickers are not switches.
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected') return;
+        let lastViolationAt = 0;
+
+        const onFocusLost = (reason: string) => {
+            if ((window as any).isRequestingPermissions || (window as any).isSelectingFile) return;
+            const now = Date.now();
+            if (now - lastViolationAt < 2000) return;
+            lastViolationAt = now;
             tabSwitchCountRef.current += 1;
+            void captureScreenshotEvidence(localCamRef.current, reason);
             if (tabSwitchCountRef.current >= 2) {
-                reportMalpractice('App Focus Fatal: Multiple app switches detected. Session terminated.', 100, [1, 0, 0]);
+                reportMalpractice(`App Focus Fatal: ${reason} (second switch). Session terminated.`, 100, [1, 0, 0]);
                 router.push('/app?terminated=tab_switch');
-            } else if (tabSwitchCountRef.current === 1) {
+            } else {
                 const message = 'App switch detected! Please keep this window active. A second violation will terminate your session.';
-                reportMalpractice(`App Switch: ${message}`, 50, [1, 0, 0]);
+                reportMalpractice(`App Switch: ${reason}. ${message}`, 50, [1, 0, 0]);
                 setPetState('Warning');
                 setPetMessage(message);
                 if (petTimerRef.current) clearTimeout(petTimerRef.current);
                 petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
             }
         };
+        const onBlur = () => onFocusLost('Application lost focus (external app/click)');
+        const onVisibilityChange = () => { if (document.visibilityState === 'hidden') onFocusLost('Tab switch or minimized app'); };
 
-        window.addEventListener('blur', handleBlur);
-        return () => window.removeEventListener('blur', handleBlur);
-    }, [sessionMode, role, reportMalpractice]);
+        window.addEventListener('blur', onBlur);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            window.removeEventListener('blur', onBlur);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [sessionMode, role, connectionState, reportMalpractice, router]);
 
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'controller') return;
