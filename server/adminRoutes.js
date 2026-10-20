@@ -252,8 +252,8 @@ router.post('/upload-violation-screenshot', protectAuthenticated, uploadEvidence
     
     const fileUrl = `/uploads/evidence/${fileName.split('/').pop()}`;
 
-    // Update the SessionLog evidence array
-    const SessionLog = require('./sessionLog');
+    // Stored on the live room only: archiveSession saves it with the session when it ends. Writing to
+    // SessionLog by room code here attached it to an older session that happened to reuse the code.
     const newEvidence = {
       id: Date.now().toString(),
       time: new Date().toLocaleTimeString(),
@@ -263,15 +263,6 @@ router.post('/upload-violation-screenshot', protectAuthenticated, uploadEvidence
       url: fileUrl
     };
 
-    if (global.dbConnected) {
-      await SessionLog.findOneAndUpdate(
-        { roomCode },
-        {
-          $push: { evidence: newEvidence }
-        }
-      ).catch(err => console.error('Failed to append evidence to session log', err));
-    }
-    
     // Also push to the live room in memory so dashboard sees it instantly
     if (liveRoom) {
       if (!liveRoom.evidence) liveRoom.evidence = [];
