@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "check": "node --check index.js && node --check authRoutes.js && node --check adminRoutes.js && node --check blockchainLogger.js && node --check config.js && node --check mockStore.js",
+    "check": "node --check index.js && node --check authRoutes.js && node --check adminRoutes.js && node --check blockchainLogger.js && node --check config.js && node --check mockStore.js && node --check exam.js && node --check limits.js && node --check socketGuard.js && node --check inputPolicy.js && node --check roomUtils.js && node --check accountRoutes.js && node --check reviewRoutes.js && node --check faceRoutes.js && node --check lti.js && node --check ltiRoutes.js && node --check sfu.js && node --check auditChain.js",
     "compile:contract": "node compile.js",
     "test:api": "jest test/api.test.js --detectOpenHandles --forceExit",
     "test:contracts": "hardhat test test/SessionAudit.js test/AuditVerification.js",
