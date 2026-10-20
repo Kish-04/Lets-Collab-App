@@ -98,6 +98,7 @@ initBlockchain();
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/reviews', require('./reviewRoutes'));
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 // Each call spends the Gemini quota: signed-in users only, 20 questions per user per minute

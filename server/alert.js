@@ -15,6 +15,13 @@ const alertSchema = new mongoose.Schema({
     features: { type: [Number], default: undefined },
     sourceSocketId: { type: String },
     sourceEmail: { type: String }, // lets a training label reach the device after it reconnects
+    // Human review (reviewRoutes.js): pending until an admin upholds or dismisses it
+    reviewStatus: { type: String, enum: ['pending', 'upheld', 'dismissed'], default: 'pending' },
+    reviewNote: { type: String },
+    reviewedBy: { type: String },
+    reviewedAt: { type: String },
+    // A candidate's appeal: { text, createdAt, status: open | accepted | rejected, response, resolvedBy, resolvedAt }
+    appeal: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
 alertSchema.index({ createdAt: -1 });

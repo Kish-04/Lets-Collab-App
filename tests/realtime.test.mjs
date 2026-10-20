@@ -612,6 +612,50 @@ test('the host AI calibration reaches candidates, bounded, and only from the hos
   assert.equal((await state).aiConfig.eyeTrackingThreshold, 0.9)
 })
 
+test('a candidate can see and appeal an alert, and an admin reviews it', async () => {
+  const hostAccount = user('ReviewHost')
+  const candAccount = user('ReviewCand')
+  const host = await connect(hostAccount)
+  host.emit('create-room', { name: 'ReviewHost', mode: 'supervised' })
+  const { roomCode } = await once(host, 'room-created')
+  const candidate = await connect(candAccount)
+  candidate.emit('join-room', roomCode, 'controller', { name: 'ReviewCand' })
+  await once(host, 'connection-request')
+  host.emit('respond-join', { controllerId: candidate.id, approved: true, permission: 'view' }, roomCode)
+  await once(candidate, 'join-approved')
+  candidate.emit('system-alert', { room: roomCode, type: 'anticheat_violation', event: 'NO_FACE', message: 'No face', penalty: 20, features: [1, 0.2, 0.1] })
+  await new Promise(resolve => setTimeout(resolve, 300))
+
+  const as = account => ({ Authorization: `Bearer ${account.token}`, 'Content-Type': 'application/json' })
+  const api = (path, account, body) => fetch(`${baseUrl}/api/reviews${path}`, body
+    ? { method: 'POST', headers: as(account), body: JSON.stringify(body) }
+    : { headers: as(account) })
+
+  const mine = await (await api('/mine', candAccount)).json()
+  const flag = mine.alerts.find(alert => alert.room === roomCode)
+  assert.equal(flag.reviewStatus, 'pending')
+  assert.equal(flag.features, undefined, 'candidates do not see model internals')
+
+  assert.equal((await api(`/${flag._id}/appeal`, user('Stranger2'), { text: 'Not my alert at all' })).status, 404)
+  assert.equal((await api(`/${flag._id}/appeal`, candAccount, { text: 'short' })).status, 400)
+  assert.equal((await api(`/${flag._id}/appeal`, candAccount, { text: 'My webcam froze for a second, I never left.' })).status, 200)
+  assert.equal((await api(`/${flag._id}/appeal`, candAccount, { text: 'Second appeal on the same alert' })).status, 409)
+
+  const admin = user('Reviewer2', 'admin')
+  assert.equal((await api('/queue', candAccount)).status, 403, 'only admins see the queue')
+  const queue = await (await api('/queue', admin)).json()
+  assert.equal(queue.alerts[0].appeal.status, 'open', 'open appeals come first')
+  assert.ok(queue.alerts.some(alert => alert._id === flag._id))
+
+  assert.equal((await api(`/${flag._id}/appeal-decision`, admin, { decision: 'accepted' })).status, 400, 'a response is required')
+  const decided = await (await api(`/${flag._id}/appeal-decision`, admin, { decision: 'accepted', response: 'Confirmed from the recording: camera froze.' })).json()
+  assert.equal(decided.alert.reviewStatus, 'dismissed')
+
+  const after = (await (await api('/mine', candAccount)).json()).alerts.find(alert => alert._id === flag._id)
+  assert.deepEqual([after.appeal.status, after.appeal.response], ['accepted', 'Confirmed from the recording: camera froze.'])
+  assert.ok(!(await (await api('/queue', admin)).json()).alerts.some(alert => alert._id === flag._id), 'resolved items leave the queue')
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)
