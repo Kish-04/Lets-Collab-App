@@ -50,7 +50,8 @@ import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
 import { useFaceProctoring } from "@/hooks/useFaceProctoring"
 import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
-import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
+import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken, getAuthHeaders } from "@/lib/utils"
+import { describeFaceSteadily, FACE_ERROR_TEXT } from "@/lib/faceMatch"
 import { askPet } from "@/lib/askPet"
 import { gaussianEpsilon } from "@/lib/dpAccountant"
 import { useModalDialog } from "@/hooks/useModalDialog"
@@ -2455,6 +2456,48 @@ function SessionContent() {
         screenInfo.addEventListener?.('change', check)
         return () => screenInfo.removeEventListener?.('change', check)
     }, [sessionMode, role, connectionState, reportMalpractice, federatedFeaturesForEvent, addLog]);
+
+    // Face ID at the start of a supervised exam: a descriptor from the candidate's camera (computed on
+    // this device) is compared with their enrolment by the server, which tells the host the result.
+    const faceCheckDoneRef = useRef(false)
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected' || faceCheckDoneRef.current) return
+        let cancelled = false
+        ;(async () => {
+            for (let attempt = 1; attempt <= 3 && !cancelled; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 2000 : 5000))
+                if (cancelled) return
+                try {
+                    const sample = await describeFaceSteadily(localCamRef.current as HTMLVideoElement)
+                    if ('error' in sample) {
+                        addLog('system', `Face ID check (attempt ${attempt}/3): ${FACE_ERROR_TEXT[sample.error]}`)
+                        continue
+                    }
+                    const res = await fetch(`${getBackendUrl()}/api/face/verify`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                        body: JSON.stringify({ descriptor: sample.descriptor, room: roomCodeRef.current }),
+                    })
+                    const data = await res.json()
+                    if (!res.ok || !data.success) throw new Error(data.message || 'check failed')
+                    faceCheckDoneRef.current = true
+                    addLog('system', data.status === 'verified'
+                        ? 'Face ID verified'
+                        : data.status === 'mismatch'
+                            ? 'Face ID did not match your enrolled face; the host has been told'
+                            : 'You have not set up Face ID (Profile > Face ID); the host has been told')
+                    return
+                } catch (err: any) {
+                    addLog('system', `Face ID check failed: ${err?.message || err}`)
+                }
+            }
+            if (!cancelled && !faceCheckDoneRef.current) {
+                faceCheckDoneRef.current = true
+                reportMalpractice('Face ID check could not be completed (no single face found on camera)', 10, [1, 0, 0.1])
+            }
+        })()
+        return () => { cancelled = true }
+    }, [sessionMode, role, connectionState, addLog, reportMalpractice]);
 
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'controller') return;

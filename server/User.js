@@ -12,6 +12,9 @@ const userSchema = new mongoose.Schema({
   banned: { type: Boolean, default: false },
   sessionCount: { type: Number, default: 0 },
   lastSeen: { type: Date },
+  // Face ID (faceRoutes.js): a 128-number descriptor computed on the device; never a photo
+  faceDescriptor: { type: [Number], default: undefined, select: true },
+  faceEnrolledAt: { type: String },
 }, { timestamps: true });
 
 userSchema.pre('save', async function () {

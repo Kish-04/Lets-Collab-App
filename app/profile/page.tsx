@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { User, Lock, Mail, ArrowLeft, Check, ShieldAlert } from "lucide-react"
 import { getBackendUrl } from "@/lib/utils"
+import { FaceEnrollment } from "@/components/ircp/FaceEnrollment"
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -240,6 +241,8 @@ export default function ProfilePage() {
               ) : 'Save Profile'}
             </button>
           </form>
+
+          <FaceEnrollment />
         </div>
       </motion.div>
     </div>

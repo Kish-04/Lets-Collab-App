@@ -656,6 +656,47 @@ test('a candidate can see and appeal an alert, and an admin reviews it', async (
   assert.ok(!(await (await api('/queue', admin)).json()).alerts.some(alert => alert._id === flag._id), 'resolved items leave the queue')
 })
 
+test('face ID: enrol once, verified or mismatched at exam start, reported to the host', async () => {
+  const hostAccount = user('FaceHost')
+  const candAccount = user('FaceCand')
+  const host = await connect(hostAccount)
+  host.emit('create-room', { name: 'FaceHost', mode: 'supervised' })
+  const { roomCode } = await once(host, 'room-created')
+  const candidate = await connect(candAccount)
+  candidate.emit('join-room', roomCode, 'controller', { name: 'FaceCand' })
+  await once(host, 'connection-request')
+  host.emit('respond-join', { controllerId: candidate.id, approved: true, permission: 'view' }, roomCode)
+  await once(candidate, 'join-approved')
+
+  const face = Array.from({ length: 128 }, (_, i) => Math.sin(i) * 0.1)
+  const someoneElse = face.map((v, i) => v + (i % 2 ? 0.08 : -0.08))
+  const call = (method, path, account, body) => fetch(`${baseUrl}/api/face${path}`, {
+    method, headers: { Authorization: `Bearer ${account.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+  })
+
+  assert.equal((await (await call('GET', '/status', candAccount)).json()).enrolled, false)
+  assert.equal((await call('POST', '/enroll', candAccount, { descriptor: [1, 2, 3] })).status, 400)
+  assert.equal((await call('POST', '/enroll', candAccount, { descriptor: face })).status, 200)
+  assert.equal((await call('POST', '/enroll', candAccount, { descriptor: someoneElse })).status, 409, 'cannot swap the reference face')
+
+  const verifiedOnHost = once(host, 'face-check')
+  const ok = await (await call('POST', '/verify', candAccount, { descriptor: face.map(v => v + 0.001), room: roomCode })).json()
+  assert.equal(ok.status, 'verified')
+  assert.equal((await verifiedOnHost).status, 'verified')
+
+  const mismatchOnHost = once(host, 'face-check')
+  const bad = await (await call('POST', '/verify', candAccount, { descriptor: someoneElse, room: roomCode })).json()
+  assert.equal(bad.status, 'mismatch')
+  assert.equal((await mismatchOnHost).status, 'mismatch')
+  const mine = await (await fetch(`${baseUrl}/api/reviews/mine`, { headers: { Authorization: `Bearer ${candAccount.token}` } })).json()
+  assert.ok(mine.alerts.some(alert => alert.event === 'IDENTITY_MISMATCH' && alert.room === roomCode), 'a mismatch is a reviewable, appealable alert')
+
+  const admin = user('FaceAdmin', 'admin')
+  assert.equal((await call('DELETE', `/enrollment/${candAccount._id}`, candAccount)).status, 403)
+  assert.equal((await call('DELETE', `/enrollment/${candAccount._id}`, admin)).status, 200)
+  assert.equal((await call('POST', '/enroll', candAccount, { descriptor: someoneElse })).status, 200, 'enrol again after an admin reset')
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

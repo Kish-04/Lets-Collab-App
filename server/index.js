@@ -99,6 +99,7 @@ initBlockchain();
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reviews', require('./reviewRoutes'));
+app.use('/api/face', require('./faceRoutes'));
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 // Each call spends the Gemini quota: signed-in users only, 20 questions per user per minute
@@ -1147,6 +1148,44 @@ function warnRoom(roomCode, message = 'Warning from administrator: Please return
   io.to(roomCode).emit('system-warning', text);
   pushEvent(roomCode, 'warning', `Administrator warning: ${text}`);
   anchorEvent(roomCode, 'ADMIN_WARNING', { by: 'admin', message: text }, room.hostEmail, room.hostEmail || '');
+  return true;
+}
+
+// Identity check at exam start (faceRoutes.js). The host sees every result; a face that does not
+// match the enrolled one becomes a reviewable alert (it can be appealed like any other).
+async function reportFaceCheck(roomCode, user, result) {
+  const room = rooms.get(roomCode);
+  if (!room || room.mode !== 'supervised' || !user?.email) return false;
+  const participant = Array.from(room.controllers.values()).find(p => p.email === user.email);
+  if (!participant) return false;
+  const name = participant.name;
+  const text = result.status === 'verified'
+    ? `${name}: identity verified by face ID (distance ${result.distance})`
+    : result.status === 'mismatch'
+      ? `${name}: face does not match the enrolled face ID (distance ${result.distance})`
+      : `${name}: no face ID enrolled, identity not checked`;
+  pushEvent(roomCode, result.status === 'verified' ? 'system' : 'anticheat', text);
+  io.to(room.hostSocketId).emit('face-check', { controllerId: participant.id, name, ...result });
+  if (result.status === 'mismatch') {
+    const penalty = applyRiskPenalty(room, 30, 0);
+    room.alertCount += 1;
+    const alertRecord = {
+      room: roomCode,
+      hostEmail: room.hostEmail || undefined,
+      type: 'anticheat_violation',
+      event: 'IDENTITY_MISMATCH',
+      message: text,
+      penalty,
+      sourceEmail: user.email,
+    };
+    const saved = global.dbConnected
+      ? await Alert.create(alertRecord).catch((err) => { console.error('Alert save error:', err); return null; })
+      : mockStore.addAlert(alertRecord);
+    io.to('admins').emit('system-alert', { ...alertRecord, _id: saved?._id ? String(saved._id) : undefined, participant: name });
+    anchorEvent(roomCode, 'IDENTITY_MISMATCH', { participant: name, distance: result.distance }, room.hostEmail || '', user.email);
+    emitRoomState(roomCode);
+  }
+  broadcastSessions();
   return true;
 }
 
@@ -2799,4 +2838,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, server, io, sendFalsePositiveLabel, terminateRoom, warnRoom };
+module.exports = { app, server, io, sendFalsePositiveLabel, terminateRoom, warnRoom, reportFaceCheck };
