@@ -118,6 +118,26 @@ after(async () => {
 test('a supervised candidate camera reaches the admin exam wall through the media server', { timeout: 600000 }, async () => {
   const host = await pageAs(account('SfuHost'))
   const candidate = await pageAs(account('SfuCandidate'))
+  // Record the candidate's camera history for the failure diagnostics: each open, failure and end
+  await candidate.evaluateOnNewDocument(() => {
+    const events = window.__cameraEvents = []
+    const note = text => events.push(`${(performance.now() / 1000).toFixed(1)}s ${text}`)
+    const getUserMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices)
+    if (!getUserMedia) return
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      try {
+        const stream = await getUserMedia(constraints)
+        for (const track of stream.getTracks()) {
+          note(`opened ${track.kind} ${track.id.slice(0, 8)}`)
+          track.addEventListener('ended', () => note(`ended by the browser: ${track.kind} ${track.id.slice(0, 8)}`))
+        }
+        return stream
+      } catch (err) {
+        note(`getUserMedia ${JSON.stringify(constraints)} failed: ${err.name} ${err.message}`)
+        throw err
+      }
+    }
+  })
   const admin = await pageAs(account('SfuAdmin', 'admin'), adminBrowser)
 
   await host.goto(`${frontendUrl}/session?create=true&mode=supervised`, { waitUntil: 'domcontentloaded', timeout: 240000 })
@@ -144,13 +164,31 @@ test('a supervised candidate camera reaches the admin exam wall through the medi
     const text = await candidate.evaluate(() => document.querySelector('[aria-label="Session activity"]')?.innerText || '(no panel)').catch(() => '(page gone)')
     return text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/Active Pair|^(SYSTEM|QUALITY|AI|[0-9:]+)$/.test(line)).slice(0, 40).join(' | ')
   }
+  // What the candidate's page holds: its server connection, the call to the host, the cameras
+  const candidateState = () => candidate.evaluate(async () => {
+    const tracks = list => list.map(t => `${t.kind}:${t.readyState}${t.enabled ? '' : ':disabled'}`).join(',') || 'none'
+    const pc = window._pc
+    const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []) || []
+    return {
+      socket: window._socket ? `${window._socket.connected ? 'connected' : 'disconnected'} ${window._socket.id || ''}` : 'none',
+      call: pc ? `${pc.connectionState}/${pc.signalingState}, sending ${tracks(pc.getSenders().map(s => s.track).filter(Boolean))}` : 'none',
+      videos: Array.from(document.querySelectorAll('video')).map(v => `${v.videoWidth}x${v.videoHeight} ready=${v.readyState} ${v.srcObject ? tracks(v.srcObject.getTracks()) : 'no stream'}`),
+      cameras: devices.filter(d => d.kind === 'videoinput').length,
+      cameraEvents: window.__cameraEvents || [],
+    }
+  }).then(state => JSON.stringify(state, null, 2)).catch(err => `(could not read: ${err.message})`)
+  const printDiagnostics = async () => {
+    console.log('[sfu] candidate log:', await candidateLog())
+    console.log('[sfu] candidate state:', await candidateState())
+    console.log('[sfu] media server producers:', JSON.stringify(sfu.listProducers(roomCode)))
+  }
   // The camera reaches the media server. Then the candidate's connection drops and comes back: the
   // server closes the stream with the old socket, and the page has to send the camera again.
   const cameraPublished = async (label) => {
     const deadline = Date.now() + 240000
     while (!sfu.listProducers(roomCode).some(p => p.kind === 'video' && String(p.name).includes('SfuCandidate'))) {
       if (Date.now() > deadline) {
-        console.log('[sfu] candidate log:', await candidateLog())
+        await printDiagnostics()
         throw new Error(`candidate camera not on the media server (${label})`)
       }
       await new Promise(resolve => setTimeout(resolve, 1000))
@@ -171,9 +209,9 @@ test('a supervised candidate camera reaches the admin exam wall through the medi
     const video = document.querySelector('figure video')
     return video && video.videoWidth > 0 && video.readyState >= 2
   }, { timeout: 240000 }).catch(async (err) => {
-    // Say why: the wall's own status line and the candidate's session log
+    // Say why: the wall's own status line, then the candidate's log and state
     console.log('[sfu] wall status:', await admin.evaluate(() => document.querySelector('[role=status]')?.innerText || '(none)'))
-    console.log('[sfu] candidate log:', await candidateLog())
+    await printDiagnostics()
     throw err
   })
   const advancing = await admin.evaluate(async () => {
