@@ -1367,6 +1367,7 @@ function SessionContent() {
             setObserverCount(state.observerCount || 0)
             if (Array.isArray(state.events)) setRoomEvents(state.events.map((event: any) => ({ ...event, time: roomTimeToIso(event.time) })))
             if (typeof state.riskScore === 'number') setRoomRisk(state.riskScore)
+            if (state.aiConfig && currentRoleRef.current === 'controller') setAiConfig(prev => ({ ...prev, ...state.aiConfig }))
             setExamQuestions(state.examQuestions || [])
         })
         socket.on('join-approved', ({ permission: approvedPermission, clipboardAllowed: approvedClipboard }: any) => {
@@ -1476,6 +1477,12 @@ function SessionContent() {
             router.push('/admin')
         })
         socket.on('observation-granted', () => { setConnectionState('connecting'); addLog('system', 'Host approved observation') })
+        // Calibration chosen by the host for this device's anti-cheat engine
+        socket.on('ai-config', (config: Partial<typeof aiConfig>) => {
+            if (currentRoleRef.current !== 'controller' || !config) return
+            setAiConfig(prev => ({ ...prev, ...config }))
+            addLog('system', 'The host updated the AI proctoring calibration')
+        })
         socket.on('room-event', (event: { time: string; type: string; message: string }) => {
             setRoomEvents(prev => [...prev, { ...event, time: roomTimeToIso(event.time) }].slice(-200))
         })
@@ -3265,8 +3272,15 @@ function SessionContent() {
                             </div>
                         </div>
                         <div className="p-4 border-t border-[var(--border)] flex justify-end">
-                            <button onClick={() => setShowAiSettings(false)} className="px-5 py-2 rounded-lg bg-[var(--accent)] text-black font-bold text-sm hover:brightness-110 transition-all">
-                                Done
+                            <button
+                                onClick={() => {
+                                    // Applies to every candidate's on-device engine (and later joiners)
+                                    if (role === 'host') socketRef.current?.emit('ai-config', { roomId: roomCodeRef.current, config: aiConfig })
+                                    setShowAiSettings(false)
+                                }}
+                                className="px-5 py-2 rounded-lg bg-[var(--accent)] text-black font-bold text-sm hover:brightness-110 transition-all"
+                            >
+                                {role === 'host' ? 'Apply to candidates' : 'Done'}
                             </button>
                         </div>
                     </div>

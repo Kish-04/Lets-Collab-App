@@ -593,6 +593,25 @@ test('exam drafts keep a recording without re-sending it on every keystroke', as
   assert.equal((await removed).answer.audio, null)
 })
 
+test('the host AI calibration reaches candidates, bounded, and only from the host', async () => {
+  const { host, controllers: [candidate], roomCode } = await supervisedRoom(1)
+  const received = once(candidate, 'ai-config')
+  host.emit('ai-config', { roomId: roomCode, config: { eyeTrackingThreshold: 0.9, headPoseMargin: 7, emotionSensitivity: 'x' } })
+  assert.deepEqual(await received, { eyeTrackingThreshold: 0.9, headPoseMargin: 1 })
+
+  const ignored = noEvent(host, 'ai-config')
+  candidate.emit('ai-config', { roomId: roomCode, config: { eyeTrackingThreshold: 0.5 } })
+  await ignored
+
+  // A late joiner gets it with the room state
+  const late = await connect(user('LateCand'))
+  late.emit('join-room', roomCode, 'controller', { name: 'LateCand' })
+  await once(host, 'connection-request')
+  const state = once(late, 'session-state')
+  host.emit('respond-join', { controllerId: late.id, approved: true, permission: 'view' }, roomCode)
+  assert.equal((await state).aiConfig.eyeTrackingThreshold, 0.9)
+})
+
 test('evidence uploads are not publicly readable', async () => {
   const res = await fetch(`${baseUrl}/uploads/evidence/anything.png`)
   assert.equal(res.status, 403)

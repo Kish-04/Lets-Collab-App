@@ -974,6 +974,7 @@ function roomState(code, room, socket) {
     examQuestions: examQuestionsFor(room, socket),
     evidence: room.evidence.slice(-80),
     federated: federatedSummary(room),
+    aiConfig: room.aiConfig || null, // host calibration of the candidates' anti-cheat engines
     // Room activity (joins, permissions, alerts, chain anchors) is for the host only
     ...(socket && socket.id === room.hostSocketId ? { events: room.events.slice(-60) } : {}),
   };
@@ -2594,6 +2595,27 @@ io.on('connection', (socket) => {
       controllerName: room.controllers.get(socket.id)?.name || 'Unknown',
       answer: room.exam.answers[questionId][socket.id]
     });
+  });
+
+  // The host calibrates the anti-cheat engines that run on the candidates' devices
+  socket.on('ai-config', ({ roomId, config } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || socket.id !== room.hostSocketId || room.mode !== 'supervised' || !config) return;
+    const bounded = (value, min, max) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : undefined;
+    };
+    const next = {
+      eyeTrackingThreshold: bounded(config.eyeTrackingThreshold, 0.5, 0.95),
+      emotionSensitivity: bounded(config.emotionSensitivity, 0.4, 0.9),
+      audioVolumeThreshold: bounded(config.audioVolumeThreshold, 0.01, 0.5),
+      headPoseMargin: bounded(config.headPoseMargin, 0.2, 1.0),
+    };
+    Object.keys(next).forEach(key => next[key] === undefined && delete next[key]);
+    room.aiConfig = { ...(room.aiConfig || {}), ...next };
+    pushEvent(roomCode, 'system', 'Host updated AI proctoring calibration');
+    room.controllers.forEach((_, controllerId) => io.to(controllerId).emit('ai-config', room.aiConfig));
   });
 
   socket.on('leave-session', () => {
