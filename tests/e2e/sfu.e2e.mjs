@@ -31,6 +31,7 @@ const puppeteer = rootRequire('puppeteer')
 const { server } = serverRequire('./index.js')
 const mockStore = serverRequire('./mockStore.js')
 const { signJwt } = serverRequire('./config.js')
+const sfu = serverRequire('./sfu.js')
 
 const FRONTEND_PORT = 3108
 let frontendUrl = process.env.E2E_FRONTEND_URL
@@ -123,13 +124,43 @@ test('a supervised candidate camera reaches the admin exam wall through the medi
   const roomCode = await host.waitForFunction(() => window._roomCode?.current || null, { timeout: 300000 }).then(h => h.jsonValue())
 
   await candidate.goto(`${frontendUrl}/session?room=${roomCode}`, { waitUntil: 'domcontentloaded', timeout: 240000 })
-  await candidate.locator('::-p-text(Join Room)').setTimeout(120000).click()
-  await textOnPage(host, 'SfuCandidate', 120000)
+  // Under next dev the button can show before the page is hydrated and the click is lost: click
+  // again until the host sees the request
+  const joinDeadline = Date.now() + 180000
+  for (;;) {
+    await candidate.locator('::-p-text(Join Room)').setTimeout(120000).click()
+    if (await textOnPage(host, 'SfuCandidate', 15000).then(() => true, () => false)) break
+    if (Date.now() > joinDeadline) throw new Error('the host never saw the candidate ask to join')
+  }
   await host.locator('::-p-text(Approve)').setTimeout(120000).click()
   await candidate.waitForFunction(() => {
     const pc = window._pc
     return pc && ['connected', 'completed'].includes(pc.connectionState)
   }, { timeout: 300000 })
+
+  // The candidate's session activity log, without the repeated connection-quality lines
+  const candidateLog = async () => {
+    await candidate.evaluate(() => document.querySelector('[aria-label="Toggle Session Activity"]')?.click()).catch(() => {})
+    const text = await candidate.evaluate(() => document.querySelector('[aria-label="Session activity"]')?.innerText || '(no panel)').catch(() => '(page gone)')
+    return text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/Active Pair|^(SYSTEM|QUALITY|AI|[0-9:]+)$/.test(line)).slice(0, 40).join(' | ')
+  }
+  // The camera reaches the media server. Then the candidate's connection drops and comes back: the
+  // server closes the stream with the old socket, and the page has to send the camera again.
+  const cameraPublished = async (label) => {
+    const deadline = Date.now() + 240000
+    while (!sfu.listProducers(roomCode).some(p => p.kind === 'video' && String(p.name).includes('SfuCandidate'))) {
+      if (Date.now() > deadline) {
+        console.log('[sfu] candidate log:', await candidateLog())
+        throw new Error(`candidate camera not on the media server (${label})`)
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  }
+  await cameraPublished('first join')
+  // Close the transport under Socket.IO, as a network drop does; it reconnects by itself
+  await candidate.evaluate(() => window._socket.io.engine.close())
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  await cameraPublished('after reconnecting')
 
   // The admin opens the exam wall and picks this exam
   await admin.goto(`${frontendUrl}/admin/wall`, { waitUntil: 'domcontentloaded', timeout: 240000 })
@@ -142,8 +173,7 @@ test('a supervised candidate camera reaches the admin exam wall through the medi
   }, { timeout: 240000 }).catch(async (err) => {
     // Say why: the wall's own status line and the candidate's session log
     console.log('[sfu] wall status:', await admin.evaluate(() => document.querySelector('[role=status]')?.innerText || '(none)'))
-    await candidate.evaluate(() => document.querySelector('[aria-label="Toggle Session Activity"]')?.click()).catch(() => {})
-    console.log('[sfu] candidate log:', await candidate.evaluate(() => document.querySelector('[aria-label="Session activity"]')?.innerText.slice(0, 2000) || '(no panel)').catch(() => '(page gone)'))
+    console.log('[sfu] candidate log:', await candidateLog())
     throw err
   })
   const advancing = await admin.evaluate(async () => {
