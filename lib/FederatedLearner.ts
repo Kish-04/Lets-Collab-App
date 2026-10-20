@@ -1,17 +1,5 @@
 import * as tf from '@tensorflow/tfjs'
 
-// Next.js 15 dev overlay suppression for internal TFJS Wasm logs
-if (typeof window !== "undefined") {
-    const originalError = console.error;
-    console.error = (...args) => {
-        const msg = String(args[0] || '').toLowerCase();
-        if (msg.includes('index out of bounds') || msg.includes('wasm') || msg.includes('memory') || msg.includes('delegate')) {
-            return;
-        }
-        originalError.apply(console, args);
-    };
-}
-
 export type FederatedFeatures = [number, number, number]
 
 export class FederatedLearner {
@@ -90,24 +78,18 @@ export class FederatedLearner {
     public async trainLocalModel(epochs: number = 10) {
         if (this.xs.length < 2 || this.isTraining) return null;
 
-        const originalError = console.error;
         this.isTraining = true;
+        // (Errors are no longer muted app-wide while training: that hid every other failure too;
+        // known WebAssembly noise is downgraded centrally in app/layout.tsx.)
+        const xsTensor = tf.tensor2d(this.xs);
+        const ysTensor = tf.tensor2d(this.ys);
 
         try {
-            // Aggressive suppression during heavy compute tasks
-            console.error = () => {};
-
-            const xsTensor = tf.tensor2d(this.xs);
-            const ysTensor = tf.tensor2d(this.ys);
-
             const history = await this.model.fit(xsTensor, ysTensor, {
                 epochs: epochs,
                 shuffle: true,
                 verbose: 0
             });
-
-            xsTensor.dispose();
-            ysTensor.dispose();
 
             this.samplesSinceSync += this.xs.length;
 
@@ -118,10 +100,12 @@ export class FederatedLearner {
             const losses = history.history.loss || [];
             return losses[losses.length - 1] ?? null;
         } catch (e) {
+            console.warn('[FederatedLearner] local training failed:', e);
             return null;
         } finally {
+            xsTensor.dispose(); // also on failure, or the tensors leak GPU/Wasm memory
+            ysTensor.dispose();
             this.isTraining = false;
-            console.error = originalError;
         }
     }
 
@@ -153,6 +137,7 @@ export class FederatedLearner {
             this.learned = true;
             return true;
         } catch (e) {
+            console.warn('[FederatedLearner] could not apply the global model:', e);
             return false;
         }
     }

@@ -661,8 +661,11 @@ function SessionContent() {
             const socket = socketRef.current
             if (!socket?.connected) return
             const startedAt = performance.now()
-            socket.emit('ping-ircp')
-            socket.once('pong-ircp', () => setLatency(Math.round(performance.now() - startedAt)))
+            // Acknowledgement with a timeout: a lost reply no longer leaves a listener behind, and a
+            // late reply can no longer be matched to the next ping
+            socket.timeout(2500).emit('ping-ircp', (err: Error | null) => {
+                if (!err) setLatency(Math.round(performance.now() - startedAt))
+            })
         }, 3000)
         return () => window.clearInterval(timer)
     }, [])

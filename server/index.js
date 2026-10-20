@@ -2439,7 +2439,10 @@ io.on('connection', (socket) => {
     broadcastSessions();
   });
 
-  socket.on('ping-ircp', () => socket.emit('pong-ircp'));
+  socket.on('ping-ircp', (ack) => {
+    if (typeof ack === 'function') ack(); // current clients measure latency with the acknowledgement
+    else socket.emit('pong-ircp');
+  });
 
   const handleAntiCheatAlert = (data = {}) => {
     const roomCode = normalizeRoomCode(data.roomCode || data.roomId || socket.roomCode);
