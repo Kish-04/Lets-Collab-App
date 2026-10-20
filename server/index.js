@@ -1036,8 +1036,19 @@ function serializeSessions() {
     recordings: (room.recordings || []).map(url => signUploadUrl(url)).filter(Boolean),
     messageCount: room.messages.length,
     federated: federatedSummary(room),
-    examData: room.exam,
+    // Counts only: this goes to every admin on every chat message and quality update, and the full
+    // exam held voice prompts and recorded answers (megabytes each); archives keep the details
+    exam: examSummary(room),
   }));
+}
+
+function examSummary(room) {
+  const answers = Object.values(room.exam?.answers || {});
+  return {
+    questions: (room.exam?.questions || []).length,
+    drafts: answers.reduce((sum, byController) => sum + Object.values(byController).filter(a => !a?.isFinal).length, 0),
+    submitted: answers.reduce((sum, byController) => sum + Object.values(byController).filter(a => a?.isFinal).length, 0),
+  };
 }
 
 function signSessionEvidence(session) {
