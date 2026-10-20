@@ -2,13 +2,14 @@
 
 import { usePathname, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
-import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut, Scale } from "lucide-react"
+import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut, Scale, LayoutGrid } from "lucide-react"
 import { BrandMark, StatusBadge } from "@/components/ircp/shared"
 import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 
 const navItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/sessions", label: "Live Sessions", icon: Activity },
+  { href: "/admin/wall", label: "Exam Wall", icon: LayoutGrid },
   { href: "/admin/alerts", label: "Anti-Cheat Alerts", icon: Shield },
   { href: "/admin/review", label: "Review Queue", icon: Scale },
   { href: "/admin/blockchain", label: "Blockchain Logs", icon: Link2 },

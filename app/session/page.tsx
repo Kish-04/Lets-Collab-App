@@ -52,6 +52,7 @@ import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken, getAuthHeaders } from "@/lib/utils"
 import { describeFaceSteadily, FACE_ERROR_TEXT } from "@/lib/faceMatch"
+import { publishTracks, isSfuDisabled } from "@/lib/sfuClient"
 import { askPet } from "@/lib/askPet"
 import { gaussianEpsilon } from "@/lib/dpAccountant"
 import { useModalDialog } from "@/hooks/useModalDialog"
@@ -310,6 +311,7 @@ function SessionContent() {
     const [localMicMuted, setLocalMicMuted] = useState(true)
     const [localCamMuted, setLocalCamMuted] = useState(true)
     const [hasLocalMedia, setHasLocalMedia] = useState(false)
+    const [sfuPublishAttempt, setSfuPublishAttempt] = useState(0)
     const [gaugeGlow, setGaugeGlow] = useState(false)
     const [logFilter, setLogFilter] = useState<'all' | 'anticheat' | 'system'>('all')
     const [observerCount, setObserverCount] = useState(0)
@@ -2463,11 +2465,19 @@ function SessionContent() {
     // this device) is compared with their enrolment by the server, which tells the host the result.
     const faceCheckDoneRef = useRef(false)
     useEffect(() => {
-        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected' || faceCheckDoneRef.current) return
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected' || !hasLocalMedia || faceCheckDoneRef.current) return
         let cancelled = false
+        const cameraShowsVideo = () => {
+            const video = localCamRef.current
+            return Boolean(video && video.readyState >= 2 && video.videoWidth > 0)
+        }
         ;(async () => {
+            // Wait (up to 2 minutes) for the camera preview to show frames before the first attempt
+            for (let waited = 0; waited < 120 && !cameraShowsVideo() && !cancelled; waited++) {
+                await new Promise(resolve => setTimeout(resolve, 1000))
+            }
             for (let attempt = 1; attempt <= 3 && !cancelled; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 2000 : 5000))
+                await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 1000 : 5000))
                 if (cancelled) return
                 try {
                     const sample = await describeFaceSteadily(localCamRef.current as HTMLVideoElement)
@@ -2499,7 +2509,37 @@ function SessionContent() {
             }
         })()
         return () => { cancelled = true }
-    }, [sessionMode, role, connectionState, addLog, reportMalpractice]);
+    }, [sessionMode, role, connectionState, hasLocalMedia, addLog, reportMalpractice]);
+
+    // With the optional exam media server, a supervised candidate's camera is also sent there once, so
+    // any number of proctors can watch it (admin exam wall) without a connection per viewer. It runs
+    // again when the camera comes on, which in a supervised exam happens after AI calibration.
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected') return
+        const socket = socketRef.current
+        const candidates = [
+            ...(pcRef.current?.getSenders().map(sender => sender.track) || []),
+            activeLocalStreamRef.current?.getVideoTracks()[0],
+            localStreamRef.current?.getVideoTracks()[0],
+        ]
+        const track = candidates.find(item => item && item.kind === 'video' && item.readyState === 'live')
+        if (!socket || !track || !roomCodeRef.current) return
+        let cancelled = false
+        let publication: { close: () => void } | null = null
+        // The camera is restarted around AI calibration: publish its new track when this one ends
+        const onEnded = () => { if (!cancelled) setSfuPublishAttempt(n => n + 1) }
+        track.addEventListener('ended', onEnded)
+        publishTracks(socket, roomCodeRef.current, [track])
+            .then((result) => {
+                if (cancelled) result.close()
+                else {
+                    publication = result
+                    addLog('system', 'Camera is also streamed through the exam media server')
+                }
+            })
+            .catch((err) => { if (!isSfuDisabled(err)) addLog('system', `Exam media server unavailable: ${err?.message || err}`) })
+        return () => { cancelled = true; track.removeEventListener('ended', onEnded); publication?.close() }
+    }, [sessionMode, role, connectionState, hasLocalMedia, sfuPublishAttempt, addLog]);
 
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'controller') return;

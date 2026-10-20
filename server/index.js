@@ -102,6 +102,7 @@ app.use('/api/reviews', require('./reviewRoutes'));
 app.use('/api/face', require('./faceRoutes'));
 app.use('/api/lti', require('./ltiRoutes'));
 const lti = require('./lti');
+const sfu = require('./sfu');
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 // Each call spends the Gemini quota: signed-in users only, 20 questions per user per minute
@@ -1377,6 +1378,7 @@ async function archiveSession(roomCode, reason) {
   room.archived = true;
   anchorEvent(roomCode, 'SESSION_ARCHIVED', { reason, ...transcriptDigest(room) }, room.hostEmail || '');
   if (room.ltiLink) sendLtiGrades(room);
+  void sfu.closeRoom(roomCode); // camera streams of this exam end with it
   clearFederatedRound(room);
   const endedAt = Date.now();
   pushEvent(roomCode, 'kill', reason);
@@ -2701,6 +2703,75 @@ io.on('connection', (socket) => {
     pushEvent(roomCode, 'system', 'Host updated AI proctoring calibration');
     room.controllers.forEach((_, controllerId) => io.to(controllerId).emit('ai-config', room.aiConfig));
   });
+
+  // ── Media server (optional, sfu.js) ────────────────────────────────────────
+  // Supervised candidates send their camera once; the host and administrators receive it from the
+  // server. Every call answers through the Socket.IO acknowledgement: { error } or the result.
+  const sfuReply = (ack) => (typeof ack === 'function' ? ack : () => {});
+  const sfuRoom = (roomId) => {
+    const roomCode = normalizeRoomCode(roomId);
+    return { roomCode, room: rooms.get(roomCode) };
+  };
+  const sfuCanSend = (room) => Boolean(room && room.mode === 'supervised' && room.controllers.has(socket.id));
+  const sfuCanWatch = async (room) => Boolean(room && (socket.id === room.hostSocketId || room.observers.has(socket.id) || await isAdminSocket(socket)));
+  const sfuGuard = (handler) => async (payload = {}, ack) => {
+    const reply = sfuReply(typeof payload === 'function' ? payload : ack);
+    if (!sfu.enabled) return reply({ error: 'media server disabled' });
+    try {
+      reply(await handler(typeof payload === 'function' ? {} : payload));
+    } catch (err) {
+      reply({ error: err.message || 'media server error' });
+    }
+  };
+
+  socket.on('sfu-capabilities', sfuGuard(async ({ roomId }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (!sfuCanSend(room) && !await sfuCanWatch(room)) throw new Error('not a member of this room');
+    return { rtpCapabilities: await sfu.rtpCapabilities(roomCode) };
+  }));
+
+  socket.on('sfu-create-transport', sfuGuard(async ({ roomId, direction }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (direction === 'send' ? !sfuCanSend(room) : direction === 'recv' ? !await sfuCanWatch(room) : true) {
+      throw new Error('not allowed for this room');
+    }
+    return sfu.createTransport(socket, roomCode, direction);
+  }));
+
+  socket.on('sfu-connect-transport', sfuGuard(async ({ transportId, dtlsParameters }) => {
+    await sfu.connectTransport(socket, transportId, dtlsParameters);
+    return { connected: true };
+  }));
+
+  socket.on('sfu-produce', sfuGuard(async ({ roomId, transportId, kind, rtpParameters }) => {
+    const { room } = sfuRoom(roomId);
+    if (!sfuCanSend(room)) throw new Error('only candidates of a supervised room publish');
+    const name = room.controllers.get(socket.id)?.name || 'Candidate';
+    const id = await sfu.produce(socket, transportId, kind, rtpParameters, name, (roomCode, producer) => {
+      io.to(room.hostSocketId).emit('sfu-new-producer', { roomCode, ...producer });
+      io.to('admins').emit('sfu-new-producer', { roomCode, ...producer });
+    });
+    return { id };
+  }));
+
+  socket.on('sfu-list-producers', sfuGuard(async ({ roomId }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (!await sfuCanWatch(room)) throw new Error('not allowed for this room');
+    return { producers: sfu.listProducers(roomCode) };
+  }));
+
+  socket.on('sfu-consume', sfuGuard(async ({ roomId, transportId, producerId, rtpCapabilities }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (!await sfuCanWatch(room)) throw new Error('not allowed for this room');
+    return sfu.consume(socket, roomCode, transportId, producerId, rtpCapabilities);
+  }));
+
+  socket.on('sfu-resume', sfuGuard(async ({ consumerId }) => {
+    await sfu.resume(socket, consumerId);
+    return { resumed: true };
+  }));
+
+  socket.on('disconnect', () => sfu.closeSocket(socket));
 
   socket.on('leave-session', () => {
     socket.leftOnPurpose = true; // leaving on purpose skips the reconnect grace period
