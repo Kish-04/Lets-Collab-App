@@ -1205,7 +1205,13 @@ function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = ''
     return;
   }
 
-  logToChain(code, hashedHost, hashedController, eventType, payload)
+  logToChain(code, hashedHost, hashedController, eventType, payload, {
+    // The hash is known at submission; whether it was mined comes later
+    onStatus: (status) => {
+      anchor.txStatus = status;
+      if (status === 'failed') pushEvent(code, 'chain', `Audit anchor ${eventType} could not be written on-chain`);
+    },
+  })
     .then((txHash) => {
       if (txHash && !String(txHash).startsWith('[OFF-CHAIN-MOCK]')) anchor.txHash = txHash;
       const liveRoom = rooms.get(code);

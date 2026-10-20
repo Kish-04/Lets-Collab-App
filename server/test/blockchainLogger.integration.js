@@ -77,12 +77,18 @@ function stopTree(child) {
     });
 
     await check('back-to-back anchors are all mined (nonce management) with the fee floor', async () => {
+      const statuses = [];
       for (const [eventType, data] of [['ROOM_CREATED', { a: 1 }], ['USER_JOINED', { b: 2 }], ['SESSION_ARCHIVED', { c: 3 }]]) {
         const { payload, dataHash } = logger.hashAuditPayload(data);
-        anchors.push({ eventType, payload, dataHash, txHash: await logger.logToChain('ITROOM', '', '', eventType, payload) });
+        const onStatus = (status) => statuses.push(`${eventType}:${status}`);
+        anchors.push({ eventType, payload, dataHash, txHash: await logger.logToChain('ITROOM', '', '', eventType, payload, { onStatus }) });
       }
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 1500));
       for (const anchor of anchors) assert.equal((await provider.getTransactionReceipt(anchor.txHash)).status, 1);
+      // Each send reports pending at submission and confirmed once mined
+      for (const eventType of ['ROOM_CREATED', 'USER_JOINED', 'SESSION_ARCHIVED']) {
+        assert.ok(statuses.includes(`${eventType}:pending`) && statuses.includes(`${eventType}:confirmed`), statuses.join(', '));
+      }
       const tx = await provider.getTransaction(anchors[0].txHash);
       assert.ok(tx.maxPriorityFeePerGas >= ethers.parseUnits('30', 'gwei'));
     });

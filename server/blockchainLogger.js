@@ -97,14 +97,21 @@ const initBlockchain = async () => {
   }
 };
 
-// Contracts deployed before access control existed have no writers() function; treat them as open
+// Contracts deployed before access control existed have no writers() function; treat them as open.
+// Any other failure (RPC down, timeout) is not a permission: report it instead of assuming yes.
 async function canWrite() {
   try {
     return await trackerContract.writers(await wallet.getAddress());
   } catch (err) {
-    return true;
+    const missingFunction = err && (err.code === 'CALL_EXCEPTION' || err.code === 'BAD_DATA');
+    if (!missingFunction) console.warn('[BLOCKCHAIN] Could not check writer permission:', err && err.message);
+    return missingFunction;
   }
 }
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const SEND_ATTEMPTS = Number(process.env.CHAIN_SEND_ATTEMPTS || 3);
+const CONFIRM_TIMEOUT_MS = Number(process.env.CHAIN_CONFIRM_TIMEOUT_MS || 180000);
 
 // EIP-1559 fees with a per-chain priority-fee floor (Polygon rejects tips below ~25-30 gwei)
 async function feeOverrides() {
@@ -152,32 +159,50 @@ const hashIdentity = (email) => {
 // Hash used by entries written before identities were keyed; kept so old history still resolves
 const legacyIdentityHash = (email) => (email ? ethers.id(email) : '');
 
-const logToChain = async (sessionId, hostId, controllerId, eventType, data) => {
+/**
+ * Sends one audit entry. Resolves with the tx hash once it is submitted (the queue keeps nonces in
+ * order) and reports the outcome through options.onStatus: "confirmed" once mined, "failed" if it
+ * reverted, was dropped or did not confirm in time. Transient send errors are retried; reverts
+ * (e.g. the wallet is not a writer) are not.
+ */
+const logToChain = async (sessionId, hostId, controllerId, eventType, data, options = {}) => {
+  const onStatus = typeof options.onStatus === 'function' ? options.onStatus : () => {};
   if (global.blockchainActive && trackerContract) {
     return new Promise((resolve) => {
       txQueue = txQueue.then(async () => {
-        try {
-          const { dataHash } = hashAuditPayload(data);
-          const hostHash = hostId || '';
-          const controllerHash = controllerId || '';
-
-          const tx = await trackerContract.logEvent(
-            sessionId,
-            hostHash,
-            controllerHash,
-            eventType,
-            dataHash,
-            await feeOverrides()
-          );
-          console.log(`[BLOCKCHAIN] Tx Submitted: ${eventType} (Hash: ${tx.hash})`);
-          
-          tx.wait().catch(err => console.error('[BLOCKCHAIN WAIT ERROR]', err));
-          resolve(tx.hash);
-        } catch (err) {
-          console.error('[BLOCKCHAIN ERROR]', err.message);
-          wallet.reset(); // resync the nonce from the chain after a failed send
-          resolve(null);
+        const { dataHash } = hashAuditPayload(data);
+        const hostHash = hostId || '';
+        const controllerHash = controllerId || '';
+        for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
+          try {
+            const tx = await trackerContract.logEvent(
+              sessionId,
+              hostHash,
+              controllerHash,
+              eventType,
+              dataHash,
+              await feeOverrides()
+            );
+            console.log(`[BLOCKCHAIN] Tx Submitted: ${eventType} (Hash: ${tx.hash})`);
+            onStatus('pending', tx.hash);
+            tx.wait(1, CONFIRM_TIMEOUT_MS)
+              .then(receipt => onStatus(receipt && receipt.status === 1 ? 'confirmed' : 'failed', tx.hash))
+              .catch((err) => {
+                console.error(`[BLOCKCHAIN] ${eventType} did not confirm:`, err.shortMessage || err.message);
+                onStatus('failed', tx.hash);
+              });
+            resolve(tx.hash);
+            return;
+          } catch (err) {
+            console.error(`[BLOCKCHAIN ERROR] ${eventType} attempt ${attempt}/${SEND_ATTEMPTS}:`, err.shortMessage || err.message);
+            wallet.reset(); // resync the nonce from the chain after a failed send
+            const reverted = err && (err.code === 'CALL_EXCEPTION' || /NotWriter|NotOwner|revert/i.test(String(err.message)));
+            if (reverted || attempt === SEND_ATTEMPTS) break;
+            await sleep(1000 * 2 ** (attempt - 1));
+          }
         }
+        onStatus('failed', null);
+        resolve(null);
       });
     });
   } else {

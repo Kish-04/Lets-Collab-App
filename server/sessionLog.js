@@ -45,6 +45,7 @@ const sessionLogSchema = new mongoose.Schema({
     payload: String,
     dataHash: String,
     txHash: String,
+    txStatus: String, // pending | confirmed | failed (blockchainLogger onStatus)
     createdAt: String,
     chain: { type: mongoose.Schema.Types.Mixed }, // { seq, prev, hash, sig, keyId } (auditChain.js)
   }],
