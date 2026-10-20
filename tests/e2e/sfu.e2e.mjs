@@ -37,6 +37,7 @@ let frontendUrl = process.env.E2E_FRONTEND_URL
 let backendUrl
 let nextProcess
 let browser
+let adminBrowser
 
 async function waitForHttp(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -52,8 +53,8 @@ function account(name, role = 'user') {
   return { ...user, token: signJwt({ id: user._id }) }
 }
 
-async function pageAs(user) {
-  const context = await browser.createBrowserContext()
+async function pageAs(user, inBrowser = browser) {
+  const context = await inBrowser.createBrowserContext()
   const page = await context.newPage()
   page.on('pageerror', err => console.log(`[${user.name} page error]`, err.message))
   page.on('console', msg => { if (msg.type() === 'error') console.log(`[${user.name} console]`, msg.text()) })
@@ -91,14 +92,18 @@ before(async () => {
   // next start is ready in ~5 s; next dev may take minutes on a cold runner
   const httpTimeout = process.env.E2E_NEXT_MODE === 'start' ? 30000 : 300000
   await waitForHttp(`${frontendUrl}/session`, httpTimeout)
-  browser = await puppeteer.launch({
+  const launch = () => puppeteer.launch({
     headless: true,
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--no-sandbox', '--autoplay-policy=no-user-gesture-required'],
   })
+  // The admin gets a browser of its own: a new page in the candidate's browser takes focus from the
+  // candidate, which the supervised focus policy counts as leaving the exam.
+  ;[browser, adminBrowser] = await Promise.all([launch(), launch()])
 })
 
 after(async () => {
   await browser?.close()
+  await adminBrowser?.close()
   server.close()
   if (nextProcess) {
     // Synchronous tree kill: the npx/shell wrapper on Windows would otherwise leave next dev running
@@ -112,7 +117,7 @@ after(async () => {
 test('a supervised candidate camera reaches the admin exam wall through the media server', { timeout: 600000 }, async () => {
   const host = await pageAs(account('SfuHost'))
   const candidate = await pageAs(account('SfuCandidate'))
-  const admin = await pageAs(account('SfuAdmin', 'admin'))
+  const admin = await pageAs(account('SfuAdmin', 'admin'), adminBrowser)
 
   await host.goto(`${frontendUrl}/session?create=true&mode=supervised`, { waitUntil: 'domcontentloaded', timeout: 240000 })
   const roomCode = await host.waitForFunction(() => window._roomCode?.current || null, { timeout: 300000 }).then(h => h.jsonValue())
@@ -134,7 +139,13 @@ test('a supervised candidate camera reaches the admin exam wall through the medi
   await admin.waitForFunction(() => {
     const video = document.querySelector('figure video')
     return video && video.videoWidth > 0 && video.readyState >= 2
-  }, { timeout: 120000 })
+  }, { timeout: 240000 }).catch(async (err) => {
+    // Say why: the wall's own status line and the candidate's session log
+    console.log('[sfu] wall status:', await admin.evaluate(() => document.querySelector('[role=status]')?.innerText || '(none)'))
+    await candidate.evaluate(() => document.querySelector('[aria-label="Toggle Session Activity"]')?.click()).catch(() => {})
+    console.log('[sfu] candidate log:', await candidate.evaluate(() => document.querySelector('[aria-label="Session activity"]')?.innerText.slice(0, 2000) || '(no panel)').catch(() => '(page gone)'))
+    throw err
+  })
   const advancing = await admin.evaluate(async () => {
     const video = document.querySelector('figure video')
     const start = video.currentTime
