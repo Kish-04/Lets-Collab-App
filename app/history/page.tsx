@@ -104,7 +104,7 @@ function SessionHistoryViewer() {
             ) : (
               <div className="mt-4 space-y-3 text-sm">
                 <p className={`font-bold ${verification.intact ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {verification.intact ? 'Local logs match the blockchain.' : 'Tampering detected: local logs do not match the blockchain.'}
+                  {verification.chainStatus === 'unconfirmed' ? 'No contradictions, but none of these records could be found on the blockchain (mock mode or failed anchoring).' : verification.intact ? 'Local logs match the blockchain.' : 'Tampering detected: local logs do not match the blockchain.'}
                 </p>
                 <div className="flex flex-wrap gap-2 font-mono text-xs">
                   <span className="px-2 py-1 rounded bg-emerald-500/10 text-emerald-400">verified {verification.summary.verified}</span>

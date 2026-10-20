@@ -327,7 +327,8 @@ const querySessionLogs = async (sessionId) => {
     }));
   } catch (err) {
     console.error('[SESSION QUERY ERROR]', err.message);
-    return [];
+    // null, not []: an unreachable chain must not look like "nothing was anchored"
+    return null;
   }
 };
 
@@ -390,8 +391,13 @@ const verifyAnchors = (anchors = [], chainLogs = []) => {
     return counts;
   }, { verified: 0, tampered: 0, not_on_chain: 0, missing_local: 0 });
 
+  // confirmed: at least one anchor found on chain and nothing contradicts it; unconfirmed: nothing
+  // contradicts the log, but nothing could be found on chain either (mock mode, failed sends)
+  const contradicted = summary.tampered > 0 || summary.missing_local > 0;
+  const chainStatus = contradicted ? 'tampered' : summary.verified > 0 ? 'confirmed' : anchors.length ? 'unconfirmed' : 'empty';
   return {
-    intact: summary.tampered === 0 && summary.missing_local === 0,
+    intact: !contradicted,
+    chainStatus,
     summary,
     results,
   };

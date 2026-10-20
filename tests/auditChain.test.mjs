@@ -46,3 +46,17 @@ test('a chain re-signed with another key is rejected', () => {
   const other = crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' })
   assert.match(verifyChain(anchors, other).reason, /signature/)
 })
+
+test('on-chain verification separates confirmed, unconfirmed and tampered', () => {
+  process.env.JWT_SECRET ||= 'audit_chain_test_secret_with_more_than_32_chars'
+  const { verifyAnchors } = createRequire(import.meta.url)('../server/blockchainLogger.js')
+  const { ethers } = createRequire(import.meta.url)('../server/node_modules/ethers')
+  const anchor = { eventType: 'ROOM_CREATED', payload: '{"code":"ABCD1234"}' }
+  const onChain = { eventType: 'ROOM_CREATED', dataHash: ethers.id(anchor.payload), txHash: '0xabc', blockNumber: 1 }
+
+  assert.equal(verifyAnchors([anchor], [onChain]).chainStatus, 'confirmed')
+  const nothingFound = verifyAnchors([anchor], [])
+  assert.deepEqual([nothingFound.chainStatus, nothingFound.intact], ['unconfirmed', true])
+  const edited = verifyAnchors([{ ...anchor, payload: '{"code":"EDITED"}', txHash: '0xabc' }], [onChain])
+  assert.deepEqual([edited.chainStatus, edited.intact], ['tampered', false])
+})

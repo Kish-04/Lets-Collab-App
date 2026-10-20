@@ -321,7 +321,7 @@ app.get('/api/sessions/recent', protectAuthenticated, async (req, res) => {
 app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const rawLogs = await querySessionLogs(sessionId);
+    const rawLogs = (await querySessionLogs(sessionId)) || [];
 
     // Build hash -> email map
     const dbUsers = global.dbConnected ? await User.find({}) : [];
@@ -380,6 +380,16 @@ app.get('/api/sessions/:sessionId/verify', protectAdmin, async (req, res) => {
     }
 
     const chainLogs = await querySessionLogs(sessionId);
+    if (chainLogs === null) {
+      return res.json({
+        success: true,
+        chainActive: false,
+        message: 'The blockchain could not be reached right now; the signed audit chain was checked instead.',
+        sessionId,
+        signedChain,
+        intact: signedChain.status !== 'broken',
+      });
+    }
     const report = verifyAnchors(session.anchors || [], chainLogs);
 
     // The chat transcript and evidence are anchored as one digest when the session is archived
@@ -1106,8 +1116,10 @@ async function terminateRoom(roomCode, by = 'admin') {
   const room = rooms.get(roomCode);
   if (!room) return false;
   clearTimeout(room.hostGraceTimer);
-  await archiveSession(roomCode, 'Session terminated by host or administrator');
+  // Anchor first so the archived copy contains it (otherwise a later check sees an on-chain entry
+  // with no local record and reports the session as tampered)
   anchorEvent(roomCode, 'SESSION_TERMINATED', { by }, room.hostEmail);
+  await archiveSession(roomCode, 'Session terminated by host or administrator');
   io.to(roomCode).emit('kill-session');
   room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
   rooms.delete(roomCode);

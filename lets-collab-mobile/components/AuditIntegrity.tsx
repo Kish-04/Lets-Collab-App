@@ -12,6 +12,7 @@ type Verification =
       success: true;
       chainActive: true;
       intact: boolean;
+      chainStatus?: 'confirmed' | 'unconfirmed' | 'tampered' | 'empty';
       summary: { verified: number; tampered: number; not_on_chain: number; missing_local: number };
       transcript: { status: string };
       results: { status: string; eventType: string; chainHash: string | null; recomputedHash: string | null }[];
@@ -64,7 +65,7 @@ export function AuditIntegrity({ sessionId }: { sessionId: string }) {
           <View style={styles.verdict}>
             {result.intact ? <ShieldCheck size={16} color={colors.emerald} /> : <ShieldAlert size={16} color={colors.red} />}
             <Text style={[styles.verdictText, { color: result.intact ? colors.emerald : colors.red }]}>
-              {result.intact ? 'Local logs match the blockchain' : 'Tampering detected'}
+              {result.chainStatus === 'unconfirmed' ? 'No contradictions, but nothing found on the blockchain' : result.intact ? 'Local logs match the blockchain' : 'Tampering detected'}
             </Text>
           </View>
           <View style={styles.chips}>
