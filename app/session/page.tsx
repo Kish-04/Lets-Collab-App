@@ -1194,13 +1194,16 @@ function SessionContent() {
         else pcRef.current = pc
 
         if (currentRoleRef.current === 'host' && targetId) {
-            const channel = pc.createDataChannel('ircp-input', { ordered: false, maxRetransmits: 0 })
+            // Reliable and ordered: a lost keyup/mouseup left keys or buttons stuck down on the host.
+            // Mouse moves are throttled to ~60/s by the controller, so the extra latency is small.
+            const channel = pc.createDataChannel('ircp-input', { ordered: true })
             attachInputChannel(channel, targetId)
             
             const fileChannel = pc.createDataChannel('ircp-file', { ordered: true })
             dataChannelManager.attachChannel(fileChannel, targetId, 'ircp-file')
             
-            const drawChannel = pc.createDataChannel('ircp-draw', { ordered: false, maxRetransmits: 0 })
+            // Strokes, 'start' and 'clear' must all arrive, in order, or whiteboards diverge
+            const drawChannel = pc.createDataChannel('ircp-draw', { ordered: true })
             dataChannelManager.attachChannel(drawChannel, targetId, 'ircp-draw')
             
             const chatChannel = pc.createDataChannel('ircp-chat', { ordered: true })
