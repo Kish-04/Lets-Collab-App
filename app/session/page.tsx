@@ -52,6 +52,7 @@ import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
 import { askPet } from "@/lib/askPet"
+import { gaussianEpsilon } from "@/lib/dpAccountant"
 import { useModalDialog } from "@/hooks/useModalDialog"
 import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
 import { ClipboardSync, CLIPBOARD_CHANNEL } from "@/components/ircp/ClipboardSync"
@@ -143,9 +144,33 @@ const permissionLevels = [
 const quickChatEmojis = ['👍', '👎', '🙏', '✅', '❌', '🔥', '😂', '🎉', '💡', '🤔', '🚀', '❤️', '👀', '✨']
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
-// Secure aggregation: per-update L2 clip bound and optional Gaussian noise (DP-FedAvg style)
+// Secure aggregation with differential privacy (DP-FedAvg): every update is clipped to L2 norm 1 and
+// the aggregate carries Gaussian noise of std sigma; each device adds its share (lib/dpAccountant.ts).
+// NEXT_PUBLIC_FL_DP_NOISE=0 turns the noise off. The epsilon budget is per exam session on a device:
+// at the defaults (noise 1, epsilon 10, delta 1e-5) a device joins at most 3 rounds of one session.
 const FL_CLIP_NORM = 1
-const FL_NOISE_MULTIPLIER = Number(process.env.NEXT_PUBLIC_FL_DP_NOISE || 0)
+const FL_NOISE_MULTIPLIER = process.env.NEXT_PUBLIC_FL_DP_NOISE ? Number(process.env.NEXT_PUBLIC_FL_DP_NOISE) : 1
+const FL_DP_DELTA = 1e-5
+const FL_EPSILON_BUDGET = Number(process.env.NEXT_PUBLIC_FL_EPSILON_BUDGET || 10)
+// Noise is split across at least this many devices (the server's FL_MIN_PARTICIPANTS)
+const FL_NOISE_SHARES = Math.max(1, Number(process.env.NEXT_PUBLIC_FL_MIN_PARTICIPANTS || 3))
+const FL_DP_ROUNDS_KEY = 'ircp_fl_dp_rounds'
+
+// Rounds this device has contributed to in one session (kept across reloads of that session)
+const dpRoundsInMemory = new Map<string, number>()
+function dpRoundsUsed(room: string) {
+    try {
+        const stored = Number(localStorage.getItem(`${FL_DP_ROUNDS_KEY}:${room}`))
+        if (Number.isFinite(stored) && stored > 0) return stored
+    } catch { /* storage blocked: fall back to this page */ }
+    return dpRoundsInMemory.get(room) || 0
+}
+function recordDpRound(room: string) {
+    const rounds = dpRoundsUsed(room) + 1
+    dpRoundsInMemory.set(room, rounds)
+    try { localStorage.setItem(`${FL_DP_ROUNDS_KEY}:${room}`, String(rounds)) } catch { /* kept in memory */ }
+    return rounds
+}
 
 function formatDuration(s: number) {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
@@ -1564,8 +1589,14 @@ function SessionContent() {
                 return
             }
             try {
+                const dpEnabled = FL_NOISE_MULTIPLIER > 0
+                const dpRoom = roomCodeRef.current || 'unknown'
+                if (dpEnabled && gaussianEpsilon(dpRoundsUsed(dpRoom) + 1, FL_NOISE_MULTIPLIER, FL_DP_DELTA) > FL_EPSILON_BUDGET) {
+                    addLog('system', `Not joining federated round ${round}: this device has used its privacy budget for this session (epsilon ${FL_EPSILON_BUDGET}); it still receives the global model`)
+                    return
+                }
                 if (learner.getPendingSampleCount() >= 2) await learner.trainLocalModel(10)
-                const contribution = buildContribution(await learner.getDelta(), learner.getSamplesSinceSync(), FL_CLIP_NORM, FL_NOISE_MULTIPLIER)
+                const contribution = buildContribution(await learner.getDelta(), learner.getSamplesSinceSync(), FL_CLIP_NORM, FL_NOISE_MULTIPLIER, FL_NOISE_SHARES, dpEnabled)
                 const keys = await createRoundKeys()
                 flRoundStateRef.current.set(round, { keys, seed: crypto.getRandomValues(new Uint8Array(32)), contribution })
                 socket.emit('fl-join', {
@@ -1578,6 +1609,10 @@ function SessionContent() {
                     initWeights: baseRound === 0 ? learner.getBaseWeights() : undefined,
                 })
                 addLog('system', `Joined secure federated round ${round} with ${learner.getSamplesSinceSync()} local sample(s)`)
+                if (dpEnabled) {
+                    const spent = gaussianEpsilon(recordDpRound(dpRoom), FL_NOISE_MULTIPLIER, FL_DP_DELTA)
+                    addLog('system', `Differential privacy: epsilon ${spent.toFixed(2)} of ${FL_EPSILON_BUDGET} spent in this session (delta ${FL_DP_DELTA}, noise ${FL_NOISE_MULTIPLIER})`)
+                }
             } catch (err: any) {
                 addLog('system', `Could not join federated round ${round}: ${err?.message || err}`)
             }

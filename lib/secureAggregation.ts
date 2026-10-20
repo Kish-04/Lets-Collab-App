@@ -177,14 +177,20 @@ function gaussian() {
  * scaled by its sample count, followed by the sample count, so the server can form a weighted
  * average from the revealed sum without learning anyone's individual count.
  * L2 clipping bounds every value, which keeps the fixed-point sum from overflowing.
+ *
+ * Differential privacy (see lib/dpAccountant.ts): with `noiseMultiplier` sigma > 0 the device adds
+ * Gaussian noise of std sigma * clipNorm / sqrt(noiseShares), so the sum of `noiseShares` devices
+ * carries sigma * clipNorm in total. `equalWeight` gives every device weight 1 (DP-FedAvg), which
+ * bounds one device's influence on the sum by clipNorm; sample-count weighting would not.
  */
-export function buildContribution(delta: ArrayLike<number>, sampleCount: number, clipNorm = 1, noiseMultiplier = 0) {
+export function buildContribution(delta: ArrayLike<number>, sampleCount: number, clipNorm = 1, noiseMultiplier = 0, noiseShares = 1, equalWeight = false) {
     const norm = Math.sqrt(Array.from(delta).reduce((total, value) => total + value * value, 0))
     const scale = norm > clipNorm ? clipNorm / norm : 1
-    const count = Math.max(0, Math.min(500, Math.round(sampleCount)))
+    const count = equalWeight ? 1 : Math.max(0, Math.min(500, Math.round(sampleCount)))
+    const noiseStd = noiseMultiplier > 0 ? (noiseMultiplier * clipNorm) / Math.sqrt(Math.max(1, noiseShares)) : 0
     const vector = new Float64Array(delta.length + 1)
     for (let i = 0; i < delta.length; i++) {
-        const noise = noiseMultiplier > 0 ? gaussian() * noiseMultiplier * clipNorm : 0
+        const noise = noiseStd > 0 ? gaussian() * noiseStd : 0
         vector[i] = (delta[i] * scale + noise) * count
     }
     vector[delta.length] = count
