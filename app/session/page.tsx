@@ -63,6 +63,15 @@ import {
 type Role = "host" | "controller" | "admin"
 type PermissionLevel = "view" | "mouse" | "keyboard" | "full"
 type ConnectionState = "idle" | "waiting" | "connecting" | "connected"
+// Detectors name the same situation differently (no_face / NO_FACE, look_away / LOOKING_AWAY,
+// forbidden_object / PHONE_DETECTED); one canonical name per situation
+function canonicalProctoringType(type: string) {
+    const upper = String(type || '').toUpperCase()
+    if (['LOOK_AWAY', 'LOOKING_AWAY', 'EYE_DARTING'].includes(upper)) return 'LOOKING_AWAY'
+    if (['FORBIDDEN_OBJECT', 'PHONE_DETECTED', 'OBJECT_DETECTED'].includes(upper)) return 'PHONE_DETECTED'
+    return upper
+}
+
 // Server room events carry only a local "HH:MM:SS"; anchor them to today so they sort with device logs
 function roomTimeToIso(time: string) {
     const match = /^(d{1,2}):(d{2}):(d{2})$/.exec(String(time || ''))
@@ -913,6 +922,7 @@ function SessionContent() {
             if (status === 'error') addLog('anticheat', `Anti-cheat failed: ${msg}`)
         })
         engine.onEvent((ev: AntiCheatEvent) => {
+            if (!firstProctoringReport(ev.type)) return // already reported by another detector
             const features = federatedFeaturesForEvent(ev.type)
             const { penalty, confidence } = federatedPenalty(features, ev.scorePenalty)
             addLog('anticheat', `${ev.type}: ${ev.message} (+${penalty}${confidence === null ? '' : `, FL confidence ${confidence.toFixed(2)}`})`)
@@ -2299,82 +2309,46 @@ function SessionContent() {
         }
     }
 
-    useFaceProctoring(
-        localCamRef,
-        sessionMode,
-        role,
-        (type, message) => {
-            reportMalpractice(`Proctoring [${type}]: ${message}`, 20, [0.8, 0, 0.2]);
-            setPetState('Warning');
-            setPetMessage(message);
-            if (petTimerRef.current) clearTimeout(petTimerRef.current);
-            petTimerRef.current = setTimeout(() => {
-                setPetState('Idle');
-                setPetMessage('');
-            }, 8000);
-            
-            setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                time: new Date().toISOString(),
-                senderId: 'system',
-                senderName: 'System',
-                role: 'admin',
-                text: `⚠️ [System Warning]: ${message}`
-            }]);
-        }
-    );
+    // Three detectors (AntiCheatEngine, face and object hooks) watch the same camera, so one moment
+    // without a face was penalised two or three times. Each kind of event is reported at most once
+    // per 10 s, whichever detector saw it first.
+    const lastProctoringEventRef = useRef<Map<string, number>>(new Map())
+    const firstProctoringReport = (type: string) => {
+        const key = canonicalProctoringType(type)
+        const now = Date.now()
+        if (now - (lastProctoringEventRef.current.get(key) || 0) < 10000) return false
+        lastProctoringEventRef.current.set(key, now)
+        return true
+    }
+
+    const onProctoringViolation = (type: string, message: string, penalty: number) => {
+        if (!firstProctoringReport(type)) return;
+        reportMalpractice(`Proctoring [${type}]: ${message}`, penalty, federatedFeaturesForEvent(canonicalProctoringType(type)));
+        setPetState('Warning');
+        setPetMessage(message);
+        if (petTimerRef.current) clearTimeout(petTimerRef.current);
+        petTimerRef.current = setTimeout(() => {
+            setPetState('Idle');
+            setPetMessage('');
+        }, 8000);
+
+        setChatMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            time: new Date().toISOString(),
+            senderId: 'system',
+            senderName: 'System',
+            role: 'admin',
+            text: `⚠️ [System Warning]: ${message}`
+        }]);
+    };
+
+    useFaceProctoring(localCamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 20));
 
     const tabSwitchCountRef = useRef(0);
 
-    useObjectProctoring(
-        localCamRef,
-        sessionMode,
-        role,
-        (type, message) => {
-            reportMalpractice(`Proctoring [${type}]: ${message}`, 20, [0.8, 0, 0.2]);
-            setPetState('Warning');
-            setPetMessage(message);
-            if (petTimerRef.current) clearTimeout(petTimerRef.current);
-            petTimerRef.current = setTimeout(() => {
-                setPetState('Idle');
-                setPetMessage('');
-            }, 8000);
-            
-            setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                time: new Date().toISOString(),
-                senderId: 'system',
-                senderName: 'System',
-                role: 'admin',
-                text: `⚠️ [System Warning]: ${message}`
-            }]);
-        }
-    );
+    useObjectProctoring(localCamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 20));
 
-    useAudioProctoring(
-        localStreamRef,
-        sessionMode,
-        role,
-        (type, message) => {
-            reportMalpractice(`Proctoring [${type}]: ${message}`, 15, [0.8, 0, 0.2]);
-            setPetState('Warning');
-            setPetMessage(message);
-            if (petTimerRef.current) clearTimeout(petTimerRef.current);
-            petTimerRef.current = setTimeout(() => {
-                setPetState('Idle');
-                setPetMessage('');
-            }, 8000);
-            
-            setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                time: new Date().toISOString(),
-                senderId: 'system',
-                senderName: 'System',
-                role: 'admin',
-                text: `⚠️ [System Warning]: ${message}`
-            }]);
-        }
-    );
+    useAudioProctoring(localStreamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 15));
 
     useEffect(() => {
         // One policy for leaving the exam window: warn on the first switch, end the session on the second.
