@@ -45,8 +45,10 @@ export async function publishTracks(socket: Socket, roomId: string, tracks: Medi
         ask(socket, 'sfu-produce', { roomId, transportId: transport.id, kind, rtpParameters }).then(reply => done({ id: reply.id })).catch(fail)
     })
     for (const track of tracks) {
+        // The camera track is shared with the call and the proctoring engine, so closing this
+        // publication must not stop it (mediasoup stops produced tracks by default).
         // A proctoring view needs a recognisable face, not HD: cap each camera at about 350 kbit/s
-        await transport.produce({ track, encodings: track.kind === 'video' ? [{ maxBitrate: 350000 }] : undefined })
+        await transport.produce({ track, stopTracks: false, encodings: track.kind === 'video' ? [{ maxBitrate: 350000 }] : undefined })
     }
     return { close: () => transport.close() }
 }

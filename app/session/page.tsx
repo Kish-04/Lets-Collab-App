@@ -207,6 +207,8 @@ function SessionContent() {
     const [localCamMuted, setLocalCamMuted] = useState(true)
     const [hasLocalMedia, setHasLocalMedia] = useState(false)
     const [sfuPublishAttempt, setSfuPublishAttempt] = useState(0)
+    const [sfuAdmission, setSfuAdmission] = useState(0)
+    const sfuPublishFailuresRef = useRef(0)
     const [gaugeGlow, setGaugeGlow] = useState(false)
     const [logFilter, setLogFilter] = useState<'all' | 'anticheat' | 'system'>('all')
     const [observerCount, setObserverCount] = useState(0)
@@ -697,6 +699,54 @@ function SessionContent() {
     }, [sessionMode, connectionState, recordFederatedSample, currentNetworkInstability])
 
     const mediaStreamPromiseRef = useRef<Promise<MediaStream> | null>(null)
+    const cameraRecoveriesRef = useRef<number[]>([])
+
+    // A camera track can end on its own (driver reset, USB glitch, another app taking the device);
+    // stop() from this page does not fire 'ended'. Open the camera again and put the new track where
+    // the old one was: the local stream and preview, and every call that was sending it.
+    const watchCameraTrack = useCallback((stream: MediaStream, track: MediaStreamTrack) => {
+        track.addEventListener('ended', async () => {
+            if (localStreamRef.current !== stream) return // the camera was released on purpose
+            const now = Date.now()
+            cameraRecoveriesRef.current = cameraRecoveriesRef.current.filter(time => now - time < 60000)
+            if (cameraRecoveriesRef.current.length >= 3) {
+                addLog('system', 'The camera keeps stopping; turn it off and on again or check its cable')
+                return
+            }
+            cameraRecoveriesRef.current.push(now)
+            addLog('system', 'The camera stopped unexpectedly; reopening it')
+            try {
+                // A camera that was just reset or replugged can take a few seconds to be listed again
+                let fresh: MediaStreamTrack | undefined
+                for (const wait of [0, 2000, 5000, 10000]) {
+                    if (wait) await new Promise(resolve => setTimeout(resolve, wait))
+                    if (localStreamRef.current !== stream) return
+                    try {
+                        fresh = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0]
+                        break
+                    } catch (err) {
+                        if (wait === 10000) throw err
+                    }
+                }
+                if (!fresh || localStreamRef.current !== stream) { fresh?.stop(); return }
+                fresh.enabled = track.enabled
+                stream.removeTrack(track)
+                stream.addTrack(fresh)
+                if (activeLocalStreamRef.current && activeLocalStreamRef.current !== stream && activeLocalStreamRef.current.getVideoTracks().includes(track)) {
+                    activeLocalStreamRef.current.removeTrack(track)
+                    activeLocalStreamRef.current.addTrack(fresh)
+                }
+                if (localCamRef.current) localCamRef.current.srcObject = activeLocalStreamRef.current || stream
+                const peers = [pcRef.current, ...hostPcRefs.current.values(), ...observerPcRefs.current.values()]
+                peers.forEach(pc => pc?.getSenders().forEach(sender => {
+                    if (sender.track === track) sender.replaceTrack(fresh).catch(() => { })
+                }))
+                watchCameraTrack(stream, fresh)
+            } catch (err: any) {
+                addLog('system', `Could not reopen the camera: ${err?.message || err}`)
+            }
+        })
+    }, [addLog])
 
     const acquireLocalMedia = useCallback(async (videoRequired = true) => {
         if (localStreamRef.current) return localStreamRef.current
@@ -715,6 +765,7 @@ function SessionContent() {
         try {
             const stream = await mediaStreamPromiseRef.current
             localStreamRef.current = stream
+            stream.getVideoTracks().forEach(track => watchCameraTrack(stream, track))
             setHasLocalMedia(true)
             return stream
         } catch (err: any) {
@@ -740,7 +791,7 @@ function SessionContent() {
             (window as any).isRequestingPermissions = false;
             mediaStreamPromiseRef.current = null
         }
-    }, [])
+    }, [watchCameraTrack])
 
     const stopLocalMedia = useCallback(() => {
         if (localStreamRef.current) {
@@ -1308,6 +1359,8 @@ function SessionContent() {
             setKeyboardEnabled(approvedPermission === 'full' || approvedPermission === 'keyboard')
             setClipboardAllowed(Boolean(approvedClipboard))
             setConnectionState('connecting')
+            // Admitted (again, after a reconnect): the media server needs this socket's camera stream
+            setSfuAdmission(n => n + 1)
         })
         socket.on('controller-joined', async ({ controllerId }: any) => {
             await negotiateWithController(controllerId)
@@ -2408,7 +2461,8 @@ function SessionContent() {
 
     // With the optional exam media server, a supervised candidate's camera is also sent there once, so
     // any number of proctors can watch it (admin exam wall) without a connection per viewer. It runs
-    // again when the camera comes on, which in a supervised exam happens after AI calibration.
+    // again when the camera comes on, which in a supervised exam happens after AI calibration, and
+    // after every admission to the room: the server drops a socket's stream when that socket disconnects.
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected') return
         const socket = socketRef.current
@@ -2418,9 +2472,15 @@ function SessionContent() {
             localStreamRef.current?.getVideoTracks()[0],
         ]
         const track = candidates.find(item => item && item.kind === 'video' && item.readyState === 'live')
-        if (!socket || !track || !roomCodeRef.current) return
+        if (!socket || !roomCodeRef.current) return
+        if (!track) {
+            // The camera is between tracks (restarting around calibration): look again shortly
+            const wait = setTimeout(() => setSfuPublishAttempt(n => n + 1), 3000)
+            return () => clearTimeout(wait)
+        }
         let cancelled = false
         let publication: { close: () => void } | null = null
+        let retryTimer: ReturnType<typeof setTimeout> | undefined
         // The camera is restarted around AI calibration: publish its new track when this one ends
         const onEnded = () => { if (!cancelled) setSfuPublishAttempt(n => n + 1) }
         track.addEventListener('ended', onEnded)
@@ -2429,12 +2489,19 @@ function SessionContent() {
                 if (cancelled) result.close()
                 else {
                     publication = result
+                    sfuPublishFailuresRef.current = 0
                     addLog('system', 'Camera is also streamed through the exam media server')
                 }
             })
-            .catch((err) => { if (!isSfuDisabled(err)) addLog('system', `Exam media server unavailable: ${err?.message || err}`) })
-        return () => { cancelled = true; track.removeEventListener('ended', onEnded); publication?.close() }
-    }, [sessionMode, role, connectionState, hasLocalMedia, sfuPublishAttempt, addLog]);
+            .catch((err) => {
+                if (cancelled || isSfuDisabled(err)) return
+                // A busy or briefly lost connection can time a step out: try again a few times
+                const failures = ++sfuPublishFailuresRef.current
+                if (failures <= 3) retryTimer = setTimeout(() => setSfuPublishAttempt(n => n + 1), 5000 * failures)
+                else addLog('system', `Exam media server unavailable: ${err?.message || err}`)
+            })
+        return () => { cancelled = true; clearTimeout(retryTimer); track.removeEventListener('ended', onEnded); publication?.close() }
+    }, [sessionMode, role, connectionState, sfuAdmission, hasLocalMedia, sfuPublishAttempt, addLog]);
 
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'controller') return;
