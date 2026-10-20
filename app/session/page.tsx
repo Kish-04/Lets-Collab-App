@@ -52,6 +52,7 @@ import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
 import { askPet } from "@/lib/askPet"
+import { useModalDialog } from "@/hooks/useModalDialog"
 import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
 import { ClipboardSync, CLIPBOARD_CHANNEL } from "@/components/ircp/ClipboardSync"
 import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
@@ -567,6 +568,11 @@ function SessionContent() {
         headPoseMargin: 0.50
     })
     const [showAiSettings, setShowAiSettings] = useState(false)
+    // Keyboard and screen-reader handling for the modal panels (Escape closes, focus stays inside)
+    const aiDialogRef = useModalDialog(showAiSettings, () => setShowAiSettings(false))
+    const killDialogRef = useModalDialog(showKillConfirm, () => setShowKillConfirm(false))
+    const leaveDialogRef = useModalDialog(showLeaveConfirm, () => setShowLeaveConfirm(false))
+    const shareDialogRef = useModalDialog(showSharePicker, () => setShowSharePicker(false))
     const hudTimerRef = useRef<NodeJS.Timeout | null>(null)
     const statsTimerRef = useRef<NodeJS.Timeout | null>(null)
     const statsTimerRefs = useRef<Map<string, NodeJS.Timeout>>(new Map())
@@ -3229,11 +3235,11 @@ function SessionContent() {
 
             {showAiSettings && currentRoleRef.current === 'host' && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+                    <div ref={aiDialogRef} role="dialog" aria-modal="true" aria-labelledby="ai-calibration-title" className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between p-4 border-b border-[var(--border)] bg-[var(--elevated)]">
                             <div className="flex items-center gap-2 text-[var(--accent)]">
                                 <Zap className="w-5 h-5" />
-                                <h3 className="font-display font-bold text-lg text-[var(--text-primary)]">AI Calibration</h3>
+                                <h3 id="ai-calibration-title" className="font-display font-bold text-lg text-[var(--text-primary)]">AI Calibration</h3>
                             </div>
                             <button onClick={() => setShowAiSettings(false)} className="text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors">
                                 <XCircle className="w-5 h-5" />
@@ -3301,8 +3307,8 @@ function SessionContent() {
             {/* End Session Confirm Modal */}
             {showKillConfirm && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
-                        <h3 className="text-xl font-bold text-[var(--red)] mb-2">End Session?</h3>
+                    <div ref={killDialogRef} role="alertdialog" aria-modal="true" aria-labelledby="end-session-title" className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
+                        <h3 id="end-session-title" className="text-xl font-bold text-[var(--red)] mb-2">End Session?</h3>
                         <p className="text-sm text-[var(--text-secondary)] mb-6">This will terminate the room and disconnect all participants immediately.</p>
                         <div className="flex gap-3">
                             <button onClick={() => setShowKillConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
@@ -3318,8 +3324,8 @@ function SessionContent() {
             {/* Leave Room Confirm Modal */}
             {showLeaveConfirm && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
-                        <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">Leave Room?</h3>
+                    <div ref={leaveDialogRef} role="alertdialog" aria-modal="true" aria-labelledby="leave-room-title" className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
+                        <h3 id="leave-room-title" className="text-xl font-bold text-[var(--text-primary)] mb-2">Leave Room?</h3>
                         <p className="text-sm text-[var(--text-secondary)] mb-6">You are about to disconnect from this session.</p>
                         <div className="flex gap-3">
                             <button onClick={() => setShowLeaveConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
@@ -3368,10 +3374,10 @@ function SessionContent() {
 
             {showSharePicker && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
-                    <div className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-xl flex flex-col h-[80vh] overflow-hidden shadow-2xl">
+                    <div ref={shareDialogRef} role="dialog" aria-modal="true" aria-labelledby="share-picker-title" className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-xl flex flex-col h-[80vh] overflow-hidden shadow-2xl">
                         <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--background)]">
-                            <h2 className="text-xl font-bold font-display text-[var(--text-primary)]">Select screen or window to share</h2>
-                            <button onClick={() => setShowSharePicker(false)} className="text-[var(--text-dim)] hover:text-[var(--text-primary)]">
+                            <h2 id="share-picker-title" className="text-xl font-bold font-display text-[var(--text-primary)]">Select screen or window to share</h2>
+                            <button onClick={() => setShowSharePicker(false)} aria-label="Close share picker" className="text-[var(--text-dim)] hover:text-[var(--text-primary)]">
                                 <X className="w-6 h-6" />
                             </button>
                         </div>

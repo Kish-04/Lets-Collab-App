@@ -4,6 +4,7 @@ import { useState } from "react"
 import { Shield, Eye, MousePointer, Keyboard, Zap, X, Check, Clock, FileText } from "lucide-react"
 import { GlowButton, DangerButton } from "@/components/ircp/shared"
 import { cn } from "@/lib/utils"
+import { useModalDialog } from "@/hooks/useModalDialog"
 
 type PermissionLevel = "view" | "mouse" | "keyboard" | "full"
 
@@ -48,6 +49,7 @@ export function PermissionRequestModal({
   const [logSession, setLogSession] = useState(true)
   const [clipboardAllowed, setClipboardAllowed] = useState(false)
 
+  const dialogRef = useModalDialog(isOpen, onClose)
   if (!isOpen) return null
 
   const handleAllow = () => {
@@ -68,6 +70,10 @@ export function PermissionRequestModal({
       
       {/* Modal */}
       <div 
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="permission-request-title"
         className="relative bg-[var(--surface)] border border-[var(--border)] rounded-t-2xl sm:rounded-2xl w-full max-w-md mx-auto p-6 animate-[slideUp_0.3s_ease-out]"
         style={{
           animationName: "slideUp",
@@ -76,6 +82,7 @@ export function PermissionRequestModal({
         {/* Close Button */}
         <button
           onClick={onClose}
+          aria-label="Close"
           className="absolute top-4 right-4 p-1 text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors"
         >
           <X className="w-5 h-5" />
@@ -86,7 +93,7 @@ export function PermissionRequestModal({
           <div className="p-3 rounded-xl bg-[var(--amber)]/10">
             <Shield className="w-8 h-8 text-[var(--amber)]" />
           </div>
-          <h2 className="font-display font-bold text-xl text-[var(--text-primary)]">
+          <h2 id="permission-request-title" className="font-display font-bold text-xl text-[var(--text-primary)]">
             Access Request
           </h2>
         </div>
