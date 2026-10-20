@@ -54,151 +54,46 @@ import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken, getAuthHeaders 
 import { describeFaceSteadily, FACE_ERROR_TEXT } from "@/lib/faceMatch"
 import { publishTracks, isSfuDisabled } from "@/lib/sfuClient"
 import { askPet } from "@/lib/askPet"
+import {
+    type Role,
+    type PermissionLevel,
+    type ConnectionState,
+    canonicalProctoringType,
+    roomTimeToIso,
+    type LogEntry,
+    type ParticipantQuality,
+    type Participant,
+    type JoinRequest,
+    type ChatMessage,
+    type EvidenceItem,
+    permissionLevels,
+    quickChatEmojis,
+    clamp01,
+    FL_CLIP_NORM,
+    FL_NOISE_MULTIPLIER,
+    FL_DP_DELTA,
+    FL_EPSILON_BUDGET,
+    FL_NOISE_SHARES,
+    FL_DP_ROUNDS_KEY,
+    dpRoundsInMemory,
+    dpRoundsUsed,
+    recordDpRound,
+    formatDuration,
+    ConnectionQualityMeter,
+    hasTurnServer,
+} from "@/lib/session/model"
 import { gaussianEpsilon } from "@/lib/dpAccountant"
 import { useModalDialog } from "@/hooks/useModalDialog"
 import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
 import { ClipboardSync, CLIPBOARD_CHANNEL } from "@/components/ircp/ClipboardSync"
+import { AiCalibrationDialog, CalibratingOverlay, ConfirmDialog, SharePickerDialog } from "@/components/ircp/session/SessionDialogs"
+import { ChatPanel } from "@/components/ircp/session/ChatPanel"
 import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
     readPersonalAppearance, SessionMode
 } from "@/lib/appearance"
 
-type Role = "host" | "controller" | "admin"
-type PermissionLevel = "view" | "mouse" | "keyboard" | "full"
-type ConnectionState = "idle" | "waiting" | "connecting" | "connected"
-// Detectors name the same situation differently (no_face / NO_FACE, look_away / LOOKING_AWAY,
-// forbidden_object / PHONE_DETECTED); one canonical name per situation
-function canonicalProctoringType(type: string) {
-    const upper = String(type || '').toUpperCase()
-    if (['LOOK_AWAY', 'LOOKING_AWAY', 'EYE_DARTING'].includes(upper)) return 'LOOKING_AWAY'
-    if (['FORBIDDEN_OBJECT', 'PHONE_DETECTED', 'OBJECT_DETECTED'].includes(upper)) return 'PHONE_DETECTED'
-    return upper
-}
-
-// Server room events carry only a local "HH:MM:SS"; anchor them to today so they sort with device logs
-function roomTimeToIso(time: string) {
-    const match = /^(d{1,2}):(d{2}):(d{2})$/.exec(String(time || ''))
-    if (!match) return new Date().toISOString()
-    const at = new Date()
-    at.setHours(Number(match[1]), Number(match[2]), Number(match[3]), 0)
-    return at.toISOString()
-}
-
-type LogEntry = {
-    time: string // ISO 8601 string
-    type: "system" | "user" | "input" | "permission" | "anticheat" | "chain" | "chat" | "quality" | "recording"
-    message: string
-}
-type ParticipantQuality = {
-    latency: number | null
-    fps: number | null
-    packetLoss: number | null
-    health: "excellent" | "good" | "fair" | "poor" | "unknown"
-}
-type Participant = {
-    id: string
-    socketId: string
-    name: string
-    email?: string | null
-    initials?: string
-    role: "controller"
-    permission: PermissionLevel
-    clipboardAllowed: boolean
-    joinedAt: number
-    quality?: ParticipantQuality
-}
-type JoinRequest = {
-    id: string
-    socketId: string
-    name: string
-    email?: string | null
-    initials?: string
-    device?: string
-    ip?: string
-    requestedAt: number
-}
-type ChatMessage = {
-    id: string
-    time: string // ISO 8601 string
-    senderId: string
-    senderName: string
-    role: "host" | "controller" | "admin"
-    text: string
-}
-type EvidenceItem = {
-    id?: string
-    time?: string // ISO 8601 string
-    timestamp?: string // ISO 8601 string
-    type: string
-    by?: string
-    label?: string
-    message?: string
-}
-
-const permissionLevels = [
-    { id: "view" as const, label: "View Only", icon: Eye },
-    { id: "mouse" as const, label: "Mouse Only", icon: MousePointer },
-    { id: "keyboard" as const, label: "Keyboard Only", icon: Keyboard },
-    { id: "full" as const, label: "Full Control", icon: Zap },
-]
-
-const quickChatEmojis = ['👍', '👎', '🙏', '✅', '❌', '🔥', '😂', '🎉', '💡', '🤔', '🚀', '❤️', '👀', '✨']
-
-const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
-// Secure aggregation with differential privacy (DP-FedAvg): every update is clipped to L2 norm 1 and
-// the aggregate carries Gaussian noise of std sigma; each device adds its share (lib/dpAccountant.ts).
-// NEXT_PUBLIC_FL_DP_NOISE=0 turns the noise off. The epsilon budget is per exam session on a device:
-// at the defaults (noise 1, epsilon 10, delta 1e-5) a device joins at most 3 rounds of one session.
-const FL_CLIP_NORM = 1
-const FL_NOISE_MULTIPLIER = process.env.NEXT_PUBLIC_FL_DP_NOISE ? Number(process.env.NEXT_PUBLIC_FL_DP_NOISE) : 1
-const FL_DP_DELTA = 1e-5
-const FL_EPSILON_BUDGET = Number(process.env.NEXT_PUBLIC_FL_EPSILON_BUDGET || 10)
-// Noise is split across at least this many devices (the server's FL_MIN_PARTICIPANTS)
-const FL_NOISE_SHARES = Math.max(1, Number(process.env.NEXT_PUBLIC_FL_MIN_PARTICIPANTS || 3))
-const FL_DP_ROUNDS_KEY = 'ircp_fl_dp_rounds'
-
-// Rounds this device has contributed to in one session (kept across reloads of that session)
-const dpRoundsInMemory = new Map<string, number>()
-function dpRoundsUsed(room: string) {
-    try {
-        const stored = Number(localStorage.getItem(`${FL_DP_ROUNDS_KEY}:${room}`))
-        if (Number.isFinite(stored) && stored > 0) return stored
-    } catch { /* storage blocked: fall back to this page */ }
-    return dpRoundsInMemory.get(room) || 0
-}
-function recordDpRound(room: string) {
-    const rounds = dpRoundsUsed(room) + 1
-    dpRoundsInMemory.set(room, rounds)
-    try { localStorage.setItem(`${FL_DP_ROUNDS_KEY}:${room}`, String(rounds)) } catch { /* kept in memory */ }
-    return rounds
-}
-
-function formatDuration(s: number) {
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-}
-
-function ConnectionQualityMeter({ latency }: { latency: number }) {
-    const bars = 4
-    const active = latency < 50 ? 4 : latency < 100 ? 3 : latency < 150 ? 2 : 1
-    const color = latency < 50 ? "var(--emerald)" : latency < 150 ? "var(--amber)" : "var(--red)"
-    return (
-        <div className="flex items-end gap-0.5 h-4">
-            {Array.from({ length: bars }).map((_, i) => (
-                <div key={i} className="w-1 rounded-sm transition-all"
-                    style={{ height: `${((i + 1) / bars) * 100}%`, backgroundColor: i < active ? color : "var(--border)" }} />
-            ))}
-        </div>
-    )
-}
-
-function hasTurnServer(servers: RTCIceServer[]) {
-    return servers.some(server => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls]
-        return urls.some(url => typeof url === 'string' && /^turns?:/i.test(url))
-    })
-}
 
 export default function SessionPage() {
     return (
@@ -3268,194 +3163,59 @@ function SessionContent() {
             )}
 
             {chatOpen && (
-                <div className="fixed right-4 top-16 z-[500] flex h-[min(560px,calc(100vh-5rem))] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
-                    <div className="flex h-12 items-center justify-between border-b border-[var(--border)] px-4">
-                        <div className="flex items-center gap-2">
-                            <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
-                            <span className="text-sm font-bold text-[var(--text-primary)]">Session Chat</span>
-                            <span
-                                title={e2eFingerprint ? `End-to-end encrypted. Compare this host key fingerprint with other participants: ${e2eFingerprint}` : 'Waiting for the end-to-end encryption key'}
-                                className={cn("rounded px-1.5 py-0.5 font-mono text-[9px]", e2eFingerprint ? "bg-[var(--success)]/15 text-[var(--success)]" : "bg-[var(--amber)]/15 text-[var(--amber)]")}
-                            >
-                                {e2eFingerprint ? `E2E ${e2eFingerprint.slice(0, 9)}` : 'E2E pending'}
-                            </span>
-                        </div>
-                        <button
-                            onClick={() => setChatOpen(false)}
-                            aria-label="Close Session Chat"
-                            className="rounded-md p-1 text-[var(--text-dim)] hover:bg-[var(--elevated)] hover:text-[var(--text-primary)]"
-                        >
-                            <XCircle className="h-4 w-4" />
-                        </button>
-                    </div>
-                    <div ref={chatScrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-                        {chatMessages.length === 0 ? (
-                            <div className="flex h-full items-center justify-center text-center text-xs text-[var(--text-dim)]">
-                                No messages yet.
-                            </div>
-                        ) : (
-                            chatMessages.map(message => {
-                                const mine = message.senderId === socketRef.current?.id
-                                return (
-                                    <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
-                                        <div className={cn(
-                                            "max-w-[82%] rounded-lg border px-3 py-2",
-                                            mine
-                                                ? "border-[var(--accent)]/40 bg-[var(--accent)]/15"
-                                                : "border-[var(--border)] bg-[var(--bg)]"
-                                        )}>
-                                            <div className="mb-1 flex items-center justify-between gap-3">
-                                                <span className="truncate text-[10px] font-bold uppercase text-[var(--text-secondary)]">{message.senderName}</span>
-                                                <span className="shrink-0 font-mono text-[9px] text-[var(--text-dim)]">{isNaN(new Date(message.time).getTime()) ? message.time : new Date(message.time).toLocaleTimeString([], { hour12: false })}</span>
-                                            </div>
-                                            <p className="break-words text-sm leading-relaxed text-[var(--text-primary)] font-emoji">
-                                                {isE2EMessage(message.text)
-                                                    ? (decryptedChat[message.id] ?? 'Encrypted message (waiting for the key)')
-                                                    : message.text}
-                                            </p>
-                                        </div>
-                                    </div>
-                                )
-                            })
-                        )}
-                    </div>
-                    <div className="border-t border-[var(--border)] p-3">
-                        <div className="mb-2 flex gap-1">
-                            {quickChatEmojis.map(emoji => (
-                                <button
-                                    key={emoji}
-                                    type="button"
-                                    onClick={() => setChatInput(value => `${value}${emoji}`)}
-                                    className="flex h-7 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] text-sm hover:border-[var(--accent)] font-emoji"
-                                >
-                                    {emoji}
-                                </button>
-                            ))}
-                        </div>
-                        <form onSubmit={sendChatMessage} className="flex gap-2">
-                            <input
-                                value={chatInput}
-                                onChange={event => setChatInput(event.target.value)}
-                                maxLength={1000}
-                                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] font-emoji"
-                                placeholder="Message everyone"
-                            />
-                            <button
-                                type="submit"
-                                disabled={!chatInput.trim()}
-                                aria-label="Send Message"
-                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-black disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                                <Send className="h-4 w-4" />
-                            </button>
-                        </form>
-                    </div>
-                </div>
+                <ChatPanel
+                    e2eFingerprint={e2eFingerprint}
+                    messages={chatMessages}
+                    decrypted={decryptedChat}
+                    ownSocketId={socketRef.current?.id}
+                    scrollRef={chatScrollRef}
+                    input={chatInput}
+                    setInput={setChatInput}
+                    onSubmit={sendChatMessage}
+                    onClose={() => setChatOpen(false)}
+                />
             )}
 
             {showAiSettings && currentRoleRef.current === 'host' && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div ref={aiDialogRef} role="dialog" aria-modal="true" aria-labelledby="ai-calibration-title" className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between p-4 border-b border-[var(--border)] bg-[var(--elevated)]">
-                            <div className="flex items-center gap-2 text-[var(--accent)]">
-                                <Zap className="w-5 h-5" />
-                                <h3 id="ai-calibration-title" className="font-display font-bold text-lg text-[var(--text-primary)]">AI Calibration</h3>
-                            </div>
-                            <button onClick={() => setShowAiSettings(false)} className="text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors">
-                                <XCircle className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-5">
-                            <div>
-                                <label className="block text-xs font-mono text-[var(--text-secondary)] mb-2 flex justify-between">
-                                    <span>Eye Tracking Threshold</span>
-                                    <span className="text-[var(--accent)]">{aiConfig.eyeTrackingThreshold.toFixed(2)}</span>
-                                </label>
-                                <input type="range" min="0.5" max="0.95" step="0.05" value={aiConfig.eyeTrackingThreshold}
-                                    onChange={e => setAiConfig(c => ({ ...c, eyeTrackingThreshold: parseFloat(e.target.value) }))}
-                                    className="w-full accent-[var(--accent)]" />
-                                <p className="text-[10px] text-[var(--text-dim)] mt-1">Lower = More sensitive (catches subtle movements). Higher = Less sensitive.</p>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-mono text-[var(--text-secondary)] mb-2 flex justify-between">
-                                    <span>Emotion Sensitivity</span>
-                                    <span className="text-[var(--accent)]">{aiConfig.emotionSensitivity.toFixed(2)}</span>
-                                </label>
-                                <input type="range" min="0.4" max="0.9" step="0.05" value={aiConfig.emotionSensitivity}
-                                    onChange={e => setAiConfig(c => ({ ...c, emotionSensitivity: parseFloat(e.target.value) }))}
-                                    className="w-full accent-[var(--accent)]" />
-                                <p className="text-[10px] text-[var(--text-dim)] mt-1">Lower = Detects micro-expressions. Higher = Only extreme expressions.</p>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-mono text-[var(--text-secondary)] mb-2 flex justify-between">
-                                    <span>Head Pose Margin</span>
-                                    <span className="text-[var(--accent)]">{aiConfig.headPoseMargin.toFixed(2)}</span>
-                                </label>
-                                <input type="range" min="0.2" max="1.0" step="0.1" value={aiConfig.headPoseMargin}
-                                    onChange={e => setAiConfig(c => ({ ...c, headPoseMargin: parseFloat(e.target.value) }))}
-                                    className="w-full accent-[var(--accent)]" />
-                                <p className="text-[10px] text-[var(--text-dim)] mt-1">Margin before triggering 'Looking Away'. Higher = More leeway.</p>
-                            </div>
-                        </div>
-                        <div className="p-4 border-t border-[var(--border)] flex justify-end">
-                            <button
-                                onClick={() => {
-                                    // Applies to every candidate's on-device engine (and later joiners)
-                                    if (role === 'host') socketRef.current?.emit('ai-config', { roomId: roomCodeRef.current, config: aiConfig })
-                                    setShowAiSettings(false)
-                                }}
-                                className="px-5 py-2 rounded-lg bg-[var(--accent)] text-black font-bold text-sm hover:brightness-110 transition-all"
-                            >
-                                {role === 'host' ? 'Apply to candidates' : 'Done'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <AiCalibrationDialog
+                    dialogRef={aiDialogRef}
+                    config={aiConfig}
+                    onChange={setAiConfig}
+                    applyLabel={role === 'host' ? 'Apply to candidates' : 'Done'}
+                    onApply={() => {
+                        // Applies to every candidate's on-device engine (and later joiners)
+                        if (role === 'host') socketRef.current?.emit('ai-config', { roomId: roomCodeRef.current, config: aiConfig })
+                        setShowAiSettings(false)
+                    }}
+                    onClose={() => setShowAiSettings(false)}
+                />
             )}
 
-            {isCalibrating && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md flex-col text-[var(--text-primary)] font-mono">
-                    <div className="w-12 h-12 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin mb-6"></div>
-                    <h2 className="text-2xl font-bold text-[var(--accent)] tracking-widest mb-2">
-                        {antiCheatMsg?.toUpperCase() || "LOADING AI MODELS... (50MB)"}
-                    </h2>
-                    <p className="text-[var(--text-secondary)] text-sm mb-1">Please wait while the AI initializes.</p>
-                    <p className="text-[var(--text-dim)] text-xs">This may take a moment on slower connections.</p>
-                </div>
-            )}
+            {isCalibrating && <CalibratingOverlay message={antiCheatMsg} />}
 
-            {/* End Session Confirm Modal */}
             {showKillConfirm && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div ref={killDialogRef} role="alertdialog" aria-modal="true" aria-labelledby="end-session-title" className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
-                        <h3 id="end-session-title" className="text-xl font-bold text-[var(--red)] mb-2">End Session?</h3>
-                        <p className="text-sm text-[var(--text-secondary)] mb-6">This will terminate the room and disconnect all participants immediately.</p>
-                        <div className="flex gap-3">
-                            <button onClick={() => setShowKillConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
-                            <button onClick={() => {
-                                socketRef.current?.emit('kill-session', roomCode);
-                                router.push('/app');
-                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">End Now</button>
-                        </div>
-                    </div>
-                </div>
+                <ConfirmDialog
+                    dialogRef={killDialogRef}
+                    titleId="end-session-title"
+                    title="End Session?"
+                    body="This will terminate the room and disconnect all participants immediately."
+                    confirmLabel="End Now"
+                    danger
+                    onCancel={() => setShowKillConfirm(false)}
+                    onConfirm={() => { socketRef.current?.emit('kill-session', roomCode); router.push('/app') }}
+                />
             )}
 
-            {/* Leave Room Confirm Modal */}
             {showLeaveConfirm && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div ref={leaveDialogRef} role="alertdialog" aria-modal="true" aria-labelledby="leave-room-title" className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
-                        <h3 id="leave-room-title" className="text-xl font-bold text-[var(--text-primary)] mb-2">Leave Room?</h3>
-                        <p className="text-sm text-[var(--text-secondary)] mb-6">You are about to disconnect from this session.</p>
-                        <div className="flex gap-3">
-                            <button onClick={() => setShowLeaveConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
-                            <button onClick={() => {
-                                socketRef.current?.emit('leave-session', roomCode);
-                                router.push('/app');
-                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">Leave Now</button>
-                        </div>
-                    </div>
-                </div>
+                <ConfirmDialog
+                    dialogRef={leaveDialogRef}
+                    titleId="leave-room-title"
+                    title="Leave Room?"
+                    body="You are about to disconnect from this session."
+                    confirmLabel="Leave Now"
+                    onCancel={() => setShowLeaveConfirm(false)}
+                    onConfirm={() => { socketRef.current?.emit('leave-session', roomCode); router.push('/app') }}
+                />
             )}
 
             {panicNotice && (
@@ -3493,50 +3253,18 @@ function SessionContent() {
             )}
 
             {showSharePicker && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
-                    <div ref={shareDialogRef} role="dialog" aria-modal="true" aria-labelledby="share-picker-title" className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-xl flex flex-col h-[80vh] overflow-hidden shadow-2xl">
-                        <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--background)]">
-                            <h2 id="share-picker-title" className="text-xl font-bold font-display text-[var(--text-primary)]">Select screen or window to share</h2>
-                            <button onClick={() => setShowSharePicker(false)} aria-label="Close share picker" className="text-[var(--text-dim)] hover:text-[var(--text-primary)]">
-                                <X className="w-6 h-6" />
-                            </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg)]">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                                {shareSources.map((source) => (
-                                    <div 
-                                        key={source.id}
-                                        onClick={async () => {
-                                            setShowSharePicker(false);
-                                            if ((window as any).api && (window as any).api.setShareSource) {
-                                                await (window as any).api.setShareSource(source.id);
-                                            }
-                                            startSharing();
-                                        }}
-                                        className="flex flex-col group cursor-pointer bg-[var(--surface)] rounded-lg overflow-hidden border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-[0_0_15px_rgba(0,212,255,0.3)] transition-all duration-200"
-                                    >
-                                        <div className="aspect-video bg-[var(--bg)] flex items-center justify-center overflow-hidden p-2 relative">
-                                            {source.thumbnail ? (
-                                                <img src={source.thumbnail} alt={source.name} className="max-w-full max-h-full object-contain rounded drop-shadow-md" />
-                                            ) : (
-                                                <div className="text-[var(--text-dim)] flex flex-col items-center">
-                                                    <Monitor className="w-8 h-8 mb-2 opacity-50" />
-                                                    <span className="text-xs">No preview</span>
-                                                </div>
-                                            )}
-                                            {source.isScreen && (
-                                                <div className="absolute top-2 right-2 bg-[var(--accent)] text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase">Entire Screen</div>
-                                            )}
-                                        </div>
-                                        <div className="p-3 border-t border-[var(--border)] bg-[var(--background)] group-hover:bg-[var(--elevated)]">
-                                            <p className="text-sm font-semibold text-[var(--text-primary)] truncate" title={source.name}>{source.name}</p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <SharePickerDialog
+                    dialogRef={shareDialogRef}
+                    sources={shareSources}
+                    onClose={() => setShowSharePicker(false)}
+                    onPick={async (source) => {
+                        setShowSharePicker(false)
+                        if ((window as any).api && (window as any).api.setShareSource) {
+                            await (window as any).api.setShareSource(source.id)
+                        }
+                        startSharing()
+                    }}
+                />
             )}
 
             {(showPet || sessionMode === 'supervised') && <PetCanvas petState={petState} sessionMode={sessionMode} petMessage={petMessage} isCanvasMode={isCanvasMode} />}
