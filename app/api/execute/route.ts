@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import { isSignedIn } from '@/lib/serverAuth';
 
 const execAsync = promisify(exec);
 
@@ -22,16 +23,33 @@ async function getJavaExecutable() {
     return 'java';
 }
 
+// This runs arbitrary code on the machine serving the web app, with no sandbox. It is on for local
+// development and off in production unless CODE_EXECUTION_ENABLED=true (only do that on an isolated host).
+const MAX_CODE_BYTES = 100 * 1024;
+
+function executionEnabled() {
+    if (process.env.CODE_EXECUTION_ENABLED === 'true') return true;
+    if (process.env.CODE_EXECUTION_ENABLED === 'false') return false;
+    return process.env.NODE_ENV !== 'production';
+}
+
+const refuse = (status: number, message: string) => NextResponse.json({ run: { output: '', stderr: message } }, { status });
+
 export async function POST(req: Request) {
     try {
+        if (!executionEnabled()) return refuse(403, 'Code execution is disabled on this server.');
+        if (!await isSignedIn(req)) return refuse(401, 'Sign in to run code.');
+
         const body = await req.json();
         const { language, files } = body;
-        
+
         if (!files || files.length === 0) {
             return NextResponse.json({ run: { output: 'No files provided', stderr: '' } });
         }
-        
+
         const code = files[0].content;
+        if (typeof code !== 'string') return refuse(400, 'Code must be text.');
+        if (Buffer.byteLength(code) > MAX_CODE_BYTES) return refuse(413, 'Code is too large to run.');
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'execute-'));
         
         let output = '';

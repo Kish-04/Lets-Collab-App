@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 // Fallback to root .env if it exists
 require('dotenv').config();
@@ -8,7 +9,6 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const cookie = require('cookie');
-const multer = require('multer');
 const connectDB = require('./db');
 const authRoutes = require('./authRoutes');
 const bcrypt = require('bcrypt');
@@ -16,14 +16,30 @@ const { router: adminRoutes, onlineEmails, setRoomLookup, protectAdmin, protectA
 const User = require('./User');
 const Alert = require('./alert');
 const SessionLog = require('./sessionLog');
-const { initBlockchain, logToChain, queryChain, querySessionLogs } = require('./blockchainLogger');
+const {
+  getActiveChain,
+  initBlockchain,
+  logToChain,
+  queryChain,
+  querySessionLogs,
+  hashAuditPayload,
+  hashIdentity,
+  legacyIdentityHash,
+  verifyAnchors,
+} = require('./blockchainLogger');
 const { ethers } = require('ethers');
+const { decodeSubmission, recoverSum, applyAggregate } = require('./secureAggregation');
+const { buildIceServers, stunOnly } = require('./turn');
+const { isUploadPath, requireSignedUpload, signUploadUrl } = require('./uploadAccess');
+const auditChain = require('./auditChain');
+const rateLimit = require('express-rate-limit');
 const { createCorsOptions, ensureServerConfig, verifyJwt } = require('./config');
 const mockStore = require('./mockStore');
 
 const app = express();
 app.use((req, res, next) => {
-  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  // Path only: query strings carry OAuth codes, upload signatures and other secrets
+  console.log(`[REQUEST] ${req.method} ${req.path}`);
   next();
 });
 ensureServerConfig();
@@ -31,7 +47,11 @@ ensureServerConfig();
 const corsOptions = createCorsOptions();
 app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Evidence and recordings require a short-lived signed URL (issued to admins only)
+app.use('/uploads', requireSignedUpload, express.static(path.join(__dirname, 'uploads'), {
+  // Evidence is served from the API origin: never let a browser sniff a file into HTML
+  setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),
+}));
 app.use(express.json({ limit: '2mb' }));
 
 // Serve the statically exported Next.js app (if available)
@@ -47,8 +67,11 @@ if (fs.existsSync(nextOutPath)) {
     }
     
     const urlPath = req.path.endsWith('/') ? req.path + 'index' : req.path;
-    const htmlPath = path.join(nextOutPath, urlPath + '.html');
-    const folderIndexPath = path.join(nextOutPath, urlPath, 'index.html');
+    const htmlPath = path.resolve(nextOutPath, '.' + urlPath + '.html');
+    const folderIndexPath = path.resolve(nextOutPath, '.' + urlPath, 'index.html');
+    // Never serve HTML from outside the exported app (e.g. /../../somewhere)
+    const insideOut = target => target.startsWith(path.resolve(nextOutPath) + path.sep);
+    if (!insideOut(htmlPath) || !insideOut(folderIndexPath)) return res.status(404).end();
     
     if (fs.existsSync(htmlPath)) {
       return res.sendFile(htmlPath);
@@ -75,146 +98,17 @@ initBlockchain();
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, 'uploads'))
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname)
-  }
-})
-const uploadVideo = multer({ storage: storage })
-
-app.post('/api/upload-evidence-video', uploadVideo.single('video'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No video file' });
-    const url = '/uploads/' + req.file.filename;
-    res.json({ url });
-});
-
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-app.post('/api/pet', async (req, res) => {
-  try {
-    const { message, imageBase64 } = req.body;
-    const geminiApiKey = process.env.GEMINI_API_KEY || '';
-    if (!geminiApiKey) {
-      return res.json({ text: "I'm offline! Please add GEMINI_API_KEY to your .env file." });
-    }
-
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
-    
-    const prompt = `You are an AI Pet Assistant in a remote desktop collaboration app called "Let's Collab".
-You are a friendly robot pet without a tail, so do not mention wagging a tail or anything about a tail.
-Your goal is to help the Host and Controller debug code or use the app. Keep your answers concise, friendly, and helpful.
-IMPORTANT: You MUST start every single answer with a funny robotic sound word like *Beep Bop*, *Bzzzzt*, or *Whirr*. Do not forget this.
-The user said: "${message}"`;
-
-    if (imageBase64) {
-      const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-      const result = await model.generateContent([
-        prompt,
-        { inlineData: { data: base64Data, mimeType: 'image/jpeg' } },
-      ]);
-      const response = await result.response;
-      return res.json({ text: response.text() });
-    }
-
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    return res.json({ text: response.text() });
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    const errorMsg = String(error.message || error);
-    if (errorMsg.includes('401') || errorMsg.includes('invalid authentication credentials')) {
-      const casualResponses = [
-        "Hmm, I'm having trouble connecting to my central knowledge base right now. But I'm here if you need to test the UI!",
-        "My cognitive circuits are offline at the moment due to an API issue, but your interface looks great!",
-        "I'd love to help with that, but I'm currently running in limited mode. Everything else is looking good though!"
-      ];
-      return res.json({ text: casualResponses[Math.floor(Math.random() * casualResponses.length)] });
-    }
-    return res.json({ text: "API Error: " + errorMsg });
-  }
-});
-
-app.post('/api/profile', protectAuthenticated, async (req, res) => {
-  try {
-    const { name, newPassword } = req.body;
-    const userEmail = req.user.email;
-    if (!userEmail) return res.status(401).json({ success: false, message: 'Not authorized' });
-
-    let updated = false;
-    let user = null;
-
-    if (global.dbConnected) {
-      user = await User.findOne({ email: userEmail });
-      if (user) {
-        if (name) user.name = name;
-        if (newPassword) user.password = newPassword; // Pre-save hook hashes it
-        await user.save();
-        updated = true;
-      }
-    } else {
-      const mockStore = require('./mockStore');
-      user = mockStore.findUserByEmail(userEmail);
-      if (user) {
-        if (name) user.name = name;
-        if (newPassword) {
-          const salt = await bcrypt.genSalt(10);
-          user.password = await bcrypt.hash(newPassword, salt);
-        }
-        mockStore.saveUser(user);
-        updated = true;
-      }
-    }
-
-    if (updated && user) {
-      // Notify administrators
-      const alertMsg = `User ${user.email} updated their profile information.`;
-      
-      // Save to Alert History
-      if (global.dbConnected) {
-        await Alert.create({
-          room: 'SYSTEM',
-          hostEmail: user.email,
-          type: 'system',
-          event: 'PROFILE_UPDATED',
-          message: alertMsg,
-          penalty: 0
-        }).catch(err => console.error('Failed to log profile alert', err));
-      } else {
-        const mockStore = require('./mockStore');
-        mockStore.addAlert({
-          room: 'SYSTEM',
-          hostEmail: user.email,
-          type: 'system',
-          event: 'PROFILE_UPDATED',
-          message: alertMsg,
-          penalty: 0
-        });
-      }
-
-      // Live socket emit
-      const socketIo = req.app.get('io');
-      if (socketIo) {
-        socketIo.to('admins').emit('system-alert', {
-          room: 'SYSTEM',
-          participant: user.name,
-          type: 'system',
-          event: 'PROFILE_UPDATED',
-          message: alertMsg,
-          time: new Date()
-        });
-      }
-    }
-
-    res.json({ success: true, message: 'Profile updated' });
-  } catch (error) {
-    console.error('Profile update error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update profile' });
-  }
-});
+app.use('/api/reviews', require('./reviewRoutes'));
+app.use('/api/face', require('./faceRoutes'));
+app.use('/api/lti', require('./ltiRoutes'));
+app.use(require('./accountRoutes')); // /api/pet, /api/profile, /api/audit/public-key, /api/turn/credentials
+const lti = require('./lti');
+const sfu = require('./sfu');
+const { validPermissions, MAX_FEDERATED_WEIGHTS, appearanceKeys, makeId, normalizeAppearance, nowTime, normalizeRoomCode, clampNumber, applyRiskPenalty, initials, sanitizeFeatures, sanitizeWeights, participantPayload, pendingPayload } = require('./roomUtils');
+const { isClipboardShortcut, isInputAllowed } = require('./inputPolicy');
+const { CHAIN_ALWAYS, CHAIN_NOISY, CHAIN_NOISY_INTERVAL_MS, CHAIN_ROOM_WINDOW_MS, CHAIN_ROOM_MAX, CHAIN_GLOBAL_MAX_PER_MIN, chainGlobalWrites, chainWriteAllowed, ROOM_CREATE_WINDOW_MS, ROOM_CREATE_MAX, roomCreations, roomCreationAllowed, ROLE_SWAP_TTL_MS, rememberRoleSwap, takeRoleSwap } = require('./limits');
+const { SOCKET_RATE_PER_SEC, SOCKET_BURST, SOCKET_EVENT_COST, SOCKET_UNMETERED, socketEventAllowed, guardSocketListener } = require('./socketGuard');
+const { EXAM_TYPES, clampText, sanitizeExamQuestion, publicExamQuestion, sanitizeExamAnswer, normalizeExamText, gradeExamAnswer, examArchive, examQuestionsFor, examSummary, examScores, moveExamAnswers } = require('./exam');
 
 app.get('/api/sessions/recent', protectAuthenticated, async (req, res) => {
   try {
@@ -291,7 +185,7 @@ app.get('/api/sessions/recent', protectAuthenticated, async (req, res) => {
 app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const rawLogs = await querySessionLogs(sessionId);
+    const rawLogs = (await querySessionLogs(sessionId)) || [];
 
     // Build hash -> email map
     const dbUsers = global.dbConnected ? await User.find({}) : [];
@@ -300,7 +194,8 @@ app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
     const hashMap = {};
     for (const user of allUsers) {
       if (user.email) {
-        hashMap[ethers.id(user.email)] = user.email;
+        hashMap[hashIdentity(user.email)] = user.email;
+        hashMap[legacyIdentityHash(user.email)] = user.email;
       }
     }
 
@@ -313,41 +208,81 @@ app.get('/api/sessions/:sessionId/history', protectAdmin, async (req, res) => {
       dataHash: log.dataHash
     }));
 
-    res.json({ success: true, logs: resolvedLogs });
+    res.json({ success: true, logs: resolvedLogs, chain: getActiveChain() });
   } catch (error) {
     console.error('History Error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch history' });
   }
 });
 
-app.get('/api/turn/credentials', async (req, res) => {
+// Recompute every stored audit payload hash and compare it with the on-chain record
+app.get('/api/sessions/:sessionId/verify', protectAdmin, async (req, res) => {
   try {
-    const staticTurnUrl = process.env.TURN_URL || process.env.NEXT_PUBLIC_TURN_URL;
-    if (staticTurnUrl) {
-      return res.json([
-        {
-          urls: staticTurnUrl,
-          username: process.env.TURN_USERNAME || process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
-          credential: process.env.TURN_CREDENTIAL || process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
-        },
-        { urls: 'stun:stun.l.google.com:19302' },
-      ]);
+    const sessionId = normalizeRoomCode(req.params.sessionId);
+    const liveRoom = rooms.get(sessionId);
+    let session = liveRoom || endedSessions.find(s => s.roomCode === sessionId) || null;
+    if (!session && global.dbConnected) {
+      session = await SessionLog.findOne({ roomCode: sessionId }).sort({ endedAt: -1 }).lean();
+    }
+    if (!session && !global.dbConnected) {
+      session = mockStore.listSessionLogs().find(s => s.roomCode === sessionId) || null;
+    }
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+    // Signed hash chain: detects edited, removed, reordered or inserted anchors without the blockchain
+    const signedChain = auditChain.verifyChain(session.anchors || []);
+    if (!global.blockchainActive) {
+      return res.json({
+        success: true,
+        chainActive: false,
+        message: 'Blockchain is inactive; the signed audit chain was checked instead.',
+        sessionId,
+        signedChain,
+        intact: signedChain.status !== 'broken',
+      });
     }
 
-    const domain = process.env.METERED_DOMAIN;
-    const apiKey = process.env.METERED_SECRET_KEY;
-    if (!domain || !apiKey) {
-      return res.status(500).json({ error: 'TURN credentials not configured on backend.' });
+    const chainLogs = await querySessionLogs(sessionId);
+    if (chainLogs === null) {
+      return res.json({
+        success: true,
+        chainActive: false,
+        message: 'The blockchain could not be reached right now; the signed audit chain was checked instead.',
+        sessionId,
+        signedChain,
+        intact: signedChain.status !== 'broken',
+      });
     }
-    const response = await fetch(`https://${domain}/api/v1/turn/credentials?apiKey=${apiKey}`);
-    if (!response.ok) {
-      throw new Error(`Metered API returned ${response.status}`);
+    const report = verifyAnchors(session.anchors || [], chainLogs);
+
+    // The chat transcript and evidence are anchored as one digest when the session is archived
+    const archiveResult = [...report.results].reverse().find(r => r.eventType === 'SESSION_ARCHIVED' && r.payload);
+    let transcript = { status: 'not_archived' };
+    if (archiveResult) {
+      const anchored = JSON.parse(archiveResult.payload);
+      const current = transcriptDigest(session);
+      const matches = anchored.messagesHash === current.messagesHash && anchored.evidenceHash === current.evidenceHash;
+      transcript = {
+        status: archiveResult.status !== 'verified' ? 'unanchored' : matches ? 'verified' : 'tampered',
+        anchored: { messageCount: anchored.messageCount, evidenceCount: anchored.evidenceCount },
+        current: { messageCount: current.messageCount, evidenceCount: current.evidenceCount },
+      };
     }
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    console.error('Error fetching TURN credentials:', err.message);
-    res.status(200).json([{ urls: 'stun:stun.l.google.com:19302' }]);
+
+    res.json({
+      success: true,
+      chainActive: true,
+      sessionId,
+      live: Boolean(liveRoom),
+      ...report,
+      intact: report.intact && transcript.status !== 'tampered' && signedChain.status !== 'broken',
+      signedChain,
+      transcript,
+    });
+  } catch (error) {
+    console.error('Verify Error:', error);
+    res.status(500).json({ success: false, message: 'Failed to verify session audit trail' });
   }
 });
 
@@ -359,6 +294,9 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  // Exam voice prompts (3 MB) and recorded voice answers (5 MB) travel as one message; the 1 MB
+  // default disconnected the sender instead of delivering them
+  maxHttpBufferSize: Number(process.env.SOCKET_MAX_MESSAGE_BYTES || 6 * 1024 * 1024),
 });
 
 app.set('io', io);
@@ -366,77 +304,43 @@ app.set('io', io);
 const PORT = process.env.PORT || 3001;
 const rooms = new Map();
 const endedSessions = [];
-const validPermissions = new Set(['view', 'mouse', 'keyboard', 'full']);
 const FEDERATED_MODEL_VERSION = 'anti-cheat-v1';
-const MAX_FEDERATED_WEIGHTS = 10000;
+// Secure aggregation rounds: participants advertise keys, then submit pairwise-masked updates
+const FL_MIN_PARTICIPANTS = Math.max(2, Number(process.env.FL_MIN_PARTICIPANTS) || 3);
+const FL_MAX_PARTICIPANTS = 50; // keeps the fixed-point sum well inside int32
+const FL_JOIN_WINDOW_MS = Number(process.env.FL_JOIN_WINDOW_MS) || 8000;
+const FL_SUBMIT_WINDOW_MS = Number(process.env.FL_SUBMIT_WINDOW_MS) || 20000;
+// Shamir threshold: a strict majority of the participants that received shares (same rule as the client)
+const flShareThreshold = (count) => Math.max(2, Math.floor(count / 2) + 1);
+const FL_ROUND_INTERVAL_MS = Number(process.env.FL_ROUND_INTERVAL_MS) || 5 * 60 * 1000;
 setRoomLookup((roomCode) => rooms.get(String(roomCode || '').toUpperCase()));
-const appearanceKeys = new Set([
-  'preset', 'background', 'surface', 'elevated', 'border', 'textPrimary',
-  'textSecondary', 'accent', 'success', 'warning', 'danger', 'radius',
-  'density', 'glow', 'transparency', 'reducedMotion',
-]);
 
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 8; i += 1) code += chars[Math.floor(Math.random() * chars.length)];
+  // Room codes are the only thing needed to request a seat, so they come from a CSPRNG
+  for (let i = 0; i < 8; i += 1) code += chars[crypto.randomInt(chars.length)];
   return rooms.has(code) ? generateRoomCode() : code;
-}
-
-function makeId(prefix) {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function normalizeAppearance(appearance) {
-  if (!appearance || typeof appearance !== 'object') return null;
-  return Object.fromEntries(Object.entries(appearance).filter(([key]) => appearanceKeys.has(key)));
-}
-
-function nowTime() {
-  return new Date().toISOString();
-}
-
-function normalizeRoomCode(value) {
-  return String(value || '').trim().toUpperCase();
-}
-
-function clampNumber(value, fallback, min, max) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(min, Math.min(max, numeric));
-}
-
-function applyRiskPenalty(room, value, fallback = 0) {
-  const penalty = clampNumber(value, fallback, 0, 100);
-  room.riskScore = clampNumber((room.riskScore || 0) + penalty, 0, 0, 100);
-  return penalty;
-}
-
-function initials(name = 'User') {
-  return String(name)
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase() || '')
-    .join('') || 'U';
 }
 
 function pushEvent(roomCode, type, message) {
   const room = rooms.get(roomCode);
   if (!room) return;
-  room.events.push({ time: nowTime(), type, message });
+  const event = { time: nowTime(), type, message };
+  room.events.push(event);
   if (room.events.length > 140) room.events.shift();
+  // The host's activity panel shows the room log live; candidates never receive it
+  if (room.hostSocketId) io.to(room.hostSocketId).emit('room-event', event);
 }
 
 function createFederatedState() {
   return {
     round: 0,
-    pending: new Map(),
+    completedRound: 0,
     globalWeights: null,
     history: [],
-    timer: null,
-    startedAt: null,
     lastAggregate: null,
+    active: null,
   };
 }
 
@@ -444,18 +348,48 @@ function federatedSummary(room) {
   if (!room.federated) return null;
   return {
     round: room.federated.round,
-    pendingContributors: room.federated.pending.size,
+    completedRound: room.federated.completedRound,
+    pendingContributors: room.federated.active ? room.federated.active.participants.size : 0,
+    phase: room.federated.active ? room.federated.active.phase : 'idle',
+    secureAggregation: true,
     hasGlobalModel: Array.isArray(room.federated.globalWeights),
     lastAggregate: room.federated.lastAggregate,
     history: room.federated.history.slice(-5),
   };
 }
 
-function sanitizeWeights(weights) {
-  if (!Array.isArray(weights) || weights.length === 0 || weights.length > MAX_FEDERATED_WEIGHTS) return null;
-  const sanitized = weights.map(Number);
-  return sanitized.every(Number.isFinite) ? sanitized : null;
+/** An admin judged an alert a false positive: send it back to the device that raised it as a label-0 sample. */
+// A false-positive verdict becomes a label-0 training sample on the device that raised the alert.
+// If that connection is gone, any open connection of the same account gets it; otherwise it waits
+// (up to 50 per account, in memory) until the account hosts or joins a session again.
+const pendingLabels = new Map();
+
+function sendFalsePositiveLabel(alert) {
+  if (!Array.isArray(alert?.features) || alert.features.length !== 3) return false;
+  const label = { alertId: String(alert._id), features: alert.features, label: 0 };
+  const original = alert.sourceSocketId && io.sockets.sockets.get(alert.sourceSocketId);
+  if (original) {
+    original.emit('fl-label-correction', label);
+    return true;
+  }
+  if (!alert.sourceEmail) return false;
+  const sameAccount = Array.from(io.sockets.sockets.values()).find(other => other.userEmail === alert.sourceEmail);
+  if (sameAccount) {
+    sameAccount.emit('fl-label-correction', label);
+    return true;
+  }
+  const queued = (pendingLabels.get(alert.sourceEmail) || []).filter(item => item.alertId !== label.alertId);
+  pendingLabels.set(alert.sourceEmail, [...queued, label].slice(-50));
+  return true;
 }
+
+function deliverPendingLabels(socket) {
+  const queued = socket.userEmail && pendingLabels.get(socket.userEmail);
+  if (!queued) return;
+  pendingLabels.delete(socket.userEmail);
+  queued.forEach(label => socket.emit('fl-label-correction', label));
+}
+
 function roomFederatedMembers(room) {
   return [room.hostSocketId, ...Array.from(room.controllers.keys())].filter(Boolean);
 }
@@ -490,100 +424,201 @@ function getRoomParticipant(room, socket, targetControllerId = null) {
   return null;
 }
 
-function aggregateFederatedRound(roomCode) {
-  const room = rooms.get(roomCode);
-  if (!room?.federated || room.federated.pending.size === 0) return;
-  if (room.federated.timer) {
-    clearTimeout(room.federated.timer);
-    room.federated.timer = null;
-  }
+function clearFederatedRound(room) {
+  const active = room?.federated?.active;
+  if (active?.timer) clearTimeout(active.timer);
+  if (room?.federated) room.federated.active = null;
+}
 
-  const updates = Array.from(room.federated.pending.values());
-  const weightLength = updates[0].weights.length;
-  if (!updates.every(update => update.weights.length === weightLength)) {
-    pushEvent(roomCode, 'system', 'Federated round rejected because model weight lengths did not match');
-    room.federated.pending.clear();
-    emitRoomState(roomCode);
-    broadcastSessions();
+function abortFederatedRound(roomCode, reason) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active) return;
+  clearFederatedRound(room);
+  pushEvent(roomCode, 'system', `Secure federated round ${active.round} aborted: ${reason}`);
+  io.to(roomCode).emit('fl-round-aborted', { round: active.round, reason });
+  emitRoomState(roomCode);
+}
+
+function openFederatedRound(roomCode, openedBy) {
+  const room = rooms.get(roomCode);
+  if (!room || room.mode !== 'supervised' || room.federated.active) return false;
+  room.federated.round += 1;
+  const round = room.federated.round;
+  room.federated.active = {
+    round,
+    phase: 'advertise',
+    participants: new Map(),
+    submissions: new Map(),
+    vectorLength: null,
+    initWeights: null,
+    timer: setTimeout(() => distributeFederatedKeys(roomCode), FL_JOIN_WINDOW_MS),
+  };
+  pushEvent(roomCode, 'system', `Secure federated round ${round} opened${openedBy ? ` by ${openedBy}` : ''}`);
+  io.to(roomCode).emit('fl-round-open', { round, baseRound: room.federated.completedRound });
+  emitRoomState(roomCode);
+  return true;
+}
+
+// Stage 1 -> 2: hand every participant the advertised keys so it can Shamir-share its secrets
+function distributeFederatedKeys(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active || active.phase !== 'advertise') return;
+  clearTimeout(active.timer);
+
+  if (active.participants.size < FL_MIN_PARTICIPANTS) {
+    abortFederatedRound(roomCode, `needs at least ${FL_MIN_PARTICIPANTS} participants, got ${active.participants.size}`);
+    return;
+  }
+  if (!room.federated.globalWeights && !active.initWeights) {
+    abortFederatedRound(roomCode, 'no initial model weights were provided');
     return;
   }
 
-  const totalSamples = updates.reduce((total, update) => total + update.sampleCount, 0) || updates.length;
-  const aggregate = new Array(weightLength).fill(0);
-  updates.forEach((update) => {
-    const contribution = update.sampleCount / totalSamples;
-    update.weights.forEach((weight, index) => {
-      aggregate[index] += weight * contribution;
-    });
-  });
+  active.phase = 'sharing';
+  active.keyed = new Map(active.participants); // U1: everyone who received the key list
+  active.threshold = flShareThreshold(active.keyed.size);
+  active.shares = new Map();
+  const peers = Array.from(active.keyed.values()).map(({ id, publicKey }) => ({ id, publicKey }));
+  active.keyed.forEach(p => io.to(p.id).emit('fl-round-keys', { round: active.round, peers, threshold: active.threshold }));
+  active.timer = setTimeout(() => startMaskingStage(roomCode), FL_SUBMIT_WINDOW_MS);
+  emitRoomState(roomCode);
+}
 
-  const lossUpdates = updates.filter(update => Number.isFinite(update.loss));
-  const avgLoss = lossUpdates.length
-    ? lossUpdates.reduce((total, update) => total + update.loss, 0) / lossUpdates.length
-    : null;
+// Stage 2 -> 3: forward each participant the encrypted shares addressed to it
+function startMaskingStage(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active || active.phase !== 'sharing') return;
+  clearTimeout(active.timer);
+
+  const sharers = Array.from(active.shares.keys()); // U2
+  if (sharers.length < active.threshold) {
+    abortFederatedRound(roomCode, `only ${sharers.length} participant(s) shared keys; ${active.threshold} needed`);
+    return;
+  }
+  active.phase = 'masking';
+  active.sharers = new Set(sharers);
+  active.submissions = new Map();
+  const peers = sharers.map(id => ({ id, publicKey: active.keyed.get(id).publicKey }));
+  sharers.forEach((recipient) => {
+    const inbox = [];
+    active.shares.forEach((list, from) => {
+      const share = list.find(item => item.to === recipient);
+      if (share) inbox.push({ from, ct: share.ct });
+    });
+    io.to(recipient).emit('fl-round-masking', { round: active.round, peers, shares: inbox });
+  });
+  active.timer = setTimeout(() => startUnmaskStage(roomCode), FL_SUBMIT_WINDOW_MS);
+  emitRoomState(roomCode);
+}
+
+// Stage 3 -> 4: whoever submitted survives; ask survivors for the shares needed to unmask the sum
+function startUnmaskStage(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active || active.phase !== 'masking') return;
+  clearTimeout(active.timer);
+
+  const survivors = Array.from(active.submissions.keys()); // U3
+  if (survivors.length < active.threshold) {
+    abortFederatedRound(roomCode, `only ${survivors.length} participant(s) submitted; ${active.threshold} needed to recover dropouts`);
+    return;
+  }
+  active.phase = 'unmasking';
+  active.survivors = survivors;
+  active.dropped = Array.from(active.sharers).filter(id => !active.submissions.has(id));
+  active.revealed = new Map();
+  active.revealers = new Set();
+  survivors.forEach(id => io.to(id).emit('fl-unmask', { round: active.round, survivors, dropped: active.dropped }));
+  active.timer = setTimeout(() => finalizeFederatedRound(roomCode), FL_SUBMIT_WINDOW_MS);
+  emitRoomState(roomCode);
+}
+
+// Advances a stage early once every still-connected participant of that stage has acted
+function maybeAdvanceFederatedRound(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active) return;
+  const connected = id => io.sockets.sockets.has(id);
+  if (active.phase === 'sharing' && Array.from(active.keyed.keys()).filter(connected).every(id => active.shares.has(id))) startMaskingStage(roomCode);
+  else if (active.phase === 'masking' && Array.from(active.sharers).filter(connected).every(id => active.submissions.has(id))) startUnmaskStage(roomCode);
+  else if (active.phase === 'unmasking' && active.survivors.filter(connected).every(id => active.revealers.has(id))) finalizeFederatedRound(roomCode);
+}
+
+function finalizeFederatedRound(roomCode) {
+  const room = rooms.get(roomCode);
+  const active = room?.federated?.active;
+  if (!active) return;
+
+  if (active.phase !== 'unmasking') return;
+  clearTimeout(active.timer);
+  const base = room.federated.globalWeights || active.initWeights;
+  let revealedSum;
+  try {
+    revealedSum = recoverSum({
+      masked: active.submissions,
+      dropped: active.dropped,
+      publicKeys: new Map(Array.from(active.keyed.values()).map(p => [p.id, p.publicKey])),
+      revealed: active.revealed,
+      threshold: active.threshold,
+      roomId: roomCode,
+      round: active.round,
+    });
+  } catch (err) {
+    abortFederatedRound(roomCode, `could not unmask the sum (${err.message})`);
+    return;
+  }
+  const result = applyAggregate(base, revealedSum);
+  if (!result) {
+    abortFederatedRound(roomCode, 'no training samples were contributed this round');
+    return;
+  }
+  if (!result.weights.every(Number.isFinite)) {
+    abortFederatedRound(roomCode, 'aggregate was not finite');
+    return;
+  }
+
   const summary = {
-    round: room.federated.round,
-    contributors: updates.map(update => ({
-      id: update.participantId,
-      name: update.participantName,
-      role: update.role,
-      sampleCount: update.sampleCount,
-    })),
-    contributorCount: updates.length,
-    sampleCount: totalSamples,
-    loss: Number.isFinite(avgLoss) ? Number(avgLoss.toFixed(6)) : null,
+    round: active.round,
+    contributors: active.survivors.map(id => active.keyed.get(id)).map(p => ({ id: p.id, name: p.name, role: p.role })),
+    contributorCount: active.survivors.length,
+    droppedCount: active.dropped.length,
+    sampleCount: result.totalSamples,
     modelVersion: FEDERATED_MODEL_VERSION,
+    modelHash: ethers.id(JSON.stringify(result.weights)),
+    secureAggregation: true,
     aggregatedAt: new Date().toISOString(),
   };
 
-  room.federated.globalWeights = aggregate;
+  clearFederatedRound(room);
+  room.federated.globalWeights = result.weights;
+  room.federated.completedRound = summary.round;
   room.federated.lastAggregate = summary;
   room.federated.history.push(summary);
   if (room.federated.history.length > 20) room.federated.history.shift();
-  room.federated.pending.clear();
 
-  pushEvent(roomCode, 'system', `Federated round ${summary.round} aggregated from ${summary.contributorCount} participant(s), ${summary.sampleCount} sample(s)`);
-  io.to(roomCode).emit('federated-aggregate', {
-    ...summary,
-    weights: aggregate,
-  });
+  pushEvent(roomCode, 'system', `Secure federated round ${summary.round} aggregated from ${summary.contributorCount} participant(s), ${summary.sampleCount} sample(s)`);
+  io.to(roomCode).emit('federated-aggregate', { ...summary, weights: result.weights });
   anchorEvent(roomCode, 'FEDERATED_AGGREGATE', {
     round: summary.round,
     contributorCount: summary.contributorCount,
     sampleCount: summary.sampleCount,
     modelVersion: FEDERATED_MODEL_VERSION,
+    modelHash: summary.modelHash,
   }, room.hostEmail || '');
   emitRoomState(roomCode);
   broadcastSessions();
 }
 
-function participantPayload(participant) {
-  return {
-    id: participant.id,
-    socketId: participant.id,
-    name: participant.name,
-    email: participant.email,
-    initials: participant.initials,
-    role: participant.role,
-    permission: participant.permission,
-    clipboardAllowed: participant.clipboardAllowed,
-    joinedAt: participant.joinedAt,
-    quality: participant.quality,
-  };
-}
-
-function pendingPayload(participant) {
-  return {
-    id: participant.id,
-    socketId: participant.id,
-    name: participant.name,
-    email: participant.email,
-    initials: participant.initials,
-    device: participant.device,
-    ip: participant.ip,
-    requestedAt: participant.requestedAt,
-  };
-}
+// Starts a round in every supervised room that has enough eligible participants
+setInterval(() => {
+  rooms.forEach((room, roomCode) => {
+    if (room.mode !== 'supervised' || room.archived || room.federated.active) return;
+    if (roomFederatedMembers(room).length >= FL_MIN_PARTICIPANTS) openFederatedRound(roomCode, 'scheduler');
+  });
+}, FL_ROUND_INTERVAL_MS).unref();
 
 function roomState(code, room, socket) {
   const ownController = socket ? room.controllers.get(socket.id) : null;
@@ -598,24 +633,44 @@ function roomState(code, room, socket) {
     participants: Array.from(room.controllers.values()).map(participantPayload),
     pendingRequests: Array.from(room.pendingControllers.values()).map(pendingPayload),
     messages: room.messages.slice(-80),
-    examQuestions: room.examQuestions || [],
+    examQuestions: examQuestionsFor(room, socket),
     evidence: room.evidence.slice(-80),
     federated: federatedSummary(room),
+    aiConfig: room.aiConfig || null, // host calibration of the candidates' anti-cheat engines
+    // Room activity (joins, permissions, alerts, chain anchors) is for the host only
+    ...(socket && socket.id === room.hostSocketId ? { events: room.events.slice(-60) } : {}),
   };
+}
+
+function roomMemberIds(room) {
+  return [
+    room.hostSocketId,
+    ...Array.from(room.controllers.keys()),
+    ...Array.from(room.observers),
+  ].filter(Boolean);
+}
+
+// End-to-end chat: the server only relays public keys. Broadcasts the roster whenever membership
+// changes so the host can hand the group key to newcomers and rotate it when someone leaves.
+function broadcastE2ERoster(code, room) {
+  if (!room.e2eKeys) room.e2eKeys = new Map();
+  const members = new Set(roomMemberIds(room));
+  room.e2eKeys.forEach((_, id) => { if (!members.has(id)) room.e2eKeys.delete(id); });
+  const roster = Array.from(room.e2eKeys.entries()).map(([id, publicKey]) => ({ id, publicKey }));
+  const signature = `${room.hostSocketId}|${roster.map(m => m.id).sort().join(',')}`;
+  if (signature === room.e2eRosterSignature) return;
+  room.e2eRosterSignature = signature;
+  io.to(code).emit('e2e-roster', { hostId: room.hostSocketId, members: roster });
 }
 
 function emitRoomState(code) {
   const room = rooms.get(code);
   if (!room) return;
-  const recipients = [
-    room.hostSocketId,
-    ...Array.from(room.controllers.keys()),
-    ...Array.from(room.observers),
-  ].filter(Boolean);
-  recipients.forEach((socketId) => {
+  roomMemberIds(room).forEach((socketId) => {
     const targetSocket = io.sockets.sockets.get(socketId);
     if (targetSocket) targetSocket.emit('session-state', roomState(code, room, targetSocket));
   });
+  broadcastE2ERoster(code, room);
 }
 
 function serializeSessions() {
@@ -640,11 +695,21 @@ function serializeSessions() {
     hasController: room.controllers.size > 0,
     controllers: Array.from(room.controllers.values()).map(participantPayload),
     pendingControllers: Array.from(room.pendingControllers.values()).map(pendingPayload),
-    evidence: room.evidence.slice(-20),
+    evidence: room.evidence.slice(-20).map(item => ({ ...item, url: signUploadUrl(item.url) || undefined })),
+    recordings: (room.recordings || []).map(url => signUploadUrl(url)).filter(Boolean),
     messageCount: room.messages.length,
     federated: federatedSummary(room),
-    examData: room.exam,
+    // Counts only: this goes to every admin on every chat message and quality update, and the full
+    // exam held voice prompts and recorded answers (megabytes each); archives keep the details
+    exam: examSummary(room),
   }));
+}
+
+function signSessionEvidence(session) {
+  return {
+    ...session,
+    evidence: (session.evidence || []).map(item => ({ ...item, url: signUploadUrl(item.url) || undefined })),
+  };
 }
 
 function broadcastSessions() {
@@ -652,16 +717,155 @@ function broadcastSessions() {
   io.emit('sessions-count', { active: rooms.size });
 }
 
+// Canonical digest of the chat transcript and evidence, recomputable from an archived SessionLog
+function transcriptDigest(session) {
+  const messages = (session.messages || []).map(m => [m.id, m.time, m.senderId, m.senderName, m.role, m.text]);
+  const evidence = (session.evidence || []).map(e => [e.id, e.time, e.type, e.by, e.label]);
+  return {
+    messageCount: messages.length,
+    messagesHash: ethers.id(JSON.stringify(messages)),
+    evidenceCount: evidence.length,
+    evidenceHash: ethers.id(JSON.stringify(evidence)),
+  };
+}
+
+// How long a dropped host or controller can take to come back before the room or seat is given up
+const HOST_RECONNECT_GRACE_MS = Number(process.env.HOST_RECONNECT_GRACE_MS ?? 45000);
+const CONTROLLER_RECONNECT_GRACE_MS = Number(process.env.CONTROLLER_RECONNECT_GRACE_MS ?? 45000);
+
+// Deletes local /uploads files behind evidence/recording URLs; never touches anything outside uploads/
+function deleteUploadedFiles(urls) {
+  const uploadsRoot = path.resolve(__dirname, 'uploads');
+  let deleted = 0;
+  urls.forEach((url) => {
+    const bare = String(url).split('?')[0];
+    if (!isUploadPath(bare)) return;
+    const target = path.resolve(uploadsRoot, bare.slice('/uploads/'.length));
+    if (!target.startsWith(uploadsRoot + path.sep)) return;
+    try {
+      fs.unlinkSync(target);
+      deleted += 1;
+    } catch { /* already gone */ }
+  });
+  return deleted;
+}
+
+// Ends a live session for everyone: archived, anchored, then removed (socket and REST admin paths)
+async function terminateRoom(roomCode, by = 'admin') {
+  const room = rooms.get(roomCode);
+  if (!room) return false;
+  clearTimeout(room.hostGraceTimer);
+  // Anchor first so the archived copy contains it (otherwise a later check sees an on-chain entry
+  // with no local record and reports the session as tampered)
+  anchorEvent(roomCode, 'SESSION_TERMINATED', { by }, room.hostEmail);
+  await archiveSession(roomCode, 'Session terminated by host or administrator');
+  io.to(roomCode).emit('kill-session');
+  room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
+  rooms.delete(roomCode);
+  broadcastSessions();
+  return true;
+}
+
+function warnRoom(roomCode, message = 'Warning from administrator: Please return your attention to the session.') {
+  const room = rooms.get(roomCode);
+  if (!room) return false;
+  const text = String(message || '').slice(0, 500) || 'Warning from administrator.';
+  io.to(roomCode).emit('system-warning', text);
+  pushEvent(roomCode, 'warning', `Administrator warning: ${text}`);
+  anchorEvent(roomCode, 'ADMIN_WARNING', { by: 'admin', message: text }, room.hostEmail, room.hostEmail || '');
+  return true;
+}
+
+// Identity check at exam start (faceRoutes.js). The host sees every result; a face that does not
+// match the enrolled one becomes a reviewable alert (it can be appealed like any other).
+async function reportFaceCheck(roomCode, user, result) {
+  const room = rooms.get(roomCode);
+  if (!room || room.mode !== 'supervised' || !user?.email) return false;
+  const participant = Array.from(room.controllers.values()).find(p => p.email === user.email);
+  if (!participant) return false;
+  const name = participant.name;
+  const text = result.status === 'verified'
+    ? `${name}: identity verified by face ID (distance ${result.distance})`
+    : result.status === 'mismatch'
+      ? `${name}: face does not match the enrolled face ID (distance ${result.distance})`
+      : `${name}: no face ID enrolled, identity not checked`;
+  pushEvent(roomCode, result.status === 'verified' ? 'system' : 'anticheat', text);
+  io.to(room.hostSocketId).emit('face-check', { controllerId: participant.id, name, ...result });
+  if (result.status === 'mismatch') {
+    const penalty = applyRiskPenalty(room, 30, 0);
+    room.alertCount += 1;
+    const alertRecord = {
+      room: roomCode,
+      hostEmail: room.hostEmail || undefined,
+      type: 'anticheat_violation',
+      event: 'IDENTITY_MISMATCH',
+      message: text,
+      penalty,
+      sourceEmail: user.email,
+    };
+    const saved = global.dbConnected
+      ? await Alert.create(alertRecord).catch((err) => { console.error('Alert save error:', err); return null; })
+      : mockStore.addAlert(alertRecord);
+    io.to('admins').emit('system-alert', { ...alertRecord, _id: saved?._id ? String(saved._id) : undefined, participant: name });
+    anchorEvent(roomCode, 'IDENTITY_MISMATCH', { participant: name, distance: result.distance }, room.hostEmail || '', user.email);
+    emitRoomState(roomCode);
+  }
+  broadcastSessions();
+  return true;
+}
+
+function sendLtiGrades(room) {
+  const entry = lti.linkFor(room.ltiLink);
+  if (entry && entry.roomCode && !rooms.has(entry.roomCode)) entry.roomCode = null;
+  const scores = examScores(room);
+  if (scores.length === 0) return;
+  lti.sendScores(room.ltiLink, scores)
+    .then(sent => console.log(`[LTI] sent ${sent} of ${scores.length} grade(s) to the course`))
+    .catch(err => console.error('[LTI] grade passback failed:', err.message));
+}
+
+// For /api/lti/room: is this room still live?
+const liveRoomCode = code => rooms.has(code);
+
+async function closeRoomAfterHostLeft(roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  clearTimeout(room.hostGraceTimer);
+  await archiveSession(roomId, 'Host disconnected; session closed');
+  io.to(roomId).emit('kill-session');
+  room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
+  rooms.delete(roomId);
+  broadcastSessions();
+}
+
 function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = '') {
   const room = rooms.get(code);
   if (!room) return;
-  
-  // Hash emails for privacy before sending to chain
-  const hashedHost = hostEmail ? ethers.id(hostEmail) : '';
-  const hashedController = controllerEmail ? ethers.id(controllerEmail) : '';
 
-  logToChain(code, hashedHost, hashedController, eventType, data)
+  // Keyed hash so emails on the public chain cannot be recovered by dictionary lookup
+  const hashedHost = hashIdentity(hostEmail);
+  const hashedController = hashIdentity(controllerEmail);
+
+  // Keep the exact hashed payload off-chain so auditors can recompute and compare it later
+  const { payload, dataHash } = hashAuditPayload(data);
+  const anchor = { eventType, payload, dataHash, txHash: null, createdAt: new Date().toISOString() };
+  auditChain.appendToChain(room.anchors, anchor); // hash-linked and signed, independent of the chain write
+  room.anchors.push(anchor);
+
+  if (!chainWriteAllowed(room, eventType)) {
+    anchor.chainSkipped = 'rate_limited'; // still covered by the SESSION_ARCHIVED digest
+    return;
+  }
+
+  logToChain(code, hashedHost, hashedController, eventType, payload, {
+    // The hash is known at submission; whether it was mined comes later
+    onStatus: (status) => {
+      anchor.txStatus = status;
+      if (status === 'failed') pushEvent(code, 'chain', `Audit anchor ${eventType} could not be written on-chain`);
+    },
+  })
     .then((txHash) => {
+      if (txHash && !String(txHash).startsWith('[OFF-CHAIN-MOCK]')) anchor.txHash = txHash;
       const liveRoom = rooms.get(code);
       if (!liveRoom || !txHash) return;
       liveRoom.latestTxHash = txHash;
@@ -754,10 +958,10 @@ async function archiveSession(roomCode, reason) {
   const room = rooms.get(roomCode);
   if (!room || room.archived) return;
   room.archived = true;
-  if (room.federated?.timer) {
-    clearTimeout(room.federated.timer);
-    room.federated.timer = null;
-  }
+  anchorEvent(roomCode, 'SESSION_ARCHIVED', { reason, ...transcriptDigest(room) }, room.hostEmail || '');
+  if (room.ltiLink) sendLtiGrades(room);
+  void sfu.closeRoom(roomCode); // camera streams of this exam end with it
+  clearFederatedRound(room);
   const endedAt = Date.now();
   pushEvent(roomCode, 'kill', reason);
   const archived = {
@@ -775,7 +979,9 @@ async function archiveSession(roomCode, reason) {
     riskScore: room.riskScore,
     alertCount: room.alertCount,
     latestTxHash: room.latestTxHash,
+    anchors: room.anchors,
     federated: federatedSummary(room),
+    examData: room.mode === 'supervised' ? examArchive(room) : undefined,
   };
   endedSessions.unshift(archived);
   if (endedSessions.length > 100) endedSessions.pop();
@@ -808,6 +1014,7 @@ function removeController(roomCode, controllerId, reason) {
       controller.role = null;
     }
     room.controllers.delete(id);
+    if (participant.email) room.recentControllers?.delete(participant.email); // a removed controller must ask again
     io.to(room.hostSocketId).emit('controller-left', { controllerId: id, controller: participantPayload(participant) });
     removed = true;
   });
@@ -840,21 +1047,66 @@ function grantObservation(roomCode, observerId) {
   broadcastSessions();
 }
 
+// Admin viewing a controller's camera. The admin socket remembers which controller it asked for,
+// and every relayed offer/answer/candidate is checked against that pairing.
+function adminObservesController(adminId, controllerId) {
+  const adminSocket = io.sockets.sockets.get(adminId);
+  const target = adminSocket?.observingController;
+  if (!target || target.controllerId !== controllerId) return false;
+  return Boolean(rooms.get(target.roomId)?.controllers.has(controllerId));
+}
+
+function endControllerObservation(adminSocket) {
+  const target = adminSocket.observingController;
+  if (!target) return;
+  adminSocket.observingController = null;
+  io.to(target.controllerId).emit('controller-observation-ended', { adminId: adminSocket.id });
+}
+
 io.on('connection', (socket) => {
-  socket.on('request-controller-observation', async ({ roomId, targetId }) => {
+  const on = socket.on.bind(socket);
+  socket.on = (event, listener) => on(event, guardSocketListener(socket, event, listener));
+});
+
+io.on('connection', (socket) => {
+  socket.on('request-controller-observation', async ({ roomId, targetId } = {}) => {
     if (!await isAdminSocket(socket)) return;
-    const room = rooms.get(roomId);
-    if (!room || !room.controllers.has(targetId)) return;
+    const roomCode = normalizeRoomCode(roomId);
+    const room = rooms.get(roomCode);
+    if (!room || !room.controllers.has(targetId)) {
+      socket.emit('admin-error', 'That participant is no longer in the session.');
+      return;
+    }
+    // Camera observation follows the supervised-room policy; collaboration rooms need consent
+    if (room.mode !== 'supervised') {
+      socket.emit('admin-error', 'Participant camera observation is only available in supervised rooms.');
+      return;
+    }
+    endControllerObservation(socket);
+    socket.observingController = { roomId: roomCode, controllerId: targetId };
+    pushEvent(roomCode, 'permission', `Administrator is viewing ${room.controllers.get(targetId).name}'s camera`);
     io.to(targetId).emit('controller-observation-requested', { adminId: socket.id });
+    emitRoomState(roomCode);
   });
 
-  socket.on('controller-observation-offer', ({ adminId, offer }) => {
+  socket.on('end-controller-observation', () => endControllerObservation(socket));
+
+  socket.on('controller-observation-offer', ({ adminId, offer } = {}) => {
+    if (!adminObservesController(adminId, socket.id)) return;
     io.to(adminId).emit('observer-offer', { offer, hostId: socket.id, targetType: 'controller' });
   });
 
-  socket.on('controller-observation-ice-candidate', ({ adminId, candidate }) => {
+  socket.on('controller-observation-ice-candidate', ({ adminId, candidate } = {}) => {
+    if (!adminObservesController(adminId, socket.id)) return;
     io.to(adminId).emit('observer-ice-candidate', { candidate, fromId: socket.id });
   });
+
+  socket.on('controller-observation-unavailable', ({ adminId, reason } = {}) => {
+    if (!adminObservesController(adminId, socket.id)) return;
+    io.to(adminId).emit('admin-error', reason || 'The participant has no camera stream to share.');
+  });
+
+  socket.on('disconnect', () => endControllerObservation(socket));
 });
 
 
@@ -894,6 +1146,7 @@ function activateController(roomCode, controllerId, permission = 'view', options
   socket.role = 'controller';
   socket.userEmail = participant.email;
   if (participant.email) onlineEmails.add(participant.email);
+  deliverPendingLabels(socket);
 
   pushEvent(roomCode, 'join', `${participant.name} approved as controller (${participant.permission})`);
   socket.emit('join-approved', { roomCode, permission: participant.permission, clipboardAllowed: participant.clipboardAllowed });
@@ -906,23 +1159,6 @@ function activateController(roomCode, controllerId, permission = 'view', options
   return true;
 }
 
-function isClipboardShortcut(payload = {}) {
-  const key = String(payload.key || '').toLowerCase();
-  const code = String(payload.code || '').toLowerCase();
-  const modifier = Boolean(payload.modifiers?.ctrl || payload.modifiers?.meta);
-  return modifier && ['c', 'v', 'x'].some(shortcut => key === shortcut || code === `key${shortcut}`);
-}
-
-function isInputAllowed(participant, payload = {}) {
-  const isMouse = ['mousemove', 'mousedown', 'mouseup', 'wheel'].includes(payload.type);
-  const isKeyboard = ['keydown', 'keyup'].includes(payload.type);
-  const isGamepad = payload.type === 'gamepad-state';
-  if (isKeyboard && isClipboardShortcut(payload) && !participant.clipboardAllowed) return false;
-  return participant.permission === 'full'
-    || (participant.permission === 'mouse' && (isMouse || isGamepad))
-    || (participant.permission === 'keyboard' && isKeyboard);
-}
-
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
   console.log('Handshake Summary:', {
@@ -933,21 +1169,31 @@ io.on('connection', (socket) => {
     if (admin) socket.join('admins');
   });
 
-  socket.on('identify-user', (email) => {
-    if (!email) return;
-    socket.userEmail = email;
-    onlineEmails.add(email);
+  // Online status comes from the signed-in account, never from an email the client names
+  socket.on('identify-user', async () => {
+    const actor = await authenticatedUser(socket);
+    if (!actor?.email) return;
+    socket.userEmail = actor.email;
+    onlineEmails.add(actor.email);
   });
 
   socket.on('create-room', async (meta = {}) => {
-    console.log(`[Socket] create-room requested by socket: ${socket.id}`, meta);
+    console.log(`[Socket] create-room requested by socket: ${socket.id}`);
     let actor = await authenticatedUser(socket);
     
     if (!actor) {
       socket.emit('session-error', { message: 'Authentication required. Please sign in again before creating a room.' });
       return;
     }
-    
+    if (!roomCreationAllowed(String(actor._id || actor.email))) {
+      socket.emit('session-error', { message: 'Too many rooms created. Please wait a few minutes and try again.' });
+      return;
+    }
+    // One room per host connection: a previous room of this socket is closed properly, not orphaned
+    if (socket.role === 'host' && socket.roomCode && rooms.get(socket.roomCode)?.hostSocketId === socket.id) {
+      await closeRoomAfterHostLeft(socket.roomCode);
+    }
+
     const code = generateRoomCode();
     const room = {
       hostSocketId: socket.id,
@@ -966,6 +1212,7 @@ io.on('connection', (socket) => {
       riskScore: 0,
       alertCount: 0,
       latestTxHash: null,
+      anchors: [],
       events: [],
       messages: [],
       evidence: [],
@@ -973,12 +1220,20 @@ io.on('connection', (socket) => {
       exam: { questions: [], answers: {} },
       archived: false,
     };
+    // Opened from a course activity (LTI): students launching that activity are sent to this room,
+    // and grades go back to the course when it ends. Only the instructor who launched it may link it.
+    const ltiLink = typeof meta.ltiLink === 'string' ? lti.linkFor(meta.ltiLink) : null;
+    if (ltiLink && ltiLink.hostEmail && ltiLink.hostEmail === actor.email) {
+      ltiLink.roomCode = code;
+      room.ltiLink = meta.ltiLink;
+    }
     rooms.set(code, room);
     socket.join(code);
     socket.roomCode = code;
     socket.role = 'host';
     socket.userEmail = room.hostEmail;
     if (room.hostEmail) onlineEmails.add(room.hostEmail);
+    deliverPendingLabels(socket);
 
     pushEvent(code, 'system', `${room.mode === 'supervised' ? 'Supervised session' : 'Collaboration room'} created by ${room.hostName}`);
     pushEvent(code, 'permission', 'Guest connections require host approval before screen access');
@@ -1019,9 +1274,9 @@ io.on('connection', (socket) => {
     if (!await isAdminSocket(socket)) return;
     if (global.dbConnected) {
       const docs = await SessionLog.find({}).sort({ endedAt: -1 }).limit(100).lean().catch(() => []);
-      socket.emit('session-history', docs);
+      socket.emit('session-history', docs.map(signSessionEvidence));
     } else {
-      socket.emit('session-history', mockStore.listSessionLogs(100));
+      socket.emit('session-history', mockStore.listSessionLogs(100).map(signSessionEvidence));
     }
   });
 
@@ -1061,15 +1316,32 @@ io.on('connection', (socket) => {
         socket.emit('join-denied', { reason: 'Administrator privileges required.' });
         return;
       }
+      // Collaboration rooms need the host's consent, exactly like request-observation; only
+      // supervised rooms (where monitoring is announced) let an administrator in directly
+      if (room.mode !== 'supervised') {
+        socket.observingRoom = normalizedRoomId;
+        room.pendingObservers.add(socket.id);
+        io.to(room.hostSocketId).emit('admin-observation-request', { observerId: socket.id });
+        socket.emit('observation-pending', { message: 'Waiting for host approval.' });
+        pushEvent(normalizedRoomId, 'system', 'Administrator asked to observe the session');
+        return;
+      }
       room.observers.add(socket.id);
       socket.join(normalizedRoomId);
       socket.roomCode = normalizedRoomId;
       socket.role = 'admin';
+      pushEvent(normalizedRoomId, 'system', 'Administrator joined the supervised session as an observer');
       socket.emit('session-state', roomState(normalizedRoomId, room, socket));
+      emitRoomState(normalizedRoomId);
       return;
     }
     if (room.hostEmail && actor.email === room.hostEmail) {
       socket.emit('join-denied', { reason: 'The host cannot join their own room as a controller.' });
+      return;
+    }
+    // Switching this connection to a controller would orphan the room it hosts
+    if (socket.role === 'host' && socket.roomCode && rooms.get(socket.roomCode)?.hostSocketId === socket.id) {
+      socket.emit('join-denied', { reason: 'End the session you are hosting before joining another one.' });
       return;
     }
     if (room.controllers.has(socket.id)) {
@@ -1082,6 +1354,16 @@ io.on('connection', (socket) => {
     socket.pendingRoomCode = normalizedRoomId;
     socket.role = 'pending-controller';
     socket.userEmail = pending.email;
+
+    // The same account coming back after a dropped connection keeps its approval and permission
+    const returning = actor.email && room.recentControllers?.get(actor.email);
+    if (returning && returning.expiresAt > Date.now()) {
+      room.recentControllers.delete(actor.email);
+      moveExamAnswers(room, returning.socketId, socket.id);
+      pushEvent(normalizedRoomId, 'join', `${pending.name} reconnected`);
+      activateController(normalizedRoomId, socket.id, returning.permission, { clipboardAllowed: returning.clipboardAllowed });
+      return;
+    }
     socket.emit('join-pending', {
       roomCode: normalizedRoomId,
       mode: room.mode,
@@ -1117,12 +1399,14 @@ io.on('connection', (socket) => {
     
     // Host requesting controller
     if (socket.id === room.hostSocketId && room.controllers.has(targetId)) {
+      rememberRoleSwap(room, socket.id, targetId);
       io.to(targetId).emit('role-swap-requested', { fromId: socket.id, fromName: room.hostName });
       pushEvent(normalizedRoomId, 'system', `Host requested role swap with controller`);
-    } 
+    }
     // Controller requesting host
     else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId)) {
       const controller = room.controllers.get(socket.id);
+      rememberRoleSwap(room, socket.id, room.hostSocketId);
       io.to(room.hostSocketId).emit('role-swap-requested', { fromId: socket.id, fromName: controller.name });
       pushEvent(normalizedRoomId, 'system', `${controller.name} requested to become host`);
     }
@@ -1135,12 +1419,13 @@ io.on('connection', (socket) => {
 
     let newHostId, oldHostId, newHostParticipant;
 
-    if (socket.id === room.hostSocketId && room.controllers.has(targetId)) {
+    // A swap only happens when the other side actually asked for it
+    if (socket.id === room.hostSocketId && room.controllers.has(targetId) && takeRoleSwap(room, targetId, socket.id)) {
       // Host accepts controller's request
       oldHostId = socket.id;
       newHostId = targetId;
       newHostParticipant = room.controllers.get(targetId);
-    } else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId)) {
+    } else if (room.controllers.has(socket.id) && (!targetId || targetId === room.hostSocketId) && takeRoleSwap(room, room.hostSocketId, socket.id)) {
       // Controller accepts host's request
       newHostId = socket.id;
       oldHostId = room.hostSocketId;
@@ -1148,6 +1433,7 @@ io.on('connection', (socket) => {
     } else {
       return;
     }
+    room.roleSwapRequests.clear(); // roles changed, so every other pending request is stale
 
     const oldHostName = room.hostName;
     const oldHostEmail = room.hostEmail;
@@ -1191,7 +1477,9 @@ io.on('connection', (socket) => {
     broadcastSessions();
   });
 
-  socket.on('reject-role-swap', ({ requesterId }) => {
+  socket.on('reject-role-swap', ({ requesterId, roomId }) => {
+    const room = rooms.get(normalizeRoomCode(roomId || socket.roomCode));
+    if (!room || !takeRoleSwap(room, requesterId, socket.id)) return;
     io.to(requesterId).emit('role-swap-rejected');
   });
 
@@ -1311,11 +1599,16 @@ io.on('connection', (socket) => {
       });
     });
     if (updatesDefault) room.defaultPermission = permission;
-    pushEvent(normalizedRoomId, 'permission', `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
+    // Host pressed the emergency shortcut: tell controllers why control vanished
+    const isPanic = options.reason === 'panic' && permission === 'view';
+    if (isPanic) targets.forEach(targetId => io.to(targetId).emit('system-warning', 'The host revoked all remote control. You are now in View Only mode.'));
+    pushEvent(normalizedRoomId, 'permission', isPanic
+      ? 'PANIC: host revoked all remote control (every controller set to VIEW)'
+      : `Access changed to ${String(permission).toUpperCase()}${options.targetId ? ' for one controller' : ' for all controllers'}`);
     emitRoomState(normalizedRoomId);
     const targetParticipant = options.targetId ? room.controllers.get(options.targetId) : null;
     const targetEmail = targetParticipant ? targetParticipant.email : '';
-    anchorEvent(normalizedRoomId, 'ACCESS_CHANGED', { permission, targetId: options.targetId || null }, room.hostEmail, targetEmail);
+    anchorEvent(normalizedRoomId, isPanic ? 'PANIC_REVOKE' : 'ACCESS_CHANGED', { permission, targetId: options.targetId || null, ...(isPanic ? { reason: 'panic' } : {}) }, room.hostEmail, targetEmail);
     broadcastSessions();
   });
 
@@ -1353,6 +1646,34 @@ io.on('connection', (socket) => {
     broadcastSessions();
   });
 
+  socket.on('e2e-announce', ({ roomId, publicKey } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || !roomMemberIds(room).includes(socket.id)) return;
+    if (typeof publicKey !== 'string' || publicKey.length < 80 || publicKey.length > 120) return;
+    if (!room.e2eKeys) room.e2eKeys = new Map();
+    room.e2eKeys.set(socket.id, publicKey);
+    room.e2eRosterSignature = null; // force a fresh roster so the host re-shares keys
+    broadcastE2ERoster(roomCode, room);
+  });
+
+  // Only the host distributes the (wrapped) group key, and only to current room members
+  socket.on('e2e-key-share', ({ roomId, targetId, payload } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || socket.id !== room.hostSocketId || !roomMemberIds(room).includes(targetId)) return;
+    if (!payload || typeof payload !== 'object' || JSON.stringify(payload).length > 64 * 1024) return;
+    io.to(targetId).emit('e2e-key-share', { fromId: socket.id, payload });
+  });
+
+  // A member that is missing a key (e.g. after reloading) asks the host to re-share
+  socket.on('e2e-key-request', ({ roomId } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || !roomMemberIds(room).includes(socket.id)) return;
+    io.to(room.hostSocketId).emit('e2e-key-request', { memberId: socket.id });
+  });
+
   socket.on('chat-message', ({ roomId, text } = {}) => {
     const room = rooms.get(roomId || socket.roomCode);
     if (!room || typeof text !== 'string' || !text.trim()) return;
@@ -1366,75 +1687,127 @@ io.on('connection', (socket) => {
       senderId: socket.id,
       senderName: isHost ? room.hostName : controller?.name || 'Administrator',
       role: isHost ? 'host' : controller ? 'controller' : 'admin',
-      text: text.trim().slice(0, 1000),
+      // End-to-end ciphertext ("e2e1:...") is ~1.4x the plaintext; never truncate it (that breaks decryption)
+      text: text.startsWith('e2e1:') ? text.slice(0, 4096) : text.trim().slice(0, 1000),
     };
+    if (message.text.startsWith('e2e1:') && text.length > 4096) return;
     room.messages.push(message);
     if (room.messages.length > 150) room.messages.shift();
-    pushEvent(roomId || socket.roomCode, 'chat', `${message.senderName}: ${message.text.slice(0, 80)}`);
+    // The server cannot read encrypted chat, so the activity log only records that a message was sent
+    pushEvent(roomId || socket.roomCode, 'chat', message.text.startsWith('e2e1:')
+      ? `${message.senderName}: [end-to-end encrypted message]`
+      : `${message.senderName}: ${message.text.slice(0, 80)}`);
     io.to(roomId || socket.roomCode).emit('chat-message', message);
     broadcastSessions();
   });
 
-  socket.on('federated-update', ({ roomId, weights, sampleCount = 1, loss = null, modelVersion = FEDERATED_MODEL_VERSION } = {}) => {
-    const normalizedRoomId = String(roomId || socket.roomCode || '').toUpperCase();
-    const room = rooms.get(normalizedRoomId);
-    if (!room || room.mode !== 'supervised') {
-      socket.emit('federated-error', { message: 'Federated updates are only accepted for live supervised rooms.' });
-      return;
-    }
-
+  const federatedContext = (roomId) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || room.mode !== 'supervised') return { error: 'Federated learning only runs in live supervised rooms.' };
     const participant = getFederatedParticipant(room, socket);
-    if (!participant) {
-      socket.emit('federated-error', { message: 'Only the host or approved controllers can submit federated updates.' });
-      return;
+    if (!participant) return { error: 'Only the host or approved controllers can take part in federated rounds.' };
+    return { roomCode, room, participant };
+  };
+
+  socket.on('fl-round-start', ({ roomId } = {}) => {
+    const { error, roomCode, room, participant } = federatedContext(roomId);
+    if (error) return socket.emit('federated-error', { message: error });
+    if (room.federated.active) return socket.emit('federated-error', { message: `Round ${room.federated.active.round} is already running.` });
+    openFederatedRound(roomCode, participant.name);
+  });
+
+  // Late joiners and peers whose model fell behind fetch the current global model
+  socket.on('fl-sync-request', ({ roomId } = {}) => {
+    const { error, room } = federatedContext(roomId);
+    if (error || !room.federated.globalWeights) return;
+    socket.emit('fl-model-sync', { round: room.federated.completedRound, weights: room.federated.globalWeights });
+  });
+
+  socket.on('fl-join', ({ roomId, round, publicKey, vectorLength, baseRound, initWeights } = {}) => {
+    const { error, roomCode, room, participant } = federatedContext(roomId);
+    if (error) return socket.emit('federated-error', { message: error });
+    const active = room.federated.active;
+    if (!active || active.phase !== 'advertise' || active.round !== round) return;
+
+    if (baseRound !== room.federated.completedRound) {
+      if (room.federated.globalWeights) {
+        socket.emit('fl-model-sync', { round: room.federated.completedRound, weights: room.federated.globalWeights });
+      }
+      return socket.emit('federated-error', { message: 'Local model was out of date; synced to the latest global model. Join the next round.' });
+    }
+    if (typeof publicKey !== 'string' || publicKey.length < 40 || publicKey.length > 200) {
+      return socket.emit('federated-error', { message: 'Invalid round public key.' });
+    }
+    const length = Number(vectorLength);
+    if (!Number.isInteger(length) || length < 2 || length > MAX_FEDERATED_WEIGHTS + 1) {
+      return socket.emit('federated-error', { message: 'Invalid model update size.' });
+    }
+    if (room.federated.globalWeights && room.federated.globalWeights.length !== length - 1) {
+      return socket.emit('federated-error', { message: 'Model shape does not match the room model.' });
+    }
+    if (active.vectorLength && active.vectorLength !== length) {
+      return socket.emit('federated-error', { message: 'Model shape does not match other participants.' });
+    }
+    if (active.participants.size >= FL_MAX_PARTICIPANTS) {
+      return socket.emit('federated-error', { message: 'Round is full.' });
     }
 
-    const sanitizedWeights = sanitizeWeights(weights);
-    if (!sanitizedWeights) {
-      socket.emit('federated-error', { message: 'Invalid federated model weights.' });
-      return;
-    }
-    if (room.federated.globalWeights && room.federated.globalWeights.length !== sanitizedWeights.length) {
-      socket.emit('federated-error', { message: 'Model weight shape does not match the current room aggregate.' });
-      return;
+    // The deterministic initial model is public (seeded), so it can be sent in the clear
+    if (!room.federated.globalWeights && !active.initWeights) {
+      const init = sanitizeWeights(initWeights);
+      if (init && init.length === length - 1) active.initWeights = init;
     }
 
-    const safeSampleCount = Math.max(1, Math.min(10000, Math.round(Number(sampleCount) || 1)));
-    const safeLoss = Number.isFinite(Number(loss)) ? Number(loss) : null;
+    active.vectorLength = length;
+    active.participants.set(socket.id, { id: socket.id, name: participant.name, role: participant.role, publicKey });
+    socket.emit('federated-update-accepted', { roomId: roomCode, round: active.round, pendingContributors: active.participants.size });
 
-    if (!room.federated.startedAt || room.federated.pending.size === 0) {
-      room.federated.round += 1;
-      room.federated.startedAt = Date.now();
-    }
+    if (active.participants.size === roomFederatedMembers(room).length) distributeFederatedKeys(roomCode);
+    else emitRoomState(roomCode);
+  });
 
-    room.federated.pending.set(socket.id, {
-      participantId: socket.id,
-      participantName: participant.name,
-      role: participant.role,
-      weights: sanitizedWeights,
-      sampleCount: safeSampleCount,
-      loss: safeLoss,
-      modelVersion: String(modelVersion || FEDERATED_MODEL_VERSION),
-      receivedAt: new Date().toISOString(),
+  socket.on('fl-shares', ({ roomId, round, shares } = {}) => {
+    const { error, roomCode, room } = federatedContext(roomId);
+    if (error) return;
+    const active = room.federated.active;
+    if (!active || active.phase !== 'sharing' || active.round !== round || !active.keyed.has(socket.id)) return;
+    const valid = Array.isArray(shares) && shares.length === active.keyed.size
+      && shares.every(item => item && active.keyed.has(item.to) && typeof item.ct === 'string' && item.ct.length < 2048)
+      && new Set(shares.map(item => item.to)).size === shares.length;
+    if (!valid) return socket.emit('federated-error', { message: 'Malformed key shares; you will be treated as dropped this round.' });
+    active.shares.set(socket.id, shares);
+    maybeAdvanceFederatedRound(roomCode);
+  });
+
+  socket.on('fl-submit', ({ roomId, round, masked } = {}) => {
+    const { error, roomCode, room } = federatedContext(roomId);
+    if (error) return;
+    const active = room.federated.active;
+    if (!active || active.phase !== 'masking' || active.round !== round || !active.sharers.has(socket.id)) return;
+    const vector = decodeSubmission(masked, active.vectorLength);
+    if (!vector) return socket.emit('federated-error', { message: 'Malformed masked update; you will be treated as dropped this round.' });
+    active.submissions.set(socket.id, vector);
+    maybeAdvanceFederatedRound(roomCode);
+  });
+
+  socket.on('fl-unmask-shares', ({ roomId, round, shares } = {}) => {
+    const { error, roomCode, room } = federatedContext(roomId);
+    if (error) return;
+    const active = room.federated.active;
+    if (!active || active.phase !== 'unmasking' || active.round !== round || !active.survivors.includes(socket.id)) return;
+    if (active.revealers.has(socket.id) || !Array.isArray(shares)) return;
+    active.revealers.add(socket.id);
+    shares.forEach((share) => {
+      if (!share || typeof share.y !== 'string' || !Number.isInteger(share.x)) return;
+      // Only accept the kind each participant is entitled to: b for survivors, s for dropped
+      const expected = active.survivors.includes(share.owner) ? 'b' : active.dropped.includes(share.owner) ? 's' : null;
+      if (!expected || share.kind !== expected) return;
+      if (!active.revealed.has(share.owner)) active.revealed.set(share.owner, { kind: expected, shares: [] });
+      const entry = active.revealed.get(share.owner);
+      if (!entry.shares.some(item => item.x === share.x)) entry.shares.push({ x: share.x, y: share.y });
     });
-
-    pushEvent(normalizedRoomId, 'system', `Federated update accepted from ${participant.name} (${safeSampleCount} sample(s))`);
-    socket.emit('federated-update-accepted', {
-      roomId: normalizedRoomId,
-      round: room.federated.round,
-      pendingContributors: room.federated.pending.size,
-    });
-
-    const expectedContributors = roomFederatedMembers(room).length;
-    const quorum = Math.max(1, Math.min(2, expectedContributors));
-    if (room.federated.pending.size >= quorum) {
-      aggregateFederatedRound(normalizedRoomId);
-    } else if (!room.federated.timer) {
-      room.federated.timer = setTimeout(() => aggregateFederatedRound(normalizedRoomId), 2500);
-    }
-
-    emitRoomState(normalizedRoomId);
-    broadcastSessions();
+    maybeAdvanceFederatedRound(roomCode);
   });
 
   socket.on('quality-update', ({ roomId, quality = {} } = {}) => {
@@ -1474,12 +1847,7 @@ io.on('connection', (socket) => {
   socket.on('kill-session', async (roomId) => {
     const room = rooms.get(roomId);
     if (!room || !await canModerate(socket, room)) return;
-    await archiveSession(roomId, 'Session terminated by host or administrator');
-    anchorEvent(roomId, 'SESSION_TERMINATED', { by: socket.id === room.hostSocketId ? 'host' : 'admin' }, room.hostEmail);
-    io.to(roomId).emit('kill-session');
-    room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
-    rooms.delete(roomId);
-    broadcastSessions();
+    await terminateRoom(roomId, socket.id === room.hostSocketId ? 'host' : 'admin');
   });
 
   socket.on('admin-revoke-access', async (roomId, targetId) => {
@@ -1511,10 +1879,7 @@ io.on('connection', (socket) => {
   socket.on('admin-warn-user', async ({ roomId, message = "Warning from administrator: Please return your attention to the session." }) => {
     const room = rooms.get(roomId);
     if (!room || !await isAdminSocket(socket)) return;
-    io.to(roomId).emit('system-warning', message);
-    pushEvent(roomId, 'warning', `Administrator warning: ${message}`);
-    const targetEmail = room.hostEmail || '';
-    anchorEvent(roomId, 'ADMIN_WARNING', { by: 'admin', message }, room.hostEmail, targetEmail);
+    warnRoom(roomId, message);
   });
 
   socket.on('admin-ban-participant', async ({ roomId, target = 'controller', targetId } = {}) => {
@@ -1588,6 +1953,11 @@ io.on('connection', (socket) => {
     const room = rooms.get(socket.observingRoom);
     if (room && room.hostSocketId === hostId && room.observers.has(socket.id)) {
       io.to(hostId).emit('observer-answer', { observerId: socket.id, answer });
+      return;
+    }
+    // Answer to a controller camera offer ("hostId" is the controller that made the offer)
+    if (adminObservesController(socket.id, hostId)) {
+      io.to(hostId).emit('observer-answer', { observerId: socket.id, answer });
     }
   });
 
@@ -1600,19 +1970,11 @@ io.on('connection', (socket) => {
     const observedRoom = rooms.get(socket.observingRoom);
     if (observedRoom && observedRoom.hostSocketId === targetId && observedRoom.observers.has(socket.id)) {
       io.to(targetId).emit('observer-ice-candidate', { fromId: socket.id, candidate });
+      return;
     }
-  });
-
-  socket.on('host-push-question', (payload) => {
-    const roomId = normalizeRoomCode(payload.roomId || socket.roomCode);
-    const room = rooms.get(roomId);
-    if (!room) return;
-    
-    // Store question so late-joiners can receive it
-    if (!room.examQuestions) room.examQuestions = [];
-    room.examQuestions.push(payload);
-    
-    io.to(roomId).emit('new-exam-question', payload);
+    if (adminObservesController(socket.id, targetId)) {
+      io.to(targetId).emit('observer-ice-candidate', { fromId: socket.id, candidate });
+    }
   });
 
   socket.on('system-alert', (payload = {}) => {
@@ -1625,27 +1987,22 @@ io.on('connection', (socket) => {
     const penalty = applyRiskPenalty(room, payload.penalty, 0);
     room.alertCount += 1;
     pushEvent(roomId, payload.type === 'anticheat_violation' ? 'anticheat' : 'system', `${participantName}: ${payload.message || 'Activity detected'}`);
-    if (global.dbConnected) {
-      Alert.create({
-        room: roomId,
-        hostEmail: room.hostEmail || undefined,
-        type: payload.type || 'activity',
-        event: payload.event || undefined,
-        message: `${participantName}: ${payload.message || 'Activity detected'}`,
-        evidenceUrl: payload.evidenceUrl || undefined,
-        penalty,
-      }).catch((err) => console.error('Alert save error:', err));
-    } else {
-      mockStore.addAlert({
-        room: roomId,
-        hostEmail: room.hostEmail || undefined,
-        type: payload.type || 'activity',
-        event: payload.event || undefined,
-        message: `${participantName}: ${payload.message || 'Activity detected'}`,
-        evidenceUrl: payload.evidenceUrl || undefined,
-        penalty,
-      });
-    }
+    const alertRecord = {
+      room: roomId,
+      hostEmail: room.hostEmail || undefined,
+      type: payload.type || 'activity',
+      event: payload.event || undefined,
+      message: `${participantName}: ${payload.message || 'Activity detected'}`,
+      evidenceUrl: isUploadPath(payload.evidenceUrl) ? payload.evidenceUrl : undefined,
+      penalty,
+      features: sanitizeFeatures(payload.features),
+      sourceSocketId: socket.id,
+      sourceEmail: participant.email || undefined,
+    };
+    // Admins need the stored id so a live alert can be marked (e.g. false positive) right away
+    const saved = global.dbConnected
+      ? Alert.create(alertRecord).catch((err) => { console.error('Alert save error:', err); return null; })
+      : Promise.resolve(mockStore.addAlert(alertRecord));
 
     // Anchor anti-cheat alerts to the blockchain
     if (global.blockchainActive && payload.type === 'anticheat_violation') {
@@ -1658,12 +2015,24 @@ io.on('connection', (socket) => {
       );
     }
 
-    io.to('admins').emit('system-alert', { ...payload, room: roomId, participant: participantName, evidenceUrl: payload.evidenceUrl || undefined, penalty });
+    saved.then((doc) => {
+      io.to('admins').emit('system-alert', {
+        ...payload,
+        _id: doc?._id ? String(doc._id) : undefined,
+        room: roomId,
+        participant: participantName,
+        evidenceUrl: signUploadUrl(payload.evidenceUrl) || undefined,
+        penalty,
+      });
+    });
     emitRoomState(roomId);
     broadcastSessions();
   });
 
-  socket.on('ping-ircp', () => socket.emit('pong-ircp'));
+  socket.on('ping-ircp', (ack) => {
+    if (typeof ack === 'function') ack(); // current clients measure latency with the acknowledgement
+    else socket.emit('pong-ircp');
+  });
 
   const handleAntiCheatAlert = (data = {}) => {
     const roomCode = normalizeRoomCode(data.roomCode || data.roomId || socket.roomCode);
@@ -1685,7 +2054,7 @@ io.on('connection', (socket) => {
       type: data.type || 'anticheat_violation',
       event: data.event || data.reason || undefined,
       message: `${participant.name}: ${message}`,
-      evidenceUrl: data.evidenceUrl || undefined,
+      evidenceUrl: isUploadPath(data.evidenceUrl) ? data.evidenceUrl : undefined,
       penalty,
     };
     if (global.dbConnected) {
@@ -1707,7 +2076,7 @@ io.on('connection', (socket) => {
       type: alertDoc.type,
       event: alertDoc.event,
       message,
-      evidenceUrl: alertDoc.evidenceUrl,
+      evidenceUrl: signUploadUrl(alertDoc.evidenceUrl) || undefined,
       penalty,
     });
     emitRoomState(roomCode);
@@ -1742,14 +2111,16 @@ io.on('connection', (socket) => {
   });
 
   // --- Exam Content ---
-  socket.on('host-push-question', (question) => {
-    const roomId = normalizeRoomCode(question.roomId || socket.roomCode);
+  socket.on('host-push-question', (payload = {}) => {
+    const roomId = normalizeRoomCode(payload.roomId || socket.roomCode);
     const room = rooms.get(roomId);
-    if (!room || room.mode !== 'supervised' || socket.role !== 'host') return;
-    
+    if (!room || room.mode !== 'supervised' || socket.id !== room.hostSocketId) return;
+    const question = sanitizeExamQuestion(payload);
+    if (!question || room.exam.questions.some(q => q.id === question.id)) return;
+
     room.exam.questions.push(question);
-    room.controllers.forEach(controller => {
-      io.to(controller.socketId).emit('new-exam-question', question);
+    room.controllers.forEach((controller, controllerId) => {
+      io.to(controllerId).emit('new-exam-question', publicExamQuestion(question));
     });
     pushEvent(roomId, 'exam', `New ${question.type} question pushed to controllers`);
     emitRoomState(roomId);
@@ -1759,36 +2130,55 @@ io.on('connection', (socket) => {
     const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
     const room = rooms.get(normalizedRoomId);
     if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
-    
+    // Only a candidate of this room may write drafts into its exam
+    if (!room.controllers.has(socket.id)) return;
+    if (!room.exam.questions.some(q => q.id === questionId)) return;
+
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
-    
+    if (room.exam.answers[questionId][socket.id]?.isFinal) return;
+
+    // Drafts arrive on every keystroke: a recording is only sent when it changes. No audio field
+    // keeps the stored recording; audio: null removes it.
+    const previous = room.exam.answers[questionId][socket.id];
+    const audioChanged = Object.prototype.hasOwnProperty.call(answer || {}, 'audio');
+    const draft = sanitizeExamAnswer(answer);
     room.exam.answers[questionId][socket.id] = {
-      ...answer,
+      ...draft,
+      audio: audioChanged ? draft.audio : previous?.audio,
       isFinal: false,
       timestamp: Date.now()
     };
-    
+
+    const { audio, ...withoutAudio } = room.exam.answers[questionId][socket.id];
     io.to(room.hostSocketId).emit('host-live-answer-update', {
       questionId,
       controllerId: socket.id,
       controllerName: room.controllers.get(socket.id)?.name || 'Unknown',
-      answer: room.exam.answers[questionId][socket.id]
+      answer: audioChanged ? { ...withoutAudio, audio: audio || null } : withoutAudio,
     });
   });
 
-  socket.on('controller-submit-answer', ({ questionId, answer }) => {
+  socket.on('controller-submit-answer', ({ questionId, answer } = {}) => {
     const roomId = socket.roomCode;
     const room = rooms.get(roomId);
     if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
-    
+    const question = room.exam.questions.find(q => q.id === questionId);
+    if (!question) return;
+
     if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
-    
+    if (room.exam.answers[questionId][socket.id]?.isFinal) return;
+
+    const finalAnswer = sanitizeExamAnswer(answer);
+    const correct = gradeExamAnswer(question, finalAnswer);
     room.exam.answers[questionId][socket.id] = {
-      ...answer,
+      ...finalAnswer,
       isFinal: true,
+      correct,
+      email: room.controllers.get(socket.id)?.email || undefined,
       timestamp: Date.now()
     };
-    
+    if (correct !== null) socket.emit('exam-answer-result', { questionId, correct });
+
     io.to(room.hostSocketId).emit('host-live-answer-update', {
       questionId,
       controllerId: socket.id,
@@ -1797,36 +2187,203 @@ io.on('connection', (socket) => {
     });
   });
 
+  // The host calibrates the anti-cheat engines that run on the candidates' devices
+  socket.on('ai-config', ({ roomId, config } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || socket.id !== room.hostSocketId || room.mode !== 'supervised' || !config) return;
+    const bounded = (value, min, max) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : undefined;
+    };
+    const next = {
+      eyeTrackingThreshold: bounded(config.eyeTrackingThreshold, 0.5, 0.95),
+      emotionSensitivity: bounded(config.emotionSensitivity, 0.4, 0.9),
+      audioVolumeThreshold: bounded(config.audioVolumeThreshold, 0.01, 0.5),
+      headPoseMargin: bounded(config.headPoseMargin, 0.2, 1.0),
+    };
+    Object.keys(next).forEach(key => next[key] === undefined && delete next[key]);
+    room.aiConfig = { ...(room.aiConfig || {}), ...next };
+    pushEvent(roomCode, 'system', 'Host updated AI proctoring calibration');
+    room.controllers.forEach((_, controllerId) => io.to(controllerId).emit('ai-config', room.aiConfig));
+  });
+
+  // ── Media server (optional, sfu.js) ────────────────────────────────────────
+  // Supervised candidates send their camera once; the host and administrators receive it from the
+  // server. Every call answers through the Socket.IO acknowledgement: { error } or the result.
+  const sfuReply = (ack) => (typeof ack === 'function' ? ack : () => {});
+  const sfuRoom = (roomId) => {
+    const roomCode = normalizeRoomCode(roomId);
+    return { roomCode, room: rooms.get(roomCode) };
+  };
+  const sfuCanSend = (room) => Boolean(room && room.mode === 'supervised' && room.controllers.has(socket.id));
+  const sfuCanWatch = async (room) => Boolean(room && (socket.id === room.hostSocketId || room.observers.has(socket.id) || await isAdminSocket(socket)));
+  const sfuGuard = (handler) => async (payload = {}, ack) => {
+    const reply = sfuReply(typeof payload === 'function' ? payload : ack);
+    if (!sfu.enabled) return reply({ error: 'media server disabled' });
+    try {
+      reply(await handler(typeof payload === 'function' ? {} : payload));
+    } catch (err) {
+      reply({ error: err.message || 'media server error' });
+    }
+  };
+
+  socket.on('sfu-capabilities', sfuGuard(async ({ roomId }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (!sfuCanSend(room) && !await sfuCanWatch(room)) throw new Error('not a member of this room');
+    return { rtpCapabilities: await sfu.rtpCapabilities(roomCode) };
+  }));
+
+  socket.on('sfu-create-transport', sfuGuard(async ({ roomId, direction }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (direction === 'send' ? !sfuCanSend(room) : direction === 'recv' ? !await sfuCanWatch(room) : true) {
+      throw new Error('not allowed for this room');
+    }
+    return sfu.createTransport(socket, roomCode, direction);
+  }));
+
+  socket.on('sfu-connect-transport', sfuGuard(async ({ transportId, dtlsParameters }) => {
+    await sfu.connectTransport(socket, transportId, dtlsParameters);
+    return { connected: true };
+  }));
+
+  socket.on('sfu-produce', sfuGuard(async ({ roomId, transportId, kind, rtpParameters }) => {
+    const { room } = sfuRoom(roomId);
+    if (!sfuCanSend(room)) throw new Error('only candidates of a supervised room publish');
+    const name = room.controllers.get(socket.id)?.name || 'Candidate';
+    const id = await sfu.produce(socket, transportId, kind, rtpParameters, name, (roomCode, producer) => {
+      io.to(room.hostSocketId).emit('sfu-new-producer', { roomCode, ...producer });
+      io.to('admins').emit('sfu-new-producer', { roomCode, ...producer });
+    });
+    return { id };
+  }));
+
+  socket.on('sfu-list-producers', sfuGuard(async ({ roomId }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (!await sfuCanWatch(room)) throw new Error('not allowed for this room');
+    return { producers: sfu.listProducers(roomCode) };
+  }));
+
+  socket.on('sfu-consume', sfuGuard(async ({ roomId, transportId, producerId, rtpCapabilities }) => {
+    const { roomCode, room } = sfuRoom(roomId);
+    if (!await sfuCanWatch(room)) throw new Error('not allowed for this room');
+    return sfu.consume(socket, roomCode, transportId, producerId, rtpCapabilities);
+  }));
+
+  socket.on('sfu-resume', sfuGuard(async ({ consumerId }) => {
+    await sfu.resume(socket, consumerId);
+    return { resumed: true };
+  }));
+
+  socket.on('disconnect', () => sfu.closeSocket(socket));
+
   socket.on('leave-session', () => {
+    socket.leftOnPurpose = true; // leaving on purpose skips the reconnect grace period
     socket.disconnect(true);
   });
 
-  socket.on('recording-uploaded', ({ room, url }) => {
-    const liveRoom = rooms.get(room);
-    if (liveRoom) {
+  // A host whose connection dropped takes its room back within the grace period
+  socket.on('resume-host', async ({ roomId } = {}) => {
+    const roomCode = normalizeRoomCode(roomId);
+    const room = rooms.get(roomCode);
+    const actor = await authenticatedUser(socket);
+    if (!room || !room.hostDisconnectedAt || !actor?.email || actor.email !== room.hostEmail) {
+      socket.emit('resume-failed', { reason: 'The session ended while you were disconnected.' });
+      return;
+    }
+    clearTimeout(room.hostGraceTimer);
+    room.hostGraceTimer = null;
+    room.hostDisconnectedAt = null;
+    room.hostSocketId = socket.id;
+    socket.join(roomCode);
+    socket.roomCode = roomCode;
+    socket.role = 'host';
+    socket.userEmail = room.hostEmail;
+    onlineEmails.add(room.hostEmail);
+    pushEvent(roomCode, 'system', 'Host reconnected');
+    socket.emit('room-created', { roomCode });
+    emitRoomState(roomCode); // new host id: the E2E roster changes, so chat keys are re-shared
+    // Rebuild the call with every controller that is still here
+    room.controllers.forEach((_, controllerId) => socket.emit('controller-joined', { controllerId }));
+    io.to(roomCode).emit('host-resumed');
+    broadcastSessions();
+  });
+
+  socket.on('recording-uploaded', ({ room, url } = {}) => {
+    const liveRoom = rooms.get(normalizeRoomCode(room));
+    // Only participants of the room may attach recordings, and only files we stored ourselves
+    const isMember = liveRoom && (socket.id === liveRoom.hostSocketId || liveRoom.controllers.has(socket.id));
+    if (isMember && isUploadPath(url)) {
       if (!liveRoom.recordings) liveRoom.recordings = [];
       liveRoom.recordings.push(url);
       broadcastSessions();
     }
   });
 
-  socket.on('secret-delete-recordings', async ({ roomId }) => {
+  // "Code Black": an administrator purges a room's recordings and evidence. It must be confirmed with
+  // the room code and a reason, deletes the stored files (not just the references), and is itself
+  // anchored on the audit chain (who, why, how many items, digest of what was removed).
+  socket.on('secret-delete-recordings', async ({ roomId, reason, confirmCode } = {}) => {
     if (!(await isAdminSocket(socket))) return;
-    const liveRoom = rooms.get(roomId);
+    const roomCode = normalizeRoomCode(roomId);
+    const why = String(reason || '').trim().slice(0, 300);
+    if (!roomCode || normalizeRoomCode(confirmCode) !== roomCode || why.length < 5) {
+      socket.emit('admin-error', 'Evidence purge refused: confirm with the room code and give a reason (at least 5 characters).');
+      return;
+    }
+    const actor = await authenticatedUser(socket);
+    const removed = [];
+    const liveRoom = rooms.get(roomCode);
     if (liveRoom) {
+      removed.push(...(liveRoom.recordings || []), ...(liveRoom.evidence || []).map(item => item?.url));
       liveRoom.recordings = [];
       liveRoom.evidence = [];
-      broadcastSessions();
     }
     if (global.dbConnected) {
-      await SessionLog.updateMany({ roomCode: roomId }, { $set: { evidence: [] } });
+      const logs = await SessionLog.find({ roomCode }).lean().catch(() => []);
+      logs.forEach(log => removed.push(...(log.evidence || []).map(item => item?.url), ...(log.recordings || [])));
+      await SessionLog.updateMany({ roomCode }, { $set: { evidence: [] } }).catch(err => console.error('[CODE BLACK]', err.message));
+    } else {
+      removed.push(...mockStore.purgeSessionEvidence(roomCode));
     }
+
+    const urls = Array.from(new Set(removed.filter(url => typeof url === 'string' && url)));
+    const filesDeleted = deleteUploadedFiles(urls);
+    const record = {
+      room: roomCode,
+      reason: why,
+      items: urls.length,
+      filesDeleted,
+      itemsDigest: crypto.createHash('sha256').update(urls.sort().join('\n')).digest('hex'),
+    };
+    if (liveRoom) {
+      pushEvent(roomCode, 'system', `Administrator purged ${urls.length} evidence item(s): ${why}`);
+      anchorEvent(roomCode, 'EVIDENCE_PURGED', record, liveRoom.hostEmail, actor?.email || '');
+    } else {
+      const { payload } = hashAuditPayload(record);
+      logToChain(roomCode, hashIdentity(''), hashIdentity(actor?.email || ''), 'EVIDENCE_PURGED', payload)
+        .catch(err => console.error('[AUDIT]', err.message));
+    }
+    console.warn(`[CODE BLACK] ${actor?.email || 'admin'} purged ${urls.length} item(s) for ${roomCode}: ${why}`);
+    socket.emit('admin-action-complete', { message: `Purged ${urls.length} evidence item(s) (${filesDeleted} file(s) deleted). The purge is recorded on the audit chain.` });
+    broadcastSessions();
   });
 
   socket.on('disconnect', async () => {
-    if (socket.userEmail) onlineEmails.delete(socket.userEmail);
+    // Still online while the same account has another connection open
+    if (socket.userEmail && !Array.from(io.sockets.sockets.values()).some(other => other.id !== socket.id && other.userEmail === socket.userEmail)) {
+      onlineEmails.delete(socket.userEmail);
+    }
 
     rooms.forEach((room, roomId) => {
+      // Before keys are handed out a leaver is simply removed; later it is treated as dropped and its
+      // masks are recovered from the other participants' Shamir shares
+      const flRound = room.federated?.active;
+      if (flRound?.participants.has(socket.id)) {
+        if (flRound.phase === 'advertise') flRound.participants.delete(socket.id);
+        else setImmediate(() => maybeAdvanceFederatedRound(roomId));
+      }
+
       const pending = room.pendingControllers.get(socket.id);
       if (pending) {
         room.pendingControllers.delete(socket.id);
@@ -1841,14 +2398,28 @@ io.on('connection', (socket) => {
       }
     });
 
+    // Any other room still pointing at this connection as its host has no way back: close it
+    for (const [otherId, other] of Array.from(rooms.entries())) {
+      if (otherId !== socket.roomCode && other.hostSocketId === socket.id && !other.hostDisconnectedAt) {
+        await closeRoomAfterHostLeft(otherId);
+      }
+    }
+
     const roomId = socket.roomCode;
     const room = rooms.get(roomId);
     if (!room) return;
-    if (socket.role === 'host') {
-      await archiveSession(roomId, 'Host disconnected; session closed');
-      io.to(roomId).emit('kill-session');
-      room.observers.forEach((observerId) => io.to(observerId).emit('kill-session'));
-      rooms.delete(roomId);
+    if (socket.role === 'host' && room.hostSocketId === socket.id) {
+      // A network blip should not end everyone's session: hold the room for the host to resume
+      if (socket.leftOnPurpose || HOST_RECONNECT_GRACE_MS <= 0) {
+        await closeRoomAfterHostLeft(roomId);
+        return;
+      }
+      clearTimeout(room.hostGraceTimer);
+      room.hostDisconnectedAt = Date.now();
+      room.hostGraceTimer = setTimeout(() => { void closeRoomAfterHostLeft(roomId); }, HOST_RECONNECT_GRACE_MS);
+      room.hostGraceTimer.unref?.();
+      pushEvent(roomId, 'system', `Host connection lost; holding the session for ${Math.round(HOST_RECONNECT_GRACE_MS / 1000)} s`);
+      io.to(roomId).emit('host-reconnecting', { graceMs: HOST_RECONNECT_GRACE_MS });
       broadcastSessions();
       return;
     }
@@ -1856,6 +2427,15 @@ io.on('connection', (socket) => {
       const participant = room.controllers.get(socket.id);
       participant.leftAt = Date.now();
       room.controllers.delete(socket.id);
+      if (participant.email && !socket.leftOnPurpose && CONTROLLER_RECONNECT_GRACE_MS > 0) {
+        if (!room.recentControllers) room.recentControllers = new Map();
+        room.recentControllers.set(participant.email, {
+          socketId: socket.id,
+          permission: participant.permission,
+          clipboardAllowed: participant.clipboardAllowed,
+          expiresAt: Date.now() + CONTROLLER_RECONNECT_GRACE_MS,
+        });
+      }
       pushEvent(roomId, 'join', `${participant.name} disconnected`);
       anchorEvent(roomId, 'USER_LEFT', { role: 'controller', email: participant.email }, room.hostEmail, participant.email);
       io.to(room.hostSocketId).emit('controller-left', { controllerId: socket.id, controller: participantPayload(participant) });
@@ -1871,4 +2451,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, server, io };
+module.exports = { app, server, io, sendFalsePositiveLabel, terminateRoom, warnRoom, reportFaceCheck, liveRoomCode, examScores };

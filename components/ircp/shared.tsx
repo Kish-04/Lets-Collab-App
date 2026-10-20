@@ -1,6 +1,6 @@
 "use client"
 
-import { cn } from "@/lib/utils"
+import { cn, explorerTxUrl } from "@/lib/utils"
 import { Copy, ExternalLink } from "lucide-react"
 import { useState, useEffect } from "react"
 import { motion } from "framer-motion"
@@ -620,11 +620,11 @@ export function TxHash({
         <Copy className="w-3 h-3" />
       </button>
       <a 
-        href={`https://sepolia.etherscan.io/tx/${hash}`}
+        href={explorerTxUrl(hash)}
         target="_blank"
         rel="noopener noreferrer"
         className="p-0.5 text-[var(--text-dim)] hover:text-[var(--accent)] transition-colors"
-        aria-label="View on Etherscan"
+        aria-label="View on block explorer"
       >
         <ExternalLink className="w-3 h-3" />
       </a>

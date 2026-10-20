@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.lcproctoring'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.lcproctoring"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  // VideoFrameProcessor / ProcessorProvider hooks + org.webrtc (exposed as `api` by react-native-webrtc).
+  implementation project(':react-native-webrtc')
+  // On-device face landmarks + object detection (same MediaPipe models as the web proctoring engine).
+  implementation 'com.google.mediapipe:tasks-vision:0.10.33'
+}

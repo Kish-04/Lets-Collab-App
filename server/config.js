@@ -31,6 +31,20 @@ function getJwtSecret() {
   return global.__LETSCOLLAB_DEV_JWT_SECRET;
 }
 
+// Key for the HMAC that pseudonymises emails written to the public audit chain.
+// It must stay stable: rotating it means older on-chain identities can no longer be resolved.
+function getAuditHashSecret() {
+  if (process.env.AUDIT_HASH_SECRET) return process.env.AUDIT_HASH_SECRET;
+  if (isProduction) {
+    if (!global.__LETSCOLLAB_AUDIT_SECRET_WARNED) {
+      console.warn('[CONFIG] AUDIT_HASH_SECRET is not set. Falling back to JWT_SECRET for on-chain identity hashes.');
+      global.__LETSCOLLAB_AUDIT_SECRET_WARNED = true;
+    }
+    return getJwtSecret();
+  }
+  return 'letscollab-development-audit-hash-secret';
+}
+
 const generateToken = (id, email) => {
   const jwt = require('jsonwebtoken');
   const payload = { id };
@@ -63,15 +77,17 @@ function isOriginAllowed(origin, allowedOrigins) {
   if (allowedOrigins.includes('*')) return true;
   if (allowedOrigins.includes(origin)) return true;
 
-  if (origin === 'app://-') {
+  // The desktop app loads app://- and rewrites the Origin of its requests to http://localhost:8081
+  // (main.js). In production only those exact origins are accepted, not every local port, since
+  // this allow-list is also what guards Socket.IO connections.
+  const desktopOrigins = parseCsv(process.env.DESKTOP_ORIGINS || 'app://-,http://localhost:8081');
+  if (desktopOrigins.includes(origin)) return true;
+
+  // Local development: any port on localhost
+  if (!isProduction && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))) {
     return true;
   }
-  
-  // Always allow the desktop app (which uses random ports on localhost)
-  if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
-    return true;
-  }
-  
+
   return false;
 }
 
@@ -108,7 +124,9 @@ module.exports = {
   createCorsOptions,
   ensureServerConfig,
   getAllowedOrigins,
+  getAuditHashSecret,
   getJwtSecret,
+  isOriginAllowed,
   signJwt,
   verifyJwt,
 };

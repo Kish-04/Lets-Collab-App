@@ -1,13 +1,14 @@
 // Force Metro Cache Invalidation
-import { StyleSheet, View, Text, ScrollView, RefreshControl, TouchableOpacity, Dimensions, Animated, Easing, ImageBackground, LogBox } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, RefreshControl, TouchableOpacity, Dimensions, Animated, Easing, ImageBackground, LogBox, TextInput } from 'react-native';
 
 LogBox.ignoreLogs(['Unknown event handler property `onPressIn`']);
 import { BlurView } from 'expo-blur';
-import { useState, useEffect, useRef } from 'react';
-import { ShieldAlert, Users, LogOut, Sun, Moon, Sparkles, Activity } from 'lucide-react-native';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { ShieldAlert, Users, LogOut, Sun, Moon, Sparkles, Activity, MonitorPlay, LogIn } from 'lucide-react-native';
 import { BarChart, LineChart } from 'react-native-chart-kit';
 import { getAuthHeaders, removeAuthToken, BACKEND_URL } from '../../lib/api';
-import { router } from 'expo-router';
+import { router, Href, useFocusEffect } from 'expo-router';
+import { normalizeRoomCode } from '../../lib/liveSession';
 import { useTheme } from '../../context/ThemeContext';
 import { AppLogo } from '../../components/AppLogo';
 import { ActivityHeatmap } from '../../components/ActivityHeatmap';
@@ -31,7 +32,9 @@ export default function TabOneScreen() {
   const [data, setData] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
-  const [debugResponse, setDebugResponse] = useState<string>("");
+  // Non-admin accounts (students, participants) use this tab only to join a session
+  const [participantOnly, setParticipantOnly] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
   const isDark = theme === 'dark' || theme === 'glassmorphic';
   
   const dynamicChartConfig = {
@@ -74,8 +77,6 @@ export default function TabOneScreen() {
     try {
       const headers = await getAuthHeaders();
       const noCacheUrl = `${BACKEND_URL}/api/admin/reports?_t=${Date.now()}`;
-      setDebugResponse("Fetching from " + noCacheUrl);
-      
       const response = await fetch(noCacheUrl, { 
         headers: {
           ...headers,
@@ -85,20 +86,25 @@ export default function TabOneScreen() {
         } 
       });
       
-      if (response.status === 401 || response.status === 403) {
-        console.warn("Unauthorized, logging out...");
-        setDebugResponse("Status " + response.status + " Logging out");
+      // 401: the token is missing or expired, so sign out. 403: a valid account that is not an
+      // admin; keep it signed in so it can join sessions from the box above.
+      if (response.status === 401) {
         handleLogout();
         return;
       }
+      if (response.status === 403) {
+        setParticipantOnly(true);
+        setError(false);
+        return;
+      }
+      setParticipantOnly(false);
 
       const text = await response.text();
-      setDebugResponse("Status " + response.status + " Text: " + text.substring(0, 100));
       let json = null;
       try {
          json = JSON.parse(text);
-      } catch (e) {
-         setDebugResponse("Status " + response.status + " Parse Error");
+      } catch {
+         json = null;
       }
       
       if (response.ok && json && json.success) {
@@ -110,19 +116,26 @@ export default function TabOneScreen() {
       }
     } catch (e: any) {
       console.error("Fetch exception:", e);
-      setDebugResponse("Fetch exception: " + e.message);
       setError(true);
     }
   };
 
-  useEffect(() => {
+  // Reload whenever the tab is focused so numbers reflect actions taken on other tabs
+  useFocusEffect(useCallback(() => {
     fetchAnalytics();
-  }, []);
+  }, [])); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchAnalytics();
     setRefreshing(false);
+  };
+
+  const handleJoinSession = () => {
+    const code = normalizeRoomCode(joinCode);
+    if (!code) return;
+    setJoinCode('');
+    router.push(`/session/${code}` as Href);
   };
 
   const handleLogout = async () => {
@@ -191,15 +204,50 @@ export default function TabOneScreen() {
             </View>
           </View>
 
-          {error ? (
+          <View style={[styles.joinCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+            <View style={styles.joinHeader}>
+              <View style={[styles.iconWrapper, { backgroundColor: 'rgba(0, 212, 255, 0.1)', borderColor: 'rgba(0, 212, 255, 0.2)', marginBottom: 0, marginRight: 12 }]}>
+                <MonitorPlay color={colors.accent} size={20} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.cardLabel, { color: colors.textDim }]}>LIVE SESSION</Text>
+                <Text style={[styles.joinTitle, { color: colors.textPrimary }]}>Join as participant</Text>
+              </View>
+            </View>
+            <View style={styles.joinRow}>
+              <TextInput
+                value={joinCode}
+                onChangeText={value => setJoinCode(normalizeRoomCode(value))}
+                placeholder="ROOM CODE"
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                returnKeyType="go"
+                onSubmitEditing={handleJoinSession}
+                style={[styles.joinInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.elevated }]}
+              />
+              <TouchableOpacity
+                onPress={handleJoinSession}
+                disabled={!joinCode}
+                style={[styles.joinBtn, { backgroundColor: colors.accent, opacity: joinCode ? 1 : 0.5 }]}
+              >
+                <LogIn color="#080810" size={16} style={{ marginRight: 6 }} />
+                <Text style={styles.joinBtnText}>Join</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {participantOnly ? (
+            <View style={[styles.errorContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>Enter the room code from your host or exam invite above to join a session. Analytics are only shown to administrators.</Text>
+            </View>
+          ) : error ? (
             <View style={[styles.errorContainer, { backgroundColor: isDark ? 'rgba(255, 59, 92, 0.1)' : 'rgba(255, 59, 92, 0.05)', borderColor: isDark ? 'rgba(255, 59, 92, 0.3)' : 'rgba(255, 59, 92, 0.2)' }]}>
               <Text style={[styles.errorText, { color: colors.red }]}>Could not connect to backend analytics.</Text>
             </View>
           ) : (
             <>
               <View style={styles.statsGrid}>
-                {/* Debug info kept for user verification */}
-                <Text style={{color: 'red', fontSize: 10, position: 'absolute', top: -15, zIndex: 10}}>Debug Info: data is {data ? "present" : "null"}</Text>
                 <Text style={[styles.chartTitle, { color: colors.textPrimary, marginBottom: 0, marginLeft: 4 }]}>System Activity History</Text>
                 <ActivityHeatmap sessions={data?.sessionHistory || []} />
               </View>
@@ -254,11 +302,12 @@ export default function TabOneScreen() {
                     height={280}
                     yAxisLabel=""
                     yAxisSuffix=""
-                    formatYLabel={(yValue) => Math.round(parseFloat(yValue)).toString()}
                     fromZero={true}
                     showValuesOnTopOfBars={true}
                     chartConfig={{
                       ...dynamicChartConfig,
+                      // BarChart reads formatYLabel from chartConfig (it is not a BarChart prop).
+                      formatYLabel: (yValue: string) => Math.round(parseFloat(yValue)).toString(),
                       color: (opacity = 1) => `rgba(110, 63, 255, ${opacity})`,
                       propsForLabels: { fontSize: 10 }
                     }}
@@ -374,6 +423,49 @@ const styles = StyleSheet.create({
   logoutText: {
     fontFamily: 'Inter_600SemiBold',
     fontSize: 12,
+  },
+  joinCard: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+  },
+  joinHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  joinTitle: {
+    fontFamily: 'Inter_900Black',
+    fontSize: 16,
+  },
+  joinRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  joinInput: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    fontFamily: 'SpaceMono',
+    fontSize: 14,
+    letterSpacing: 2,
+  },
+  joinBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 44,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+  },
+  joinBtnText: {
+    color: '#080810',
+    fontFamily: 'Inter_700Bold',
+    fontSize: 14,
   },
   errorContainer: {
     margin: 20,

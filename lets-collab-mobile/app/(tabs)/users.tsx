@@ -38,9 +38,12 @@ export default function UsersScreen() {
     fetchUsers();
   }, []);
 
+  // Refresh on focus and every 10s while the tab is visible (same cadence as the web dashboard)
   useFocusEffect(
     useCallback(() => {
       fetchUsers();
+      const timer = setInterval(fetchUsers, 10000);
+      return () => clearInterval(timer);
     }, [])
   );
 

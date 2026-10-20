@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useRouter } from "next/navigation"
 import { io, Socket } from "socket.io-client"
-import { Search, X, Shield, ShieldOff, UserCheck, UserX, Clock } from "lucide-react"
+import { Search, X, Shield, ShieldOff, UserCheck, UserX, Clock, ScanFace } from "lucide-react"
 import { DataCard, GlowButton, DangerButton } from "@/components/ircp/shared"
 import { UserActivityHeatmap } from "@/components/ircp/UserActivityHeatmap"
 import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
@@ -216,6 +216,18 @@ export default function UsersPage() {
     }
   }
 
+  // Clears a user's Face ID so they can enrol again (they cannot replace it themselves)
+  const handleResetFace = async (id: string, name: string) => {
+    if (!window.confirm(`Reset Face ID for ${name}? They will have to set it up again before supervised exams can verify them.`)) return
+    const res = await fetch(`${getBackendUrl()}/api/face/enrollment/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: getAuthHeaders(),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    window.alert(res && res.ok ? 'Face ID reset.' : (data.message || 'Could not reset Face ID.'))
+  }
+
   const handleRoleChange = async (id: string, role: "user" | "admin") => {
     // Optimistic update
     setUsers(prev => prev.map(u => u._id === id ? { ...u, role } : u))
@@ -353,7 +365,11 @@ export default function UsersPage() {
                       {user.isVerified && !user.banned && <span className="px-2 py-0.5 rounded-md text-[9px] font-mono bg-[var(--emerald)]/20 text-[var(--emerald)] border border-[var(--emerald)]/30 drop-shadow-[0_0_5px_rgba(16,185,129,0.3)]">ACTIVE</span>}
                     </div>
                   </td>
-                  <td className="px-5 py-4" onClick={e => e.stopPropagation()}>
+                  <td className="px-5 py-4 flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                    <button onClick={() => void handleResetFace(user._id, user.name)} title="Reset Face ID" aria-label={`Reset Face ID for ${user.name}`}
+                      className="p-2 rounded-lg transition-colors border text-[var(--text-dim)] bg-[var(--elevated)]/60 border-[var(--border)] hover:text-[var(--accent)] hover:border-[var(--accent)]/40">
+                      <ScanFace className="w-4 h-4" />
+                    </button>
                     <button onClick={() => handleBan(user._id)}
                       className={cn("p-2 rounded-lg transition-colors border",
                         user.banned

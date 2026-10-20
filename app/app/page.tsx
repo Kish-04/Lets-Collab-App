@@ -383,6 +383,9 @@ export default function HomePage() {
                 <span className="text-sm font-bold tracking-wider text-[var(--emerald)] flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-[var(--emerald)] animate-pulse" /> Verified
                 </span>
+                <button onClick={() => router.push('/my-flags')} className="text-xs font-bold tracking-widest uppercase text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors">
+                  My flags
+                </button>
                 <button onClick={() => router.push('/profile')} className="text-xs font-bold tracking-widest uppercase text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors">
                   Profile
                 </button>
@@ -634,7 +637,14 @@ export default function HomePage() {
                   <div className="flex gap-4">
                     <button
                       type="button"
-                      onClick={() => window.location.href = `${getBackendUrl()}/api/auth/google`}
+                      onClick={async () => {
+                        if (typeof window !== 'undefined' && (window as any).api && (window as any).api.oauthLogin) {
+                          const success = await (window as any).api.oauthLogin('google');
+                          if (success) window.location.search = '?oauth=success';
+                        } else {
+                          window.location.href = `${getBackendUrl()}/api/auth/google`;
+                        }
+                      }}
                       className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-[var(--border)] bg-[rgba(var(--surface-rgb),0.5)] hover:bg-[rgba(var(--surface-rgb),0.8)] hover:border-[var(--accent)] transition-all"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -647,7 +657,14 @@ export default function HomePage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => window.location.href = `${getBackendUrl()}/api/auth/github`}
+                      onClick={async () => {
+                        if (typeof window !== 'undefined' && (window as any).api && (window as any).api.oauthLogin) {
+                          const success = await (window as any).api.oauthLogin('github');
+                          if (success) window.location.search = '?oauth=success';
+                        } else {
+                          window.location.href = `${getBackendUrl()}/api/auth/github`;
+                        }
+                      }}
                       className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-[var(--border)] bg-[rgba(var(--surface-rgb),0.5)] hover:bg-[rgba(var(--surface-rgb),0.8)] hover:border-[var(--accent)] transition-all"
                     >
                       <Github className="w-5 h-5 text-[var(--text-primary)]" />

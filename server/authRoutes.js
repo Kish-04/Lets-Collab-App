@@ -1,6 +1,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const User = require('./User');
 const { signJwt, verifyJwt } = require('./config');
 const mockStore = require('./mockStore');
@@ -21,24 +22,13 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     callbackURL: process.env.GOOGLE_CALLBACK_URL || (isProduction ? 'https://let-s-collab-tjwc.onrender.com/api/auth/google/callback' : '/api/auth/google/callback')
   }, async (accessToken, refreshToken, profile, done) => {
     try {
-      const email = normalizeEmail(profile.emails[0].value);
-      const name = profile.displayName || 'Google User';
-      
-      let user = global.dbConnected 
-        ? await User.findOne({ email }) 
-        : mockStore.findUserByEmail(email);
-
-      if (!user) {
-        const otp = createOtp();
-        const pw = await hashPassword(otp); // dummy password
-        user = global.dbConnected
-          ? await User.create({ name, email, password: pw, isVerified: true })
-          : mockStore.createUser({ name, email, password: pw, isVerified: true });
-      } else if (!user.isVerified) {
-        user.isVerified = true;
-        if (global.dbConnected) await user.save();
-        else mockStore.saveUser(user);
+      const googleEmail = profile.emails && profile.emails[0];
+      if (!googleEmail || googleEmail.verified === false) {
+        return done(null, false, { message: 'Your Google account email is not verified.' });
       }
+      const email = normalizeEmail(googleEmail.value);
+      const name = profile.displayName || 'Google User';
+      const user = await findOrCreateOAuthUser(email, name);
 
       if (user.banned) {
         return done(null, false, { message: 'Account banned' });
@@ -57,29 +47,19 @@ if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
     clientID: process.env.GITHUB_CLIENT_ID,
     clientSecret: process.env.GITHUB_CLIENT_SECRET,
     callbackURL: process.env.GITHUB_CALLBACK_URL || (isProduction ? 'https://let-s-collab-tjwc.onrender.com/api/auth/github/callback' : '/api/auth/github/callback'),
-    scope: ['user:email']
+    scope: ['user:email'],
+    allRawEmails: true, // includes GitHub's `verified` flag for every address
   }, async (accessToken, refreshToken, profile, done) => {
     try {
-      const email = profile.emails && profile.emails.length > 0 
-        ? normalizeEmail(profile.emails[0].value) 
-        : normalizeEmail(`${profile.username || profile.id}@github.com`);
-      const name = profile.displayName || profile.username || 'GitHub User';
-      
-      let user = global.dbConnected 
-        ? await User.findOne({ email }) 
-        : mockStore.findUserByEmail(email);
-
-      if (!user) {
-        const otp = createOtp();
-        const pw = await hashPassword(otp); // dummy password
-        user = global.dbConnected
-          ? await User.create({ name, email, password: pw, isVerified: true })
-          : mockStore.createUser({ name, email, password: pw, isVerified: true });
-      } else if (!user.isVerified) {
-        user.isVerified = true;
-        if (global.dbConnected) await user.save();
-        else mockStore.saveUser(user);
+      // GitHub lets anyone add an unverified address, so only a verified one may sign in or link
+      const verified = (profile.emails || []).filter(entry => entry.verified === true && entry.value);
+      const chosen = verified.find(entry => entry.primary) || verified[0];
+      if (!chosen) {
+        return done(null, false, { message: 'Add and verify an email address on GitHub first.' });
       }
+      const email = normalizeEmail(chosen.value);
+      const name = profile.displayName || profile.username || 'GitHub User';
+      const user = await findOrCreateOAuthUser(email, name);
 
       if (user.banned) {
         return done(null, false, { message: 'Account banned' });
@@ -118,12 +98,43 @@ function getEmailJsConfig() {
   };
 }
 
+// "alice@example.com" -> "a***@example.com" for logs
+function maskEmail(email) {
+  const [local, domain] = String(email || '').split('@');
+  return domain ? `${local.slice(0, 1)}***@${domain}` : '***';
+}
+
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
 function createOtp() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+// OAuth sign-in proves the email belongs to this person. If someone pre-registered that email
+// without verifying it, their password must not survive the takeover, so it is replaced.
+async function findOrCreateOAuthUser(email, name) {
+  let user = global.dbConnected
+    ? await User.findOne({ email })
+    : mockStore.findUserByEmail(email);
+
+  if (!user) {
+    const randomPassword = crypto.randomBytes(24).toString('hex');
+    return global.dbConnected
+      ? User.create({ name, email, password: randomPassword, isVerified: true })
+      : mockStore.createUser({ name, email, password: await hashPassword(randomPassword), isVerified: true });
+  }
+  if (!user.isVerified) {
+    const randomPassword = crypto.randomBytes(24).toString('hex');
+    user.password = global.dbConnected ? randomPassword : await hashPassword(randomPassword);
+    user.isVerified = true;
+    user.otp = undefined;
+    user.otpExpires = undefined;
+    if (global.dbConnected) await user.save();
+    else mockStore.saveUser(user);
+  }
+  return user;
 }
 
 function generateToken(id, email) {
@@ -170,7 +181,7 @@ async function sendEmailJsOTP(toEmail, otp, name = 'User') {
     });
 
     if (response.ok) {
-      console.log(`[EMAILJS] OTP sent to ${toEmail}`);
+      console.log(`[EMAILJS] OTP sent to ${maskEmail(toEmail)}`);
       return true;
     }
 
@@ -229,7 +240,7 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
       if (response.error) {
         console.error(`[EMAIL ERROR] Resend failed: ${response.error.message}`);
       } else {
-        console.log(`[EMAIL] OTP sent to ${toEmail}`);
+        console.log(`[EMAIL] OTP sent to ${maskEmail(toEmail)}`);
         delivered = true;
       }
     } catch (err) {
@@ -237,7 +248,8 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
     }
   }
 
-  const terminalOtpAllowed = (!isProduction && process.env.LOG_OTP !== 'false') || process.env.LOG_OTP === 'true';
+  // Never in production: an OTP in the logs is a password reset for whoever can read them
+  const terminalOtpAllowed = !isProduction && process.env.LOG_OTP !== 'false';
   if (terminalOtpAllowed) {
     console.log('\n=============================================');
     console.log('[OTP TERMINAL LOG]');
@@ -271,6 +283,15 @@ const otpVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   message: { message: 'Too many verification attempts. Please request a new OTP.' },
+  validate: { default: false },
+  keyGenerator: (req) => normalizeEmail(req.body.email) || 'unknown'
+});
+
+// Password guessing (and bcrypt CPU burn) against one account
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { message: 'Too many login attempts. Please try again after 15 minutes.' },
   validate: { default: false },
   keyGenerator: (req) => normalizeEmail(req.body.email) || 'unknown'
 });
@@ -368,7 +389,7 @@ router.post('/verify-otp', otpVerifyLimiter, async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || '');
@@ -528,7 +549,7 @@ router.post('/forgot-password', otpSendLimiter, async (req, res) => {
   }
 });
 
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', otpVerifyLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     const otp = String(req.body.otp || '').trim();
@@ -586,7 +607,7 @@ router.get('/google', (req, res, next) => {
 router.get('/google/callback', 
   (req, res, next) => {
     passport.authenticate('google', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
-      console.log('[Passport Auth Result]', { err, user: !!user, info });
+      if (err) console.error('[OAuth] sign-in failed:', err.message || err);
       if (err || !user) {
         let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
         if (frontendUrl.endsWith('/app')) {
@@ -624,7 +645,7 @@ router.get('/github', (req, res, next) => {
 router.get('/github/callback', 
   (req, res, next) => {
     passport.authenticate('github', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
-      console.log('[Passport Auth Result]', { err, user: !!user, info });
+      if (err) console.error('[OAuth] sign-in failed:', err.message || err);
       if (err || !user) {
         let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
         if (frontendUrl.endsWith('/app')) {

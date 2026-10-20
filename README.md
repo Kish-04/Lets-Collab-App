@@ -58,6 +58,8 @@ npm run electron:dev
 ```
 
 ## Production Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the step-by-step runbook (secrets, regional TURN relays, Polygon audit contract, mobile builds).
 1. Build the Next.js application: `npm run build`
 2. Deploy the exported static frontend from `out/` or use the existing Vercel configuration.
 3. Deploy the backend separately and set `NEXT_PUBLIC_BACKEND_URL` to that backend URL.

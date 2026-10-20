@@ -1,8 +1,10 @@
 type EventCallback = (data: any, peerId: string) => void;
+type OpenCallback = (peerId: string) => void;
 
 export class DataChannelManager {
     private channels: Map<string, RTCDataChannel> = new Map();
     private listeners: Map<string, Set<EventCallback>> = new Map();
+    private openListeners: Map<string, Set<OpenCallback>> = new Map();
 
     public attachChannel(channel: RTCDataChannel, peerId: string, label: string) {
         const id = `${label}-${peerId}`;
@@ -25,9 +27,29 @@ export class DataChannelManager {
             }
         };
 
+        const notifyOpen = () => this.openListeners.get(label)?.forEach(cb => cb(peerId));
+        if (channel.readyState === 'open') queueMicrotask(notifyOpen);
+        else channel.onopen = notifyOpen;
+
         channel.onclose = () => {
-            this.channels.delete(id);
+            // A late close from a replaced connection must not remove the newer channel
+            if (this.channels.get(id) === channel) this.channels.delete(id);
         };
+    }
+
+    // Called with the peer id whenever a channel with this label opens
+    public onOpen(label: string, callback: OpenCallback) {
+        if (!this.openListeners.has(label)) this.openListeners.set(label, new Set());
+        this.openListeners.get(label)!.add(callback);
+        return () => { this.openListeners.get(label)?.delete(callback); };
+    }
+
+    public getOpenPeers(label: string): string[] {
+        const peers: string[] = [];
+        this.channels.forEach((channel, id) => {
+            if (id.startsWith(`${label}-`) && channel.readyState === 'open') peers.push(id.slice(label.length + 1));
+        });
+        return peers;
     }
 
     public send(label: string, data: any, targetPeerId?: string) {
@@ -65,7 +87,8 @@ export class DataChannelManager {
     public clearAll() {
         this.channels.forEach(channel => channel.close());
         this.channels.clear();
-        this.listeners.clear();
+        // Message and open listeners belong to mounted components (file transfer, whiteboard, CRDT docs)
+        // that unsubscribe themselves; wiping them on a role swap silently broke those features
     }
 
     public getBufferedAmount(label: string, targetPeerId: string): number {

@@ -32,3 +32,20 @@ dist-fixed/
 
 .vercel
 .env*
+
+# Local runtime config (holds API keys); commit app-config.example.json instead
+app-config.json
+
+# Scratch output and backups that should never be committed
+diff*.txt
+*_log.txt
+temp_*
+*.backup.js
+jobs.json
+runs.json
+asar-files.txt
+chunks_raw.txt
+all_exam_replaces.txt
+
+# Archived desktop builds
+dist-*/

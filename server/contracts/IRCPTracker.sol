@@ -2,6 +2,46 @@
 pragma solidity ^0.8.24;
 
 contract IRCPTracker {
+    // Only authorised backends may write, so nobody can inject fake entries into a public ledger
+    address public owner;
+    mapping(address => bool) public writers;
+
+    error NotOwner();
+    error NotWriter();
+    error ZeroAddress();
+
+    event WriterUpdated(address indexed writer, bool allowed);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
+    modifier onlyWriter() {
+        if (!writers[msg.sender]) revert NotWriter();
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+        writers[msg.sender] = true;
+        emit OwnershipTransferred(address(0), msg.sender);
+        emit WriterUpdated(msg.sender, true);
+    }
+
+    function setWriter(address writer, bool allowed) external onlyOwner {
+        if (writer == address(0)) revert ZeroAddress();
+        writers[writer] = allowed;
+        emit WriterUpdated(writer, allowed);
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+
     struct SessionLog {
         string sessionId;       // e.g. the Room Code
         string hostId;          // e.g. the email or user ID of the host
@@ -33,7 +73,7 @@ contract IRCPTracker {
         string memory _controllerId,
         string memory _eventType,
         string memory _dataHash
-    ) public {
+    ) public onlyWriter {
         uint256 currentTime = block.timestamp;
         
         logs.push(SessionLog({

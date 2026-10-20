@@ -9,7 +9,7 @@ declare global {
     }
 }
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import type { FormEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense } from 'react'
@@ -17,7 +17,7 @@ import { io, Socket } from "socket.io-client"
 import { motion } from "framer-motion"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer, X,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft, ShieldOff, Activity
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -27,7 +27,9 @@ import { PermissionRequestModal } from "@/components/ircp/permission-modal"
 
 import { VoiceChanger, VoiceFilter } from "@/lib/VoiceChanger"
 import { VirtualAvatar, AvatarStyle } from "@/lib/VirtualAvatar"
+import { Avatar3D, isAvatar3DStyle } from "@/lib/Avatar3D"
 import { VirtualBackground, BackgroundStyle } from "@/lib/VirtualBackground"
+import { CRDT_CHANNEL } from "@/lib/CrdtSync"
 import { dataChannelManager } from "@/lib/DataChannelManager"
 import { FileTransfer } from "@/components/ircp/FileTransfer"
 import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
@@ -35,10 +37,11 @@ import { WhiteboardOverlay } from "@/components/ircp/WhiteboardOverlay"
 import { AiSupervisor } from "@/components/ircp/supervisor/AiSupervisor"
 import { SessionRecorder } from "@/lib/SessionRecorder"
 import { FederatedFeatures, FederatedLearner } from "@/lib/FederatedLearner"
+import { buildContribution, createRoundKeys, HeldShare, maskVector, openShares, prepareShares, revealShares, RoundKeys, RoundPeer } from "@/lib/secureAggregation"
 
 import dynamic from 'next/dynamic'
 const PetCanvas = dynamic(() => import('@/components/ircp/pet/PetCanvas').then(m => m.PetCanvas), { ssr: false })
-const StandaloneCanvas = dynamic<{ peerId?: string; isHost: boolean; onClose: () => void }>(() => import('@/components/ircp/StandaloneCanvas').then(m => m.StandaloneCanvas as any), { ssr: false })
+const StandaloneCanvas = dynamic<{ peerId?: string; isHost: boolean; sessionMode?: string | null; onClose: () => void }>(() => import('@/components/ircp/StandaloneCanvas').then(m => m.StandaloneCanvas as any), { ssr: false })
 
 import { ExamHostDashboard, ExamQuestion } from '@/components/ircp/exam/ExamHostDashboard'
 import { ExamControllerOverlay } from '@/components/ircp/exam/ExamControllerOverlay'
@@ -47,103 +50,50 @@ import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
 import { useFaceProctoring } from "@/hooks/useFaceProctoring"
 import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
-import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
-import { CryptoUtil } from "@/lib/CryptoUtil"
+import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken, getAuthHeaders } from "@/lib/utils"
+import { describeFaceSteadily, FACE_ERROR_TEXT } from "@/lib/faceMatch"
+import { publishTracks, isSfuDisabled } from "@/lib/sfuClient"
+import { askPet } from "@/lib/askPet"
+import {
+    type Role,
+    type PermissionLevel,
+    type ConnectionState,
+    canonicalProctoringType,
+    roomTimeToIso,
+    type LogEntry,
+    type ParticipantQuality,
+    type Participant,
+    type JoinRequest,
+    type ChatMessage,
+    type EvidenceItem,
+    permissionLevels,
+    quickChatEmojis,
+    clamp01,
+    FL_CLIP_NORM,
+    FL_NOISE_MULTIPLIER,
+    FL_DP_DELTA,
+    FL_EPSILON_BUDGET,
+    FL_NOISE_SHARES,
+    FL_DP_ROUNDS_KEY,
+    dpRoundsInMemory,
+    dpRoundsUsed,
+    recordDpRound,
+    formatDuration,
+    ConnectionQualityMeter,
+    hasTurnServer,
+} from "@/lib/session/model"
+import { gaussianEpsilon } from "@/lib/dpAccountant"
+import { useModalDialog } from "@/hooks/useModalDialog"
+import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
+import { ClipboardSync, CLIPBOARD_CHANNEL } from "@/components/ircp/ClipboardSync"
+import { AiCalibrationDialog, CalibratingOverlay, ConfirmDialog, SharePickerDialog } from "@/components/ircp/session/SessionDialogs"
+import { ChatPanel } from "@/components/ircp/session/ChatPanel"
+import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
     readPersonalAppearance, SessionMode
 } from "@/lib/appearance"
 
-type Role = "host" | "controller" | "admin"
-type PermissionLevel = "view" | "mouse" | "keyboard" | "full"
-type ConnectionState = "idle" | "waiting" | "connecting" | "connected"
-type LogEntry = {
-    time: string // ISO 8601 string
-    type: "system" | "user" | "input" | "permission" | "anticheat" | "chain" | "chat" | "quality" | "recording"
-    message: string
-}
-type ParticipantQuality = {
-    latency: number | null
-    fps: number | null
-    packetLoss: number | null
-    health: "excellent" | "good" | "fair" | "poor" | "unknown"
-}
-type Participant = {
-    id: string
-    socketId: string
-    name: string
-    email?: string | null
-    initials?: string
-    role: "controller"
-    permission: PermissionLevel
-    clipboardAllowed: boolean
-    joinedAt: number
-    quality?: ParticipantQuality
-}
-type JoinRequest = {
-    id: string
-    socketId: string
-    name: string
-    email?: string | null
-    initials?: string
-    device?: string
-    ip?: string
-    requestedAt: number
-}
-type ChatMessage = {
-    id: string
-    time: string // ISO 8601 string
-    senderId: string
-    senderName: string
-    role: "host" | "controller" | "admin"
-    text: string
-}
-type EvidenceItem = {
-    id?: string
-    time?: string // ISO 8601 string
-    timestamp?: string // ISO 8601 string
-    type: string
-    by?: string
-    label?: string
-    message?: string
-}
-
-const permissionLevels = [
-    { id: "view" as const, label: "View Only", icon: Eye },
-    { id: "mouse" as const, label: "Mouse Only", icon: MousePointer },
-    { id: "keyboard" as const, label: "Keyboard Only", icon: Keyboard },
-    { id: "full" as const, label: "Full Control", icon: Zap },
-]
-
-const quickChatEmojis = ['👍', '👎', '🙏', '✅', '❌', '🔥', '😂', '🎉', '💡', '🤔', '🚀', '❤️', '👀', '✨']
-
-const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
-
-function formatDuration(s: number) {
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-}
-
-function ConnectionQualityMeter({ latency }: { latency: number }) {
-    const bars = 4
-    const active = latency < 50 ? 4 : latency < 100 ? 3 : latency < 150 ? 2 : 1
-    const color = latency < 50 ? "var(--emerald)" : latency < 150 ? "var(--amber)" : "var(--red)"
-    return (
-        <div className="flex items-end gap-0.5 h-4">
-            {Array.from({ length: bars }).map((_, i) => (
-                <div key={i} className="w-1 rounded-sm transition-all"
-                    style={{ height: `${((i + 1) / bars) * 100}%`, backgroundColor: i < active ? color : "var(--border)" }} />
-            ))}
-        </div>
-    )
-}
-
-function hasTurnServer(servers: RTCIceServer[]) {
-    return servers.some(server => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls]
-        return urls.some(url => typeof url === 'string' && /^turns?:/i.test(url))
-    })
-}
 
 export default function SessionPage() {
     return (
@@ -160,6 +110,8 @@ function SessionContent() {
     const createDirect = searchParams.get("create") === "true"
     const joinDirect = searchParams.get("join") === "true"
     const requestedMode: SessionMode = searchParams.get("mode") === "supervised" ? "supervised" : "collaboration"
+    // Opened from a course activity (LTI launch): links the new room to that activity for students and grades
+    const ltiLink = searchParams.get("lti") || undefined
 
     // ── Setup state ───────────────────────────────────────────────────────────
     const [setupMode, setSetupMode] = useState<"choose" | "join" | null>(
@@ -211,12 +163,27 @@ function SessionContent() {
     const [showPermModal, setShowPermModal] = useState(false)
     const [requestingUser, setRequestingUser] = useState<any>(null)
     const [participants, setParticipants] = useState<Participant[]>([])
+    const [panicShortcuts, setPanicShortcuts] = useState<string[]>([])
+    const [panicNotice, setPanicNotice] = useState<string | null>(null)
     const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
     const [selectedControllerId, setSelectedControllerId] = useState<string | null>(null)
     const [clipboardAllowed, setClipboardAllowed] = useState(false)
+    // chatMessages holds messages exactly as relayed (e2e ciphertext); decryption happens for display only
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+    const [decryptedChat, setDecryptedChat] = useState<Record<string, string | null>>({})
+    const [e2eKeyVersion, setE2eKeyVersion] = useState(0)
+    const [e2eFingerprint, setE2eFingerprint] = useState('')
+    const e2eRef = useRef<E2EChatSession | null>(null)
+    const e2eAnnouncedRef = useRef(false)
+    const e2eRosterRef = useRef<RosterMember[]>([])
+    const e2eQueueRef = useRef<Promise<void>>(Promise.resolve())
+    const e2eKeyRequestAtRef = useRef(0)
     const [chatInput, setChatInput] = useState("")
     const [chatOpen, setChatOpen] = useState(false)
+    const [activityOpen, setActivityOpen] = useState(false)
+    // Host only: the room log and risk score kept by the server
+    const [roomEvents, setRoomEvents] = useState<{ time: string; type: string; message: string }[]>([])
+    const [roomRisk, setRoomRisk] = useState<number | null>(null)
     const [showPet, setShowPet] = useState(true)
 
     useEffect(() => {
@@ -239,6 +206,9 @@ function SessionContent() {
     const [localMicMuted, setLocalMicMuted] = useState(true)
     const [localCamMuted, setLocalCamMuted] = useState(true)
     const [hasLocalMedia, setHasLocalMedia] = useState(false)
+    const [sfuPublishAttempt, setSfuPublishAttempt] = useState(0)
+    const [sfuAdmission, setSfuAdmission] = useState(0)
+    const sfuPublishFailuresRef = useRef(0)
     const [gaugeGlow, setGaugeGlow] = useState(false)
     const [logFilter, setLogFilter] = useState<'all' | 'anticheat' | 'system'>('all')
     const [observerCount, setObserverCount] = useState(0)
@@ -330,6 +300,7 @@ function SessionContent() {
 
     // Exam State
     const [examQuestions, setExamQuestions] = useState<ExamQuestion[]>([])
+    const [examResults, setExamResults] = useState<Record<string, boolean>>({})
     const [examLiveAnswers, setExamLiveAnswers] = useState<Record<string, Record<string, any>>>({})
     // ── Refs ──────────────────────────────────────────────────────────────────
     const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -345,15 +316,26 @@ function SessionContent() {
     const socketRef = useRef<Socket | null>(null)
     const pcRef = useRef<RTCPeerConnection | null>(null)
     const hostPcRefs = useRef<Map<string, RTCPeerConnection>>(new Map())
+    const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map())
     const localStreamRef = useRef<MediaStream | null>(null)
     const activeLocalStreamRef = useRef<MediaStream | null>(null)
     const screenStreamRef = useRef<MediaStream | null>(null)
     const voiceChangerRef = useRef<VoiceChanger | null>(null)
     const virtualAvatarRef = useRef<VirtualAvatar | null>(null)
+    const avatar3DRef = useRef<Avatar3D | null>(null)
     const virtualBackgroundRef = useRef<VirtualBackground | null>(null)
     const sessionRecorderRef = useRef<SessionRecorder | null>(null)
     const engineRef = useRef<AntiCheatEngine | null>(null)
     const federatedLearnerRef = useRef<FederatedLearner | null>(null)
+    // Ephemeral round key and frozen contribution, kept only until the masked update is sent
+    // Per-round secrets (ephemeral key, self-mask seed, received shares), kept only until the round ends
+    const flRoundStateRef = useRef<Map<number, {
+        keys: RoundKeys
+        seed: Uint8Array
+        contribution: Float64Array
+        peers?: RoundPeer[]
+        held?: Map<string, HeldShare>
+    }>>(new Map())
     const hiddenBgVideoRef = useRef<HTMLVideoElement | null>(null)
     const chatScrollRef = useRef<HTMLDivElement>(null)
 
@@ -470,11 +452,24 @@ function SessionContent() {
         };
 
         if (avatarStyle !== 'none') {
-            if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
-            virtualAvatarRef.current.setAvatarStyle(avatarStyle);
-            
-            if (currentVideoSource) {
-                const avatarStream = virtualAvatarRef.current!.start(currentVideoSource);
+            let avatarStream: MediaStream | null = null;
+            if (isAvatar3DStyle(avatarStyle)) {
+                // 3D avatars replace the camera entirely: only the rendered character is sent
+                virtualAvatarRef.current?.stop();
+                if (!avatar3DRef.current) {
+                    avatar3DRef.current = new Avatar3D();
+                    avatar3DRef.current.onLoadError = () => setAvatarError('3D face tracking failed to load');
+                }
+                avatar3DRef.current.setStyle(avatarStyle);
+                if (currentVideoSource) avatarStream = avatar3DRef.current.start(currentVideoSource);
+            } else {
+                avatar3DRef.current?.stop();
+                if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
+                virtualAvatarRef.current.setAvatarStyle(avatarStyle);
+                if (currentVideoSource) avatarStream = virtualAvatarRef.current.start(currentVideoSource);
+            }
+
+            if (avatarStream) {
                 const finalStream = new MediaStream();
                 processedStream.getAudioTracks().forEach(t => finalStream.addTrack(t));
                 avatarStream.getVideoTracks().forEach(t => finalStream.addTrack(t));
@@ -482,11 +477,17 @@ function SessionContent() {
             }
         } else {
             virtualAvatarRef.current?.stop();
+            avatar3DRef.current?.stop();
             updateSenders(processedStream);
         }
         
         
     }, [voiceFilter, avatarStyle, backgroundStyle, customBackgroundUrl, hasLocalMedia]);
+
+    useEffect(() => () => {
+        avatar3DRef.current?.dispose();
+        avatar3DRef.current = null;
+    }, []);
     const [aiConfig, setAiConfig] = useState({
         eyeTrackingThreshold: 0.80,
         emotionSensitivity: 0.65,
@@ -494,6 +495,11 @@ function SessionContent() {
         headPoseMargin: 0.50
     })
     const [showAiSettings, setShowAiSettings] = useState(false)
+    // Keyboard and screen-reader handling for the modal panels (Escape closes, focus stays inside)
+    const aiDialogRef = useModalDialog(showAiSettings, () => setShowAiSettings(false))
+    const killDialogRef = useModalDialog(showKillConfirm, () => setShowKillConfirm(false))
+    const leaveDialogRef = useModalDialog(showLeaveConfirm, () => setShowLeaveConfirm(false))
+    const shareDialogRef = useModalDialog(showSharePicker, () => setShowSharePicker(false))
     const hudTimerRef = useRef<NodeJS.Timeout | null>(null)
     const statsTimerRef = useRef<NodeJS.Timeout | null>(null)
     const statsTimerRefs = useRef<Map<string, NodeJS.Timeout>>(new Map())
@@ -597,11 +603,30 @@ function SessionContent() {
             const socket = socketRef.current
             if (!socket?.connected) return
             const startedAt = performance.now()
-            socket.emit('ping-ircp')
-            socket.once('pong-ircp', () => setLatency(Math.round(performance.now() - startedAt)))
+            // Acknowledgement with a timeout: a lost reply no longer leaves a listener behind, and a
+            // late reply can no longer be matched to the next ping
+            socket.timeout(2500).emit('ping-ircp', (err: Error | null) => {
+                if (!err) setLatency(Math.round(performance.now() - startedAt))
+            })
         }, 3000)
         return () => window.clearInterval(timer)
     }, [])
+
+    // The host takes clipboard text only from controllers it allowed; a controller only has the host
+    const clipboardAcceptFrom = useCallback((peerId: string) => {
+        if (role !== 'host') return true
+        const participant = participants.find(p => p.id === peerId || p.socketId === peerId)
+        return Boolean(participant?.clipboardAllowed)
+    }, [role, participants])
+    const clipboardPeerName = useCallback((peerId: string) => {
+        if (role !== 'host') return 'the host'
+        return participants.find(p => p.id === peerId || p.socketId === peerId)?.name || 'a participant'
+    }, [role, participants])
+
+    const activityEntries = useMemo<ActivityEntry[]>(() => [
+        ...sessionLogs.map(entry => ({ ...entry, source: 'device' as const })),
+        ...(role === 'host' ? roomEvents.map(entry => ({ ...entry, source: 'room' as const })) : []),
+    ].sort((a, b) => Date.parse(a.time) - Date.parse(b.time)), [sessionLogs, roomEvents, role])
 
     const addLog = useCallback((type: LogEntry['type'], message: string) => {
         setSessionLogs(prev => [...prev, { time: new Date().toISOString(), type, message }].slice(-100))
@@ -616,11 +641,28 @@ function SessionContent() {
         ensureFederatedLearner().addSample(features.map(clamp01) as FederatedFeatures, label)
     }, [ensureFederatedLearner])
 
+    const currentNetworkInstability = useCallback(() => {
+        const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
+        const frameDrop = streamFpsRef.current === null ? 0 : clamp01((24 - streamFpsRef.current) / 24)
+        return Math.max(networkInstability, frameDrop)
+    }, [])
+
+    // Features: [visual signal, environment/focus signal, audio signal]. Live network quality is
+    // included so the shared model can learn that detections during bad connections are less reliable.
     const federatedFeaturesForEvent = useCallback((eventType: string): FederatedFeatures => {
-        if (['NO_FACE', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'PHONE_DETECTED'].includes(eventType)) return [1, 0, 0.15]
-        if (['VOICE_DETECTED', 'TALKING_DETECTED', 'STRESS_DETECTED', 'EMOTION_ANOMALY'].includes(eventType)) return [0.35, 0, 1]
+        const network = currentNetworkInstability()
+        if (['NO_FACE', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'PHONE_DETECTED'].includes(eventType)) return [1, network, 0.15]
+        if (['VOICE_DETECTED', 'TALKING_DETECTED', 'STRESS_DETECTED', 'EMOTION_ANOMALY'].includes(eventType)) return [0.35, network, 1]
         if (eventType === 'TAB_SWITCHED') return [0.2, 1, 0.1]
-        return [0.2, 0.2, 0.2]
+        return [0.2, Math.max(0.2, network), 0.2]
+    }, [currentNetworkInstability])
+
+    // Once the room has a trained/aggregated model, scale each penalty by its violation confidence (0.5x-1.5x)
+    const federatedPenalty = useCallback((features: FederatedFeatures, basePenalty: number) => {
+        const learner = federatedLearnerRef.current
+        if (!learner?.hasLearned() || basePenalty <= 0) return { penalty: basePenalty, confidence: null as number | null }
+        const confidence = learner.predict(features)
+        return { penalty: Math.max(1, Math.round(basePenalty * (0.5 + confidence))), confidence }
     }, [])
 
     const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6]) => {
@@ -630,6 +672,8 @@ function SessionContent() {
             event: 'PROCTORING_ALERT',
             message: reason,
             penalty,
+            // Lets an admin's false-positive verdict come back as a training label for this device
+            features: features.map(clamp01),
         })
         recordFederatedSample(features, 1)
         addLog('anticheat', `Malpractice detected: ${reason}`)
@@ -649,14 +693,60 @@ function SessionContent() {
     useEffect(() => {
         if (sessionMode !== 'supervised' || connectionState !== 'connected') return
         const timer = window.setInterval(() => {
-            const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
-            const frameDrop = streamFpsRef.current === null ? 0 : clamp01((24 - streamFpsRef.current) / 24)
-            recordFederatedSample([0, Math.max(networkInstability, frameDrop), 0], 0)
+            recordFederatedSample([0, currentNetworkInstability(), 0], 0)
         }, 30000)
         return () => window.clearInterval(timer)
-    }, [sessionMode, connectionState, recordFederatedSample])
+    }, [sessionMode, connectionState, recordFederatedSample, currentNetworkInstability])
 
     const mediaStreamPromiseRef = useRef<Promise<MediaStream> | null>(null)
+    const cameraRecoveriesRef = useRef<number[]>([])
+
+    // A camera track can end on its own (driver reset, USB glitch, another app taking the device);
+    // stop() from this page does not fire 'ended'. Open the camera again and put the new track where
+    // the old one was: the local stream and preview, and every call that was sending it.
+    const watchCameraTrack = useCallback((stream: MediaStream, track: MediaStreamTrack) => {
+        track.addEventListener('ended', async () => {
+            if (localStreamRef.current !== stream) return // the camera was released on purpose
+            const now = Date.now()
+            cameraRecoveriesRef.current = cameraRecoveriesRef.current.filter(time => now - time < 60000)
+            if (cameraRecoveriesRef.current.length >= 3) {
+                addLog('system', 'The camera keeps stopping; turn it off and on again or check its cable')
+                return
+            }
+            cameraRecoveriesRef.current.push(now)
+            addLog('system', 'The camera stopped unexpectedly; reopening it')
+            try {
+                // A camera that was just reset or replugged can take a few seconds to be listed again
+                let fresh: MediaStreamTrack | undefined
+                for (const wait of [0, 2000, 5000, 10000]) {
+                    if (wait) await new Promise(resolve => setTimeout(resolve, wait))
+                    if (localStreamRef.current !== stream) return
+                    try {
+                        fresh = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0]
+                        break
+                    } catch (err) {
+                        if (wait === 10000) throw err
+                    }
+                }
+                if (!fresh || localStreamRef.current !== stream) { fresh?.stop(); return }
+                fresh.enabled = track.enabled
+                stream.removeTrack(track)
+                stream.addTrack(fresh)
+                if (activeLocalStreamRef.current && activeLocalStreamRef.current !== stream && activeLocalStreamRef.current.getVideoTracks().includes(track)) {
+                    activeLocalStreamRef.current.removeTrack(track)
+                    activeLocalStreamRef.current.addTrack(fresh)
+                }
+                if (localCamRef.current) localCamRef.current.srcObject = activeLocalStreamRef.current || stream
+                const peers = [pcRef.current, ...hostPcRefs.current.values(), ...observerPcRefs.current.values()]
+                peers.forEach(pc => pc?.getSenders().forEach(sender => {
+                    if (sender.track === track) sender.replaceTrack(fresh).catch(() => { })
+                }))
+                watchCameraTrack(stream, fresh)
+            } catch (err: any) {
+                addLog('system', `Could not reopen the camera: ${err?.message || err}`)
+            }
+        })
+    }, [addLog])
 
     const acquireLocalMedia = useCallback(async (videoRequired = true) => {
         if (localStreamRef.current) return localStreamRef.current
@@ -675,6 +765,7 @@ function SessionContent() {
         try {
             const stream = await mediaStreamPromiseRef.current
             localStreamRef.current = stream
+            stream.getVideoTracks().forEach(track => watchCameraTrack(stream, track))
             setHasLocalMedia(true)
             return stream
         } catch (err: any) {
@@ -700,7 +791,7 @@ function SessionContent() {
             (window as any).isRequestingPermissions = false;
             mediaStreamPromiseRef.current = null
         }
-    }, [])
+    }, [watchCameraTrack])
 
     const stopLocalMedia = useCallback(() => {
         if (localStreamRef.current) {
@@ -726,6 +817,11 @@ function SessionContent() {
     }, [connectionState, stopLocalMedia])
 
     const toggleLocalMic = async () => {
+        // Audio proctoring listens to this track, so a candidate may not mute it (same rule as the camera)
+        if (sessionMode === 'supervised' && role === 'controller' && !localMicMuted) {
+            addLog('system', 'Microphone cannot be muted during a supervised session.');
+            return;
+        }
         if (localStreamRef.current) {
             const audioTrack = localStreamRef.current.getAudioTracks()[0]
             if (audioTrack) {
@@ -808,16 +904,20 @@ function SessionContent() {
             if (status === 'error') addLog('anticheat', `Anti-cheat failed: ${msg}`)
         })
         engine.onEvent((ev: AntiCheatEvent) => {
-            addLog('anticheat', `${ev.type}: ${ev.message} (+${ev.scorePenalty})`)
-            recordFederatedSample(federatedFeaturesForEvent(ev.type), ev.scorePenalty > 0 ? 1 : 0)
-            setRiskScore(s => Math.min(100, s + ev.scorePenalty))
+            if (!firstProctoringReport(ev.type)) return // already reported by another detector
+            const features = federatedFeaturesForEvent(ev.type)
+            const { penalty, confidence } = federatedPenalty(features, ev.scorePenalty)
+            addLog('anticheat', `${ev.type}: ${ev.message} (+${penalty}${confidence === null ? '' : `, FL confidence ${confidence.toFixed(2)}`})`)
+            recordFederatedSample(features, ev.scorePenalty > 0 ? 1 : 0)
+            setRiskScore(s => Math.min(100, s + penalty))
             setGaugeGlow(true)
             setTimeout(() => setGaugeGlow(false), 800)
             captureScreenshotEvidence(localCamRef.current, ev.message).then(url => {
                 socketRef.current?.emit('system-alert', {
                     type: 'anticheat_violation', event: ev.type,
-                    message: ev.message, penalty: ev.scorePenalty, room: roomCode,
-                    evidenceUrl: url
+                    message: ev.message, penalty, room: roomCode,
+                    evidenceUrl: url,
+                    features: features.map(clamp01),
                 })
             });
         })
@@ -859,7 +959,7 @@ function SessionContent() {
             engine.stop()
             stopLocalMedia()
         }
-    }, [sessionMode, role, addLog, federatedFeaturesForEvent, recordFederatedSample, stopLocalMedia])
+    }, [sessionMode, role, addLog, federatedFeaturesForEvent, federatedPenalty, recordFederatedSample, stopLocalMedia])
 
     useEffect(() => {
         if (engineRef.current) engineRef.current.setConfig(aiConfig)
@@ -870,6 +970,7 @@ function SessionContent() {
     const selectedClipboardAllowed = selectedParticipant?.clipboardAllowed ?? clipboardAllowed
 
     const startStats = (pc: RTCPeerConnection) => {
+        if (statsTimerRef.current) clearInterval(statsTimerRef.current) // one stats loop, not one per peer/role swap
         statsTimerRef.current = setInterval(async () => {
             const stats = await pc.getStats().catch(() => null)
             if (!stats) return
@@ -1050,6 +1151,19 @@ function SessionContent() {
         socketRef.current?.emit('observer-offer', { observerId, offer })
     }
 
+    // The host keeps one connection per controller; everyone else has a single connection
+    const peerKey = (fromId?: string) => currentRoleRef.current === 'host' && fromId ? fromId : 'remote'
+    const peerConnectionFor = (fromId?: string) => currentRoleRef.current === 'host' && fromId
+        ? hostPcRefs.current.get(fromId)
+        : pcRef.current
+    const flushPendingIce = async (pc: RTCPeerConnection, fromId?: string) => {
+        const key = peerKey(fromId)
+        const queued = pendingIceRef.current.get(key)
+        if (!queued) return
+        pendingIceRef.current.delete(key)
+        for (const candidate of queued) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
+    }
+
     const createPC = async (targetId?: string) => {
         let servers = iceServersRef.current;
         if (!servers || servers.length === 0) {
@@ -1075,17 +1189,28 @@ function SessionContent() {
         else pcRef.current = pc
 
         if (currentRoleRef.current === 'host' && targetId) {
-            const channel = pc.createDataChannel('ircp-input', { ordered: false, maxRetransmits: 0 })
+            // Reliable and ordered: a lost keyup/mouseup left keys or buttons stuck down on the host.
+            // Mouse moves are throttled to ~60/s by the controller, so the extra latency is small.
+            const channel = pc.createDataChannel('ircp-input', { ordered: true })
             attachInputChannel(channel, targetId)
             
             const fileChannel = pc.createDataChannel('ircp-file', { ordered: true })
             dataChannelManager.attachChannel(fileChannel, targetId, 'ircp-file')
             
-            const drawChannel = pc.createDataChannel('ircp-draw', { ordered: false, maxRetransmits: 0 })
+            // Strokes, 'start' and 'clear' must all arrive, in order, or whiteboards diverge
+            const drawChannel = pc.createDataChannel('ircp-draw', { ordered: true })
             dataChannelManager.attachChannel(drawChannel, targetId, 'ircp-draw')
             
             const chatChannel = pc.createDataChannel('ircp-chat', { ordered: true })
             dataChannelManager.attachChannel(chatChannel, targetId, 'ircp-chat')
+
+            // Clipboard text, peer to peer; gated by the controller's clipboard permission
+            const clipboardChannel = pc.createDataChannel(CLIPBOARD_CHANNEL, { ordered: true })
+            dataChannelManager.attachChannel(clipboardChannel, targetId, CLIPBOARD_CHANNEL)
+
+            // Reliable, ordered channel for Yjs CRDT sync (whiteboard, exam code mirror)
+            const crdtChannel = pc.createDataChannel(CRDT_CHANNEL, { ordered: true })
+            dataChannelManager.attachChannel(crdtChannel, targetId, CRDT_CHANNEL)
         } else {
             pc.ondatachannel = event => {
                 if (event.channel.label === 'ircp-input') attachInputChannel(event.channel, targetId || 'host')
@@ -1131,8 +1256,33 @@ function SessionContent() {
             setConnectionState('connected')
             setStatusMessage('')
         }
+        let iceRestarts = 0
         pc.onconnectionstatechange = () => {
-            if (['connected', 'completed'].includes(pc.connectionState)) setConnectionState('connected')
+            if (['connected', 'completed'].includes(pc.connectionState)) {
+                setConnectionState('connected')
+                iceRestarts = 0
+            }
+            // The host (offerer) recovers failed paths with an ICE restart using fresh TURN credentials,
+            // e.g. after a network switch or when the original relay became unreachable
+            if (pc.connectionState === 'failed' && currentRoleRef.current === 'host' && targetId && iceRestarts < 3) {
+                iceRestarts += 1
+                addLog('system', `Connection to peer failed; restarting ICE (attempt ${iceRestarts})`)
+                fetchIceServers()
+                    .then(async (freshServers) => {
+                        iceServersRef.current = freshServers
+                        pc.setConfiguration({ ...pc.getConfiguration(), iceServers: freshServers })
+                        if (pc.signalingState !== 'stable') return
+                        const offer = await pc.createOffer({ iceRestart: true })
+                        await pc.setLocalDescription(offer)
+                        socketRef.current?.emit('offer', {
+                            offer,
+                            roomId: roomCodeRef.current,
+                            targetId,
+                            mediaStreamIds: getLocalMediaStreamIds(),
+                        })
+                    })
+                    .catch(err => addLog('system', `ICE restart failed: ${err?.message || err}`))
+            }
         }
         startStats(pc)
         startQualityStats(pc, targetId || 'primary')
@@ -1152,8 +1302,12 @@ function SessionContent() {
         (window as any)._socket = socket;
         (window as any)._roomCode = roomCodeRef;
         socket.on('connect', () => {
-            if (asRole === 'host') {
-                socket.emit('create-room', { name: localStorage.getItem('ircp_name') || 'Host', mode: sessionModeRef.current, appearance: readPersonalAppearance() })
+            e2eAnnouncedRef.current = false
+            if (asRole === 'host' && roomCodeRef.current) {
+                // Reconnected after a drop: take the existing room back instead of opening a new one
+                socket.emit('resume-host', { roomId: roomCodeRef.current })
+            } else if (asRole === 'host') {
+                socket.emit('create-room', { name: localStorage.getItem('ircp_name') || 'Host', mode: sessionModeRef.current, appearance: readPersonalAppearance(), ltiLink })
             } else if (asRole === 'admin') {
                 const room = code || joinInput
                 setRoomCode(room)
@@ -1191,7 +1345,11 @@ function SessionContent() {
             setParticipants(state.participants || [])
             setPendingJoinRequests(state.pendingRequests || [])
             setChatMessages(state.messages || [])
+            announceE2E(socket, state.roomCode)
             setObserverCount(state.observerCount || 0)
+            if (Array.isArray(state.events)) setRoomEvents(state.events.map((event: any) => ({ ...event, time: roomTimeToIso(event.time) })))
+            if (typeof state.riskScore === 'number') setRoomRisk(state.riskScore)
+            if (state.aiConfig && currentRoleRef.current === 'controller') setAiConfig(prev => ({ ...prev, ...state.aiConfig }))
             setExamQuestions(state.examQuestions || [])
         })
         socket.on('join-approved', ({ permission: approvedPermission, clipboardAllowed: approvedClipboard }: any) => {
@@ -1201,6 +1359,8 @@ function SessionContent() {
             setKeyboardEnabled(approvedPermission === 'full' || approvedPermission === 'keyboard')
             setClipboardAllowed(Boolean(approvedClipboard))
             setConnectionState('connecting')
+            // Admitted (again, after a reconnect): the media server needs this socket's camera stream
+            setSfuAdmission(n => n + 1)
         })
         socket.on('controller-joined', async ({ controllerId }: any) => {
             await negotiateWithController(controllerId)
@@ -1214,6 +1374,7 @@ function SessionContent() {
                     pc = await createPC(payload.fromId);
                 }
                 await pc.setRemoteDescription(new RTCSessionDescription(payload.offer))
+                await flushPendingIce(pc, payload.fromId)
                 addMediaTracksToPeer(pc)
                 const answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
@@ -1230,15 +1391,27 @@ function SessionContent() {
         })
         socket.on('answer', async (payload: any) => {
             try {
-                const pc = payload?.fromId ? hostPcRefs.current.get(payload.fromId) : pcRef.current
-                await pc?.setRemoteDescription(new RTCSessionDescription(payload.answer))
+                // The server always sets fromId, but only the host keeps one connection per peer;
+                // a controller's single connection is pcRef (renegotiations it starts answer here)
+                const pc = peerConnectionFor(payload?.fromId)
+                if (!pc) return
+                await pc.setRemoteDescription(new RTCSessionDescription(payload.answer))
+                await flushPendingIce(pc, payload?.fromId)
             } catch (err) {
                 console.error('[DEBUG] Error setting remote answer:', err);
             }
         })
         socket.on('ice-candidate', async (payload: any) => {
-            const pc = currentRoleRef.current === 'host' && payload?.fromId ? hostPcRefs.current.get(payload.fromId) : pcRef.current
-            await pc?.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch(() => {})
+            if (!payload?.candidate) return
+            const pc = peerConnectionFor(payload.fromId)
+            // Candidates can arrive before the connection exists or before its remote description is
+            // set; queue them instead of dropping them, or relay-only (TURN) connections fail
+            if (!pc || !pc.remoteDescription) {
+                const key = peerKey(payload.fromId)
+                pendingIceRef.current.set(key, [...(pendingIceRef.current.get(key) || []), payload.candidate].slice(-100))
+                return
+            }
+            await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch(() => {})
         })
         socket.on('access-granted', (nextPermission: PermissionLevel, options: { clipboardAllowed?: boolean } = {}) => {
             setPermission(nextPermission)
@@ -1281,13 +1454,46 @@ function SessionContent() {
             const pc = observerPcRefs.current.get(fromId)
             await pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { })
         })
-        socket.on('chat-message', async (message: ChatMessage) => {
-            try {
-                const decryptedText = await CryptoUtil.decrypt(message.text, roomCodeRef.current || 'default-secret');
-                setChatMessages(prev => [...prev, { ...message, text: decryptedText }].slice(-100));
-            } catch (err) {
-                setChatMessages(prev => [...prev, message].slice(-100));
-            }
+        // Administrators observing a collaboration room wait for the host's consent
+        socket.on('observation-pending', () => addLog('system', 'Waiting for the host to approve your observation request'))
+        socket.on('observation-denied', () => {
+            alert('The host declined your observation request.')
+            router.push('/admin')
+        })
+        socket.on('observation-granted', () => { setConnectionState('connecting'); addLog('system', 'Host approved observation') })
+        // Calibration chosen by the host for this device's anti-cheat engine
+        socket.on('ai-config', (config: Partial<typeof aiConfig>) => {
+            if (currentRoleRef.current !== 'controller' || !config) return
+            setAiConfig(prev => ({ ...prev, ...config }))
+            addLog('system', 'The host updated the AI proctoring calibration')
+        })
+        socket.on('room-event', (event: { time: string; type: string; message: string }) => {
+            setRoomEvents(prev => [...prev, { ...event, time: roomTimeToIso(event.time) }].slice(-200))
+        })
+        socket.on('chat-message', (message: ChatMessage) => {
+            setChatMessages(prev => [...prev, message].slice(-100))
+        })
+        // Host: hand the wrapped group key to members that lack it, rotating when someone left
+        socket.on('e2e-roster', ({ hostId, members }: { hostId: string; members: RosterMember[] }) => {
+            e2eRosterRef.current = members
+            if (hostId === socket.id) runE2EHostPass(socket)
+        })
+        socket.on('e2e-key-request', ({ memberId }: { memberId: string }) => {
+            e2eRef.current?.resetShare(memberId)
+            runE2EHostPass(socket)
+        })
+        socket.on('e2e-key-share', ({ payload }: { payload: WrappedKeyring }) => {
+            const session = e2eRef.current
+            if (!session) return
+            e2eQueueRef.current = e2eQueueRef.current.then(async () => {
+                try {
+                    await session.receiveKeyring(payload)
+                    setE2eFingerprint(await session.hostFingerprint())
+                    setE2eKeyVersion(v => v + 1)
+                } catch {
+                    addLog('system', 'Received a chat key that could not be unwrapped')
+                }
+            })
         })
         socket.on('system-warning', (message: string) => {
             setSystemWarning(message)
@@ -1295,11 +1501,20 @@ function SessionContent() {
             const audio = new Audio('/alert.mp3') // Try to play an alert sound if it exists
             audio.play().catch(() => {})
         })
+        socket.on('controller-observation-ended', ({ adminId }: { adminId: string }) => {
+            observerPcRefs.current.get(adminId)?.close()
+            observerPcRefs.current.delete(adminId)
+        })
         socket.on('controller-observation-requested', async ({ adminId }: { adminId: string }) => {
             try {
                 if (currentRoleRef.current !== 'controller') return
                 const stream = activeLocalStreamRef.current || localStreamRef.current
-                if (!stream) return
+                if (!stream) {
+                    socketRef.current?.emit('controller-observation-unavailable', { adminId, reason: 'The participant has no camera stream to share.' })
+                    return
+                }
+                observerPcRefs.current.get(adminId)?.close()
+                addLog('system', 'An administrator is viewing your camera (supervised session)')
                 
                 const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
                 observerPcRefs.current.set(adminId, pc)
@@ -1307,7 +1522,7 @@ function SessionContent() {
                 
                 pc.onicecandidate = e => {
                     if (e.candidate) {
-                        socketRef.current?.emit('observer-ice-candidate', { observerId: adminId, candidate: e.candidate })
+                        socketRef.current?.emit('controller-observation-ice-candidate', { adminId, candidate: e.candidate })
                     }
                 }
                 
@@ -1318,19 +1533,112 @@ function SessionContent() {
                 console.error("Failed to establish controller observation", err)
             }
         })
-        socket.on('federated-update-accepted', ({ round, pendingContributors }: { round: number; pendingContributors: number }) => {
-            addLog('system', `Federated update accepted for round ${round} (${pendingContributors} pending)`)
+        socket.on('fl-round-open', async ({ round, baseRound }: { round: number; baseRound: number }) => {
+            if (sessionModeRef.current !== 'supervised' || !['host', 'controller'].includes(currentRoleRef.current)) return
+            const learner = ensureFederatedLearner()
+            if (learner.getModelRound() !== baseRound) {
+                socket.emit('fl-sync-request', { roomId: roomCodeRef.current })
+                addLog('system', `Skipping federated round ${round}: syncing to the latest global model first`)
+                return
+            }
+            try {
+                const dpEnabled = FL_NOISE_MULTIPLIER > 0
+                const dpRoom = roomCodeRef.current || 'unknown'
+                if (dpEnabled && gaussianEpsilon(dpRoundsUsed(dpRoom) + 1, FL_NOISE_MULTIPLIER, FL_DP_DELTA) > FL_EPSILON_BUDGET) {
+                    addLog('system', `Not joining federated round ${round}: this device has used its privacy budget for this session (epsilon ${FL_EPSILON_BUDGET}); it still receives the global model`)
+                    return
+                }
+                if (learner.getPendingSampleCount() >= 2) await learner.trainLocalModel(10)
+                const contribution = buildContribution(await learner.getDelta(), learner.getSamplesSinceSync(), FL_CLIP_NORM, FL_NOISE_MULTIPLIER, FL_NOISE_SHARES, dpEnabled)
+                const keys = await createRoundKeys()
+                flRoundStateRef.current.set(round, { keys, seed: crypto.getRandomValues(new Uint8Array(32)), contribution })
+                socket.emit('fl-join', {
+                    roomId: roomCodeRef.current,
+                    round,
+                    publicKey: keys.publicKey,
+                    baseRound,
+                    vectorLength: contribution.length,
+                    // The seeded initial model is public; it lets the server start the first round
+                    initWeights: baseRound === 0 ? learner.getBaseWeights() : undefined,
+                })
+                addLog('system', `Joined secure federated round ${round} with ${learner.getSamplesSinceSync()} local sample(s)`)
+                if (dpEnabled) {
+                    const spent = gaussianEpsilon(recordDpRound(dpRoom), FL_NOISE_MULTIPLIER, FL_DP_DELTA)
+                    addLog('system', `Differential privacy: epsilon ${spent.toFixed(2)} of ${FL_EPSILON_BUDGET} spent in this session (delta ${FL_DP_DELTA}, noise ${FL_NOISE_MULTIPLIER})`)
+                }
+            } catch (err: any) {
+                addLog('system', `Could not join federated round ${round}: ${err?.message || err}`)
+            }
         })
-        socket.on('federated-aggregate', async ({ round, weights, contributorCount, sampleCount, loss }: any) => {
-            const ok = await ensureFederatedLearner().setSerializedWeights(weights)
+        socket.on('federated-update-accepted', ({ round, pendingContributors }: { round: number; pendingContributors: number }) => {
+            addLog('system', `Federated round ${round}: ${pendingContributors} participant(s) joined`)
+        })
+        // Stage 2: Shamir-share our masking key and self-mask seed with every participant
+        socket.on('fl-round-keys', async ({ round, peers }: { round: number; peers: RoundPeer[] }) => {
+            const state = flRoundStateRef.current.get(round)
+            if (!state) return
+            try {
+                state.peers = peers
+                const { shares } = await prepareShares({ keys: state.keys, selfSeed: state.seed, peers, roomId: roomCodeRef.current || '', round })
+                socket.emit('fl-shares', { roomId: roomCodeRef.current, round, shares })
+            } catch (err: any) {
+                addLog('system', `Key sharing failed for round ${round}: ${err?.message || err}`)
+            }
+        })
+        // Stage 3: open the shares addressed to us and submit the masked update
+        socket.on('fl-round-masking', async ({ round, peers, shares }: { round: number; peers: RoundPeer[]; shares: { from: string; ct: string }[] }) => {
+            const state = flRoundStateRef.current.get(round)
+            if (!state?.peers || !socket.id) return
+            try {
+                state.held = await openShares({ keys: state.keys, received: shares, peers: state.peers, roomId: roomCodeRef.current || '', round })
+                const masked = await maskVector({ values: state.contribution, keys: state.keys, selfSeed: state.seed, selfId: socket.id, peers, roomId: roomCodeRef.current || '', round })
+                socket.emit('fl-submit', { roomId: roomCodeRef.current, round, masked })
+                addLog('system', `Submitted masked update for round ${round} (${peers.length} participants; the server only sees the sum)`)
+            } catch (err: any) {
+                addLog('system', `Masking failed for round ${round}: ${err?.message || err}`)
+            }
+        })
+        // Stage 4: reveal exactly what the server needs to unmask the sum (never both secrets of one peer)
+        socket.on('fl-unmask', ({ round, survivors, dropped }: { round: number; survivors: string[]; dropped: string[] }) => {
+            const state = flRoundStateRef.current.get(round)
+            flRoundStateRef.current.delete(round)
+            if (!state?.held || !state.peers) return
+            const known = new Set(state.peers.map(p => p.id))
+            if (![...survivors, ...dropped].every(id => known.has(id))) return
+            try {
+                const shares = revealShares(state.held, survivors, dropped)
+                socket.emit('fl-unmask-shares', { roomId: roomCodeRef.current, round, shares })
+                if (dropped.length) addLog('system', `Federated round ${round}: helping recover ${dropped.length} dropped participant(s)`)
+            } catch (err: any) {
+                addLog('system', `Refused to unmask round ${round}: ${err?.message || err}`)
+            }
+        })
+        socket.on('fl-round-aborted', ({ round, reason }: { round: number; reason: string }) => {
+            flRoundStateRef.current.delete(round)
+            addLog('system', `Federated round ${round} aborted: ${reason}`)
+        })
+        // An admin marked one of our alerts a false positive: learn it as a negative example. Several copies
+        // outweigh the positive sample recorded when the detector fired, so the next round reduces such alarms.
+        socket.on('fl-label-correction', ({ features, label }: { features: number[]; label: number }) => {
+            if (!Array.isArray(features) || features.length !== 3) return
+            const learner = ensureFederatedLearner()
+            for (let i = 0; i < 3; i++) learner.addSample(features.map(clamp01) as FederatedFeatures, label)
+            addLog('system', 'An administrator marked one of your alerts as a false positive; it will be used as a training label in the next federated round')
+        })
+        socket.on('fl-model-sync', async ({ round, weights }: { round: number; weights: number[] }) => {
+            const ok = await ensureFederatedLearner().applyGlobal(weights, round)
+            if (ok) addLog('system', `Synced to global federated model from round ${round}`)
+        })
+        socket.on('federated-aggregate', async ({ round, weights, contributorCount, sampleCount }: any) => {
+            const ok = await ensureFederatedLearner().applyGlobal(weights, round)
             addLog(
                 'system',
                 ok
-                    ? `Federated round ${round} applied from ${contributorCount} contributor(s), ${sampleCount} sample(s), loss ${loss ?? 'n/a'}`
+                    ? `Secure federated round ${round} applied: ${contributorCount} participant(s), ${sampleCount} sample(s)`
                     : `Federated round ${round} received but model shape did not match`
             )
         })
-        socket.on('federated-error', ({ message }: { message: string }) => addLog('system', `Federated update failed: ${message}`))
+        socket.on('federated-error', ({ message }: { message: string }) => addLog('system', `Federated learning: ${message}`))
         socket.on('evidence-event', (item: EvidenceItem) => {
             setEvidence(prev => [item, ...prev].slice(0, 80))
             if (item.type === 'join' && item.message?.includes('disconnected') && Notification.permission === 'granted') {
@@ -1353,6 +1661,31 @@ function SessionContent() {
             alert('The session has ended.')
             router.push('/app')
         })
+        socket.on('disconnect', (reason: string) => {
+            if (reason === 'io client disconnect') return
+            // The server keeps the seat (host or controller) for a grace period; the call itself is
+            // rebuilt after reconnecting, so drop the stale peer connections now
+            hostPcRefs.current.forEach(pc => pc.close())
+            hostPcRefs.current.clear()
+            pcRef.current?.close()
+            pcRef.current = null
+            pendingIceRef.current.clear()
+            addLog('system', 'Connection to the session server lost; reconnecting...')
+            if (currentRoleRef.current !== 'host') setConnectionState('connecting')
+        })
+        socket.on('resume-failed', ({ reason }: { reason?: string } = {}) => {
+            alert(reason || 'The session ended while you were disconnected.')
+            router.push('/app')
+        })
+        socket.on('host-reconnecting', () => {
+            addLog('system', 'The host lost connection; waiting for them to come back...')
+            // The host comes back on a new connection and sends a fresh offer
+            pcRef.current?.close()
+            pcRef.current = null
+            pendingIceRef.current.clear()
+            setConnectionState('connecting')
+        })
+        socket.on('host-resumed', () => addLog('system', 'The host is back; reconnecting the call'))
         socket.on('stats-update', (data: any) => {
             if (data) {
                 setPacketLoss(data.packetLoss);
@@ -1360,13 +1693,20 @@ function SessionContent() {
             }
         });
         socket.on('new-exam-question', (question: ExamQuestion) => {
-            setExamQuestions(prev => [...prev, question]);
+            setExamQuestions(prev => prev.some(q => q.id === question.id) ? prev : [...prev, question]);
+        });
+        socket.on('exam-answer-result', ({ questionId, correct }: { questionId: string; correct: boolean }) => {
+            setExamResults(prev => ({ ...prev, [questionId]: correct }))
+            addLog('system', correct ? 'Your submitted answer was marked correct' : 'Your submitted answer was marked incorrect')
         });
         socket.on('host-live-answer-update', ({ questionId, controllerId, controllerName, answer }) => {
             setExamLiveAnswers(prev => {
                 const newLive = { ...prev };
                 if (!newLive[questionId]) newLive[questionId] = {};
-                newLive[questionId][controllerId] = { ...answer, controllerName };
+                // Updates may leave the recording out (unchanged); audio: null means it was removed
+                const merged = { ...(prev[questionId]?.[controllerId] || {}), ...answer, controllerName };
+                if (answer?.audio === null) delete merged.audio;
+                newLive[questionId][controllerId] = merged;
                 return newLive;
             });
         });
@@ -1423,6 +1763,26 @@ function SessionContent() {
         })
     }, [joinInput, addLog, router])
 
+    // Leaving the page (Leave, End, kicked, back button) must release the camera, mic and screen
+    // capture, close every peer connection and leave the room; otherwise they keep running.
+    useEffect(() => () => {
+        const stopTracks = (stream: MediaStream | null) => stream?.getTracks().forEach(track => track.stop())
+        stopTracks(screenStreamRef.current)
+        stopTracks(activeLocalStreamRef.current)
+        stopTracks(localStreamRef.current)
+        pcRef.current?.close()
+        hostPcRefs.current.forEach(pc => pc.close())
+        hostPcRefs.current.clear()
+        observerPcRefs.current.forEach(pc => pc.close())
+        observerPcRefs.current.clear()
+        if (statsTimerRef.current) clearInterval(statsTimerRef.current)
+        statsTimerRefs.current.forEach(timer => clearInterval(timer))
+        statsTimerRefs.current.clear()
+        pendingIceRef.current.clear()
+        socketRef.current?.disconnect()
+        socketRef.current = null
+    }, [])
+
     // Sync Pet state with Electron Floating Window
     useEffect(() => {
         if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
@@ -1436,29 +1796,53 @@ function SessionContent() {
         }
     }, [setupMode, role, joinInput, setupSocket])
 
-    // Global listener for the Shift+Esc panic button
-    useEffect(() => {
-        if (typeof window !== 'undefined' && (window as any).ipcRenderer && !(window as any)._panicListenerAdded) {
-            (window as any)._panicListenerAdded = true;
-            (window as any).ipcRenderer.on('panic-revoke-control', () => {
-                window.dispatchEvent(new CustomEvent('panic-revoke'));
-            });
+    // Panic revoke: drops EVERY controller to View Only at once. In the desktop app the main process
+    // has already locked remote input and released held keys/buttons before this runs.
+    const panicRevokeAll = (source: string) => {
+        if (currentRoleRef.current !== 'host') return
+        window.ipcRenderer?.send('set-remote-input-lock', true)
+        // Block in this renderer immediately as well, without waiting for the server's room state
+        participantsRef.current = participantsRef.current.map(p => ({ ...p, permission: 'view' as const }))
+        setParticipants(prev => prev.map(p => ({ ...p, permission: 'view' as const })))
+        setPermission('view')
+        if (roomCodeRef.current) {
+            socketRef.current?.emit('access-granted', 'view', { reason: 'panic' }, roomCodeRef.current)
         }
-    }, []);
+        addLog('permission', `Panic revoke (${source}): all remote control revoked, every controller is now View Only`)
+        setPanicNotice(`Remote control revoked (${source}). All controllers are View Only.`)
+        window.setTimeout(() => setPanicNotice(null), 6000)
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification('Control Revoked', { body: 'All controllers were switched to View Only.' })
+        }
+    }
+    const panicRevokeRef = useRef(panicRevokeAll)
+    panicRevokeRef.current = panicRevokeAll
 
     useEffect(() => {
-        const handlePanic = () => {
-            if (role === 'host') {
-                updatePermission('view');
-                addLog('permission', 'Shift+Esc Panic Button triggered! All remote control revoked.');
-                if (Notification.permission === 'granted') {
-                    new Notification('Control Revoked', { body: 'Shift+Esc panic button was pressed.' });
-                }
+        // Desktop: global shortcut handled by the Electron main process (works even when unfocused)
+        if (typeof window !== 'undefined' && (window as any).ipcRenderer && !(window as any)._panicListenerAdded) {
+            (window as any)._panicListenerAdded = true;
+            (window as any).ipcRenderer.on('panic-revoke-control', (info: { source?: string } = {}) => {
+                window.dispatchEvent(new CustomEvent('panic-revoke', { detail: info?.source || 'Shift+Esc' }));
+            });
+        }
+        (window as any).api?.getPanicShortcuts?.().then((keys: string[]) => setPanicShortcuts(Array.isArray(keys) ? keys : []))
+
+        const onPanic = (event: Event) => panicRevokeRef.current(String((event as CustomEvent).detail || 'Shift+Esc'))
+        // Browser host: same shortcut while the window is focused
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && event.shiftKey) {
+                event.preventDefault()
+                panicRevokeRef.current('Shift+Esc')
             }
-        };
-        window.addEventListener('panic-revoke', handlePanic);
-        return () => window.removeEventListener('panic-revoke', handlePanic as EventListener);
-    }, [role, roomCode, selectedParticipant, clipboardAllowed, addLog]);
+        }
+        window.addEventListener('panic-revoke', onPanic)
+        window.addEventListener('keydown', onKeyDown)
+        return () => {
+            window.removeEventListener('panic-revoke', onPanic)
+            window.removeEventListener('keydown', onKeyDown)
+        }
+    }, []);
 
     const startSharingProcess = async () => {
         if (typeof window !== 'undefined' && (window as any).api && (window as any).api.getShareableSources) {
@@ -1594,6 +1978,8 @@ function SessionContent() {
 
     const updatePermission = (nextPermission: PermissionLevel) => {
         setPermission(nextPermission)
+        // Granting control again lifts a panic lock in the desktop app
+        if (role === 'host' && nextPermission !== 'view') window.ipcRenderer?.send('set-remote-input-lock', false)
         if (role === 'host' && roomCode) {
             socketRef.current?.emit('access-granted', nextPermission, {
                 targetId: selectedParticipant?.id,
@@ -1765,50 +2151,6 @@ function SessionContent() {
         return () => cancelAnimationFrame(animationFrameId);
     }, [role, connectionState, mouseEnabled]);
 
-    // Anti-cheat focus tracking for supervised controllers
-    useEffect(() => {
-        if (role !== 'controller' || sessionMode !== 'supervised' || connectionState !== 'connected') return;
-
-        const handleTabSwitch = async (reason: string) => {
-            const url = await captureScreenshotEvidence(localCamRef.current, reason);
-            
-            socketRef.current?.emit('anti-cheat-alert', {
-                roomId: roomCodeRef.current,
-                type: 'anticheat_violation',
-                reason: 'tab-switch',
-                message: reason,
-                evidenceUrl: url,
-                penalty: 100
-            });
-            
-            // Allow socket emission to complete before blocking with alert
-            await new Promise(r => setTimeout(r, 100));
-            
-            alert(`Session Terminated: ${reason}`);
-            socketRef.current?.emit('leave-session');
-            router.push('/app');
-        };
-
-        const onBlur = () => {
-            if ((window as any).isSelectingFile) return;
-            handleTabSwitch('Application lost focus (external app/click)');
-        };
-        const onVisibilityChange = () => {
-            if ((window as any).isSelectingFile) return;
-            if (document.visibilityState === 'hidden') {
-                handleTabSwitch('Tab switch or minimized app detected');
-            }
-        };
-
-        window.addEventListener('blur', onBlur);
-        document.addEventListener('visibilitychange', onVisibilityChange);
-        
-        return () => {
-            window.removeEventListener('blur', onBlur);
-            document.removeEventListener('visibilitychange', onVisibilityChange);
-        };
-    }, [role, sessionMode, connectionState]);
-
     const toggleRecording = () => {
         if (!isRecording) {
             if (!mainVideoRef.current || (!mainVideoRef.current.srcObject && !localCamRef.current?.srcObject && !remoteCamRef.current?.srcObject)) {
@@ -1881,170 +2223,285 @@ function SessionContent() {
         }, 'image/png')
     }
 
-    const runFederatedEpoch = async () => {
-        const learner = ensureFederatedLearner()
-        let sampleCount = learner.getPendingSampleCount()
-
-        if (sampleCount === 0) {
-            const networkInstability = clamp01(((packetLossRef.current || 0) / 12) + (latencyRef.current / 450))
-            const riskSignal = clamp01(riskScoreRef.current / 100)
-            learner.addSample([riskSignal, networkInstability, riskSignal], riskScoreRef.current >= 30 ? 1 : 0)
-            sampleCount = learner.getPendingSampleCount()
-            addLog('system', 'Queued one live telemetry snapshot for federated training')
-        }
-
-        addLog('system', 'Starting local Federated Training Epoch...')
-        const loss = await learner.trainLocalModel(10)
-        
-        addLog('system', `Training complete. Final Loss: ${loss === null ? 'n/a' : Number(loss).toFixed(4)}. Extracting weights...`)
-        const weights = await learner.getSerializedWeights()
-        
-        socketRef.current?.emit('federated-update', {
-            roomId: roomCodeRef.current,
-            weights,
-            sampleCount,
-            loss,
-            modelVersion: 'anti-cheat-v1',
-        })
-        addLog('system', `Submitted ${weights.length} model weights from ${sampleCount} telemetry sample(s) to the aggregator.`)
+    // Asks the server to open a secure aggregation round; every eligible participant trains and joins
+    const runFederatedEpoch = () => {
+        socketRef.current?.emit('fl-round-start', { roomId: roomCodeRef.current })
+        addLog('system', 'Requested a secure federated training round')
     }
+
+    // Announces this participant's public chat key once it is a member of the room
+    const announceE2E = (socket: Socket, room?: string) => {
+        if (!room) return
+        let session = e2eRef.current
+        if (!session || session.roomId !== room) {
+            session = new E2EChatSession(room)
+            e2eRef.current = session
+            e2eAnnouncedRef.current = false
+        }
+        if (e2eAnnouncedRef.current) return
+        e2eAnnouncedRef.current = true
+        session.init().then(publicKey => socket.emit('e2e-announce', { roomId: room, publicKey }))
+    }
+
+    const runE2EHostPass = (socket: Socket) => {
+        const session = e2eRef.current
+        if (!session || !session.publicKey || !socket.id) return
+        e2eQueueRef.current = e2eQueueRef.current.then(async () => {
+            const shares = await session.hostHandleRoster(socket.id!, e2eRosterRef.current)
+            shares.forEach(share => socket.emit('e2e-key-share', { roomId: session.roomId, ...share }))
+            setE2eFingerprint(await session.hostFingerprint())
+            setE2eKeyVersion(v => v + 1)
+        }).catch(err => addLog('system', `Chat key distribution failed: ${err?.message || err}`))
+    }
+
+    useEffect(() => {
+        let cancelled = false
+        const session = e2eRef.current
+        ;(async () => {
+            const next: Record<string, string | null> = {}
+            for (const message of chatMessages) {
+                if (isE2EMessage(message.text)) next[message.id] = session ? await session.decrypt(message.text) : null
+            }
+            if (cancelled) return
+            setDecryptedChat(next)
+            // Missing a key (e.g. after a reload): ask the host to re-share, at most every 5s
+            const missing = Object.values(next).some(value => value === null)
+            if (missing && currentRoleRef.current !== 'host' && roomCodeRef.current && Date.now() - e2eKeyRequestAtRef.current > 5000) {
+                e2eKeyRequestAtRef.current = Date.now()
+                socketRef.current?.emit('e2e-key-request', { roomId: roomCodeRef.current })
+            }
+        })()
+        return () => { cancelled = true }
+    }, [chatMessages, e2eKeyVersion])
 
     const sendChatMessage = async (event?: FormEvent) => {
         event?.preventDefault()
         const text = chatInput.trim()
         const activeRoom = roomCodeRef.current
         if (!text || !activeRoom) return
-        const encryptedText = await CryptoUtil.encrypt(text, activeRoom);
+        const session = e2eRef.current
+        if (!session?.hasKey()) {
+            addLog('system', 'Chat is waiting for the end-to-end encryption key from the host')
+            return
+        }
+        const encryptedText = await session.encrypt(text);
         socketRef.current?.emit('chat-message', { roomId: activeRoom, text: encryptedText })
         setChatInput('')
         setChatOpen(true)
 
         if (text.toLowerCase().startsWith('@pet')) {
             setPetState('Thinking')
+            // The answer is shown only to the asker (the room got the encrypted @pet message itself)
+            const showPetLine = (line: string) => setChatMessages(prev => [...prev, {
+                id: `pet-${Date.now()}`,
+                time: new Date().toISOString(),
+                senderId: 'system',
+                senderName: 'System',
+                role: 'admin',
+                text: line,
+            }])
             try {
-                const res = await fetch('/api/pet', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: text.replace(/^@pet/i, '').trim(), roomCode: activeRoom })
-                })
-                const data = await res.json()
-                if (data.reply) {
-                    setChatMessages(prev => [...prev, {
-                        id: Date.now().toString(),
-                        time: new Date().toISOString(),
-                        senderId: 'system',
-                        senderName: 'System',
-                        role: 'admin',
-                        text: `🐶 [Pet AI]: ${data.reply}`
-                    }])
-                }
-            } catch (err) {
-                console.error(err)
+                showPetLine(`🐶 [Pet AI]: ${await askPet(text.replace(/^@pet/i, '').trim() || 'Hello!')}`)
+            } catch (err: any) {
+                showPetLine(`🐶 [Pet AI]: ${err?.message || 'The pet assistant is unavailable right now.'}`)
             } finally {
                 setPetState('Idle')
             }
         }
     }
 
-    useFaceProctoring(
-        localCamRef,
-        sessionMode,
-        role,
-        (type, message) => {
-            reportMalpractice(`Proctoring [${type}]: ${message}`, 20, [0.8, 0, 0.2]);
-            setPetState('Warning');
-            setPetMessage(message);
-            if (petTimerRef.current) clearTimeout(petTimerRef.current);
-            petTimerRef.current = setTimeout(() => {
-                setPetState('Idle');
-                setPetMessage('');
-            }, 8000);
-            
-            setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                time: new Date().toISOString(),
-                senderId: 'system',
-                senderName: 'System',
-                role: 'admin',
-                text: `⚠️ [System Warning]: ${message}`
-            }]);
-        }
-    );
+    // Three detectors (AntiCheatEngine, face and object hooks) watch the same camera, so one moment
+    // without a face was penalised two or three times. Each kind of event is reported at most once
+    // per 10 s, whichever detector saw it first.
+    const lastProctoringEventRef = useRef<Map<string, number>>(new Map())
+    const firstProctoringReport = (type: string) => {
+        const key = canonicalProctoringType(type)
+        const now = Date.now()
+        if (now - (lastProctoringEventRef.current.get(key) || 0) < 10000) return false
+        lastProctoringEventRef.current.set(key, now)
+        return true
+    }
+
+    const onProctoringViolation = (type: string, message: string, penalty: number) => {
+        if (!firstProctoringReport(type)) return;
+        reportMalpractice(`Proctoring [${type}]: ${message}`, penalty, federatedFeaturesForEvent(canonicalProctoringType(type)));
+        setPetState('Warning');
+        setPetMessage(message);
+        if (petTimerRef.current) clearTimeout(petTimerRef.current);
+        petTimerRef.current = setTimeout(() => {
+            setPetState('Idle');
+            setPetMessage('');
+        }, 8000);
+
+        setChatMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            time: new Date().toISOString(),
+            senderId: 'system',
+            senderName: 'System',
+            role: 'admin',
+            text: `⚠️ [System Warning]: ${message}`
+        }]);
+    };
+
+    useFaceProctoring(localCamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 20));
 
     const tabSwitchCountRef = useRef(0);
 
-    useObjectProctoring(
-        localCamRef,
-        sessionMode,
-        role,
-        (type, message) => {
-            reportMalpractice(`Proctoring [${type}]: ${message}`, 20, [0.8, 0, 0.2]);
-            setPetState('Warning');
-            setPetMessage(message);
-            if (petTimerRef.current) clearTimeout(petTimerRef.current);
-            petTimerRef.current = setTimeout(() => {
-                setPetState('Idle');
-                setPetMessage('');
-            }, 8000);
-            
-            setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                time: new Date().toISOString(),
-                senderId: 'system',
-                senderName: 'System',
-                role: 'admin',
-                text: `⚠️ [System Warning]: ${message}`
-            }]);
-        }
-    );
+    useObjectProctoring(localCamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 20));
 
-    useAudioProctoring(
-        localStreamRef,
-        sessionMode,
-        role,
-        (type, message) => {
-            reportMalpractice(`Proctoring [${type}]: ${message}`, 15, [0.8, 0, 0.2]);
-            setPetState('Warning');
-            setPetMessage(message);
-            if (petTimerRef.current) clearTimeout(petTimerRef.current);
-            petTimerRef.current = setTimeout(() => {
-                setPetState('Idle');
-                setPetMessage('');
-            }, 8000);
-            
-            setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                time: new Date().toISOString(),
-                senderId: 'system',
-                senderName: 'System',
-                role: 'admin',
-                text: `⚠️ [System Warning]: ${message}`
-            }]);
-        }
-    );
+    useAudioProctoring(localStreamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 15));
 
     useEffect(() => {
-        if (sessionMode !== 'supervised' || role !== 'controller') return;
-        
-        const handleBlur = () => {
-            if ((window as any).isRequestingPermissions) return;
+        // One policy for leaving the exam window: warn on the first switch, end the session on the second.
+        // blur and visibilitychange both fire for a single switch, so events within 2 s count once;
+        // permission prompts and file pickers are not switches.
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected') return;
+        let lastViolationAt = 0;
+
+        const onFocusLost = (reason: string) => {
+            if ((window as any).isRequestingPermissions || (window as any).isSelectingFile) return;
+            const now = Date.now();
+            if (now - lastViolationAt < 2000) return;
+            lastViolationAt = now;
             tabSwitchCountRef.current += 1;
+            void captureScreenshotEvidence(localCamRef.current, reason);
             if (tabSwitchCountRef.current >= 2) {
-                reportMalpractice('App Focus Fatal: Multiple app switches detected. Session terminated.', 100, [1, 0, 0]);
+                reportMalpractice(`App Focus Fatal: ${reason} (second switch). Session terminated.`, 100, [1, 0, 0]);
                 router.push('/app?terminated=tab_switch');
-            } else if (tabSwitchCountRef.current === 1) {
+            } else {
                 const message = 'App switch detected! Please keep this window active. A second violation will terminate your session.';
-                reportMalpractice(`App Switch: ${message}`, 50, [1, 0, 0]);
+                reportMalpractice(`App Switch: ${reason}. ${message}`, 50, [1, 0, 0]);
                 setPetState('Warning');
                 setPetMessage(message);
                 if (petTimerRef.current) clearTimeout(petTimerRef.current);
                 petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
             }
         };
+        const onBlur = () => onFocusLost('Application lost focus (external app/click)');
+        const onVisibilityChange = () => { if (document.visibilityState === 'hidden') onFocusLost('Tab switch or minimized app'); };
 
-        window.addEventListener('blur', handleBlur);
-        return () => window.removeEventListener('blur', handleBlur);
-    }, [sessionMode, role, reportMalpractice]);
+        window.addEventListener('blur', onBlur);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            window.removeEventListener('blur', onBlur);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [sessionMode, role, connectionState, reportMalpractice, router]);
+
+    // A second display during a supervised exam is reported once when detected (and again if it is
+    // re-attached). screen.isExtended is available in Chromium 100+ (Chrome, Edge, Electron); other
+    // browsers fall back to the aspect-ratio check done when the screen is shared.
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected') return;
+        const screenInfo = window.screen as Screen & { isExtended?: boolean } & EventTarget
+        if (typeof screenInfo.isExtended !== 'boolean') return;
+        let extended = false
+        const check = () => {
+            const now = Boolean(screenInfo.isExtended)
+            if (now && !extended) {
+                reportMalpractice('Second display connected during a supervised exam', 30, federatedFeaturesForEvent('SECOND_SCREEN'))
+            }
+            if (now !== extended) addLog('system', now ? 'Multiple displays detected' : 'Only one display connected')
+            extended = now
+        }
+        check()
+        screenInfo.addEventListener?.('change', check)
+        return () => screenInfo.removeEventListener?.('change', check)
+    }, [sessionMode, role, connectionState, reportMalpractice, federatedFeaturesForEvent, addLog]);
+
+    // Face ID at the start of a supervised exam: a descriptor from the candidate's camera (computed on
+    // this device) is compared with their enrolment by the server, which tells the host the result.
+    const faceCheckDoneRef = useRef(false)
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected' || !hasLocalMedia || faceCheckDoneRef.current) return
+        let cancelled = false
+        const cameraShowsVideo = () => {
+            const video = localCamRef.current
+            return Boolean(video && video.readyState >= 2 && video.videoWidth > 0)
+        }
+        ;(async () => {
+            // Wait (up to 2 minutes) for the camera preview to show frames before the first attempt
+            for (let waited = 0; waited < 120 && !cameraShowsVideo() && !cancelled; waited++) {
+                await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+            for (let attempt = 1; attempt <= 3 && !cancelled; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 1000 : 5000))
+                if (cancelled) return
+                try {
+                    const sample = await describeFaceSteadily(localCamRef.current as HTMLVideoElement)
+                    if ('error' in sample) {
+                        addLog('system', `Face ID check (attempt ${attempt}/3): ${FACE_ERROR_TEXT[sample.error]}`)
+                        continue
+                    }
+                    const res = await fetch(`${getBackendUrl()}/api/face/verify`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                        body: JSON.stringify({ descriptor: sample.descriptor, room: roomCodeRef.current }),
+                    })
+                    const data = await res.json()
+                    if (!res.ok || !data.success) throw new Error(data.message || 'check failed')
+                    faceCheckDoneRef.current = true
+                    addLog('system', data.status === 'verified'
+                        ? 'Face ID verified'
+                        : data.status === 'mismatch'
+                            ? 'Face ID did not match your enrolled face; the host has been told'
+                            : 'You have not set up Face ID (Profile > Face ID); the host has been told')
+                    return
+                } catch (err: any) {
+                    addLog('system', `Face ID check failed: ${err?.message || err}`)
+                }
+            }
+            if (!cancelled && !faceCheckDoneRef.current) {
+                faceCheckDoneRef.current = true
+                reportMalpractice('Face ID check could not be completed (no single face found on camera)', 10, [1, 0, 0.1])
+            }
+        })()
+        return () => { cancelled = true }
+    }, [sessionMode, role, connectionState, hasLocalMedia, addLog, reportMalpractice]);
+
+    // With the optional exam media server, a supervised candidate's camera is also sent there once, so
+    // any number of proctors can watch it (admin exam wall) without a connection per viewer. It runs
+    // again when the camera comes on, which in a supervised exam happens after AI calibration, and
+    // after every admission to the room: the server drops a socket's stream when that socket disconnects.
+    useEffect(() => {
+        if (sessionMode !== 'supervised' || role !== 'controller' || connectionState !== 'connected') return
+        const socket = socketRef.current
+        const candidates = [
+            ...(pcRef.current?.getSenders().map(sender => sender.track) || []),
+            activeLocalStreamRef.current?.getVideoTracks()[0],
+            localStreamRef.current?.getVideoTracks()[0],
+        ]
+        const track = candidates.find(item => item && item.kind === 'video' && item.readyState === 'live')
+        if (!socket || !roomCodeRef.current) return
+        if (!track) {
+            // The camera is between tracks (restarting around calibration): look again shortly
+            const wait = setTimeout(() => setSfuPublishAttempt(n => n + 1), 3000)
+            return () => clearTimeout(wait)
+        }
+        let cancelled = false
+        let publication: { close: () => void } | null = null
+        let retryTimer: ReturnType<typeof setTimeout> | undefined
+        // The camera is restarted around AI calibration: publish its new track when this one ends
+        const onEnded = () => { if (!cancelled) setSfuPublishAttempt(n => n + 1) }
+        track.addEventListener('ended', onEnded)
+        publishTracks(socket, roomCodeRef.current, [track])
+            .then((result) => {
+                if (cancelled) result.close()
+                else {
+                    publication = result
+                    sfuPublishFailuresRef.current = 0
+                    addLog('system', 'Camera is also streamed through the exam media server')
+                }
+            })
+            .catch((err) => {
+                if (cancelled || isSfuDisabled(err)) return
+                // A busy or briefly lost connection can time a step out: try again a few times
+                const failures = ++sfuPublishFailuresRef.current
+                if (failures <= 3) retryTimer = setTimeout(() => setSfuPublishAttempt(n => n + 1), 5000 * failures)
+                else addLog('system', `Exam media server unavailable: ${err?.message || err}`)
+            })
+        return () => { cancelled = true; clearTimeout(retryTimer); track.removeEventListener('ended', onEnded); publication?.close() }
+    }, [sessionMode, role, connectionState, sfuAdmission, hasLocalMedia, sfuPublishAttempt, addLog]);
 
     useEffect(() => {
         if (sessionMode !== 'supervised' || role !== 'controller') return;
@@ -2156,8 +2613,25 @@ function SessionContent() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2.5">
+                    {(role === 'host' || role === 'controller') && (
+                        <ClipboardSync
+                            canSend={role === 'host' || clipboardAllowed}
+                            acceptFrom={clipboardAcceptFrom}
+                            describePeer={clipboardPeerName}
+                            onLog={message => addLog('system', message)}
+                        />
+                    )}
                     <button
-                        onClick={() => setChatOpen(open => !open)}
+                        onClick={() => { setActivityOpen(open => !open); setChatOpen(false) }}
+                        aria-label="Toggle Session Activity"
+                        aria-pressed={activityOpen}
+                        title="Session activity"
+                        className={cn("relative p-1.5 rounded-lg border transition-colors", activityOpen ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)]")}
+                    >
+                        <Activity className="w-4 h-4" />
+                    </button>
+                    <button
+                        onClick={() => { setChatOpen(open => !open); setActivityOpen(false) }}
                         aria-label="Toggle Session Chat"
                         className={cn("relative p-1.5 rounded-lg border transition-colors", chatOpen ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)]")}
                     >
@@ -2366,6 +2840,21 @@ function SessionContent() {
                         )}
                         <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] font-bold block mb-3">Permission</span>
                         {role === 'host' && (
+                            <div className="mb-3">
+                                <button
+                                    onClick={() => panicRevokeAll('button')}
+                                    className="w-full h-10 flex items-center justify-center gap-2 rounded-lg bg-[var(--red)]/15 text-[var(--red)] border border-[var(--red)]/40 hover:bg-[var(--red)]/25 text-xs font-bold transition-colors"
+                                >
+                                    <ShieldOff className="w-4 h-4" />
+                                    Revoke all control
+                                </button>
+                                <p className="mt-1.5 text-[10px] text-[var(--text-dim)]">
+                                    Emergency shortcut: <span className="font-mono text-[var(--text-secondary)]">{(panicShortcuts.length ? panicShortcuts : ['Shift+Escape']).map(key => key.replace('CommandOrControl', 'Ctrl')).join(' or ')}</span>
+                                    {typeof window !== 'undefined' && (window as any).api?.getPanicShortcuts && panicShortcuts.length === 0 ? ' (only while this window is focused)' : ''}
+                                </p>
+                            </div>
+                        )}
+                        {role === 'host' && (
                             <button onClick={() => setShowAiSettings(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors">
                                 <Zap className="w-4 h-4" />
                                 AI Calibrate
@@ -2474,6 +2963,9 @@ function SessionContent() {
                                             <option value="sketch">Sketch Outline</option>
                                             <option value="synthwave">Synthwave</option>
                                             <option value="anime">Anime</option>
+                                            <option value="robot3d">3D Robot</option>
+                                            <option value="alien3d">3D Alien</option>
+                                            <option value="bear3d">3D Bear</option>
                                             <option value="custom">Custom...</option>
                                         </select>
                                         <input 
@@ -2598,6 +3090,7 @@ function SessionContent() {
                             <StandaloneCanvas 
                                 isHost={role === 'host'} 
                                 peerId={selectedControllerId || undefined} 
+                                sessionMode={sessionMode}
                                 onClose={() => setIsCanvasMode(false)} 
                             />
                         )}
@@ -2711,10 +3204,12 @@ function SessionContent() {
                     <div className="pointer-events-auto w-full h-full max-w-4xl">
                         <ExamControllerOverlay 
                             questions={examQuestions} 
+                            results={examResults}
                             onDraftUpdate={(qId, answer) => socketRef.current?.emit('controller-draft-answer', { questionId: qId, answer, roomId: roomCodeRef.current || joinInput })}
                             onSubmit={(qId, answer) => {
                                 socketRef.current?.emit('controller-submit-answer', { questionId: qId, answer, roomId: roomCodeRef.current || joinInput });
-                                setExamQuestions(prev => prev.filter(q => q.id !== qId));
+                                // Keep the question on screen briefly so the server's grading result can show
+                                setTimeout(() => setExamQuestions(prev => prev.filter(q => q.id !== qId)), 3000);
                             }}
                         />
                     </div>
@@ -2725,177 +3220,75 @@ function SessionContent() {
                     </div>
                 </main>
 
+            {activityOpen && (
+                <SessionActivityPanel
+                    entries={activityEntries}
+                    isHost={role === 'host'}
+                    riskScore={roomRisk}
+                    onClose={() => setActivityOpen(false)}
+                />
+            )}
+
             {chatOpen && (
-                <div className="fixed right-4 top-16 z-[500] flex h-[min(560px,calc(100vh-5rem))] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
-                    <div className="flex h-12 items-center justify-between border-b border-[var(--border)] px-4">
-                        <div className="flex items-center gap-2">
-                            <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
-                            <span className="text-sm font-bold text-[var(--text-primary)]">Session Chat</span>
-                        </div>
-                        <button
-                            onClick={() => setChatOpen(false)}
-                            aria-label="Close Session Chat"
-                            className="rounded-md p-1 text-[var(--text-dim)] hover:bg-[var(--elevated)] hover:text-[var(--text-primary)]"
-                        >
-                            <XCircle className="h-4 w-4" />
-                        </button>
-                    </div>
-                    <div ref={chatScrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-                        {chatMessages.length === 0 ? (
-                            <div className="flex h-full items-center justify-center text-center text-xs text-[var(--text-dim)]">
-                                No messages yet.
-                            </div>
-                        ) : (
-                            chatMessages.map(message => {
-                                const mine = message.senderId === socketRef.current?.id
-                                return (
-                                    <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
-                                        <div className={cn(
-                                            "max-w-[82%] rounded-lg border px-3 py-2",
-                                            mine
-                                                ? "border-[var(--accent)]/40 bg-[var(--accent)]/15"
-                                                : "border-[var(--border)] bg-[var(--bg)]"
-                                        )}>
-                                            <div className="mb-1 flex items-center justify-between gap-3">
-                                                <span className="truncate text-[10px] font-bold uppercase text-[var(--text-secondary)]">{message.senderName}</span>
-                                                <span className="shrink-0 font-mono text-[9px] text-[var(--text-dim)]">{isNaN(new Date(message.time).getTime()) ? message.time : new Date(message.time).toLocaleTimeString([], { hour12: false })}</span>
-                                            </div>
-                                            <p className="break-words text-sm leading-relaxed text-[var(--text-primary)] font-emoji">{message.text}</p>
-                                        </div>
-                                    </div>
-                                )
-                            })
-                        )}
-                    </div>
-                    <div className="border-t border-[var(--border)] p-3">
-                        <div className="mb-2 flex gap-1">
-                            {quickChatEmojis.map(emoji => (
-                                <button
-                                    key={emoji}
-                                    type="button"
-                                    onClick={() => setChatInput(value => `${value}${emoji}`)}
-                                    className="flex h-7 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] text-sm hover:border-[var(--accent)] font-emoji"
-                                >
-                                    {emoji}
-                                </button>
-                            ))}
-                        </div>
-                        <form onSubmit={sendChatMessage} className="flex gap-2">
-                            <input
-                                value={chatInput}
-                                onChange={event => setChatInput(event.target.value)}
-                                maxLength={1000}
-                                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] font-emoji"
-                                placeholder="Message everyone"
-                            />
-                            <button
-                                type="submit"
-                                disabled={!chatInput.trim()}
-                                aria-label="Send Message"
-                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-black disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                                <Send className="h-4 w-4" />
-                            </button>
-                        </form>
-                    </div>
-                </div>
+                <ChatPanel
+                    e2eFingerprint={e2eFingerprint}
+                    messages={chatMessages}
+                    decrypted={decryptedChat}
+                    ownSocketId={socketRef.current?.id}
+                    scrollRef={chatScrollRef}
+                    input={chatInput}
+                    setInput={setChatInput}
+                    onSubmit={sendChatMessage}
+                    onClose={() => setChatOpen(false)}
+                />
             )}
 
             {showAiSettings && currentRoleRef.current === 'host' && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between p-4 border-b border-[var(--border)] bg-[var(--elevated)]">
-                            <div className="flex items-center gap-2 text-[var(--accent)]">
-                                <Zap className="w-5 h-5" />
-                                <h3 className="font-display font-bold text-lg text-[var(--text-primary)]">AI Calibration</h3>
-                            </div>
-                            <button onClick={() => setShowAiSettings(false)} className="text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors">
-                                <XCircle className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-5">
-                            <div>
-                                <label className="block text-xs font-mono text-[var(--text-secondary)] mb-2 flex justify-between">
-                                    <span>Eye Tracking Threshold</span>
-                                    <span className="text-[var(--accent)]">{aiConfig.eyeTrackingThreshold.toFixed(2)}</span>
-                                </label>
-                                <input type="range" min="0.5" max="0.95" step="0.05" value={aiConfig.eyeTrackingThreshold}
-                                    onChange={e => setAiConfig(c => ({ ...c, eyeTrackingThreshold: parseFloat(e.target.value) }))}
-                                    className="w-full accent-[var(--accent)]" />
-                                <p className="text-[10px] text-[var(--text-dim)] mt-1">Lower = More sensitive (catches subtle movements). Higher = Less sensitive.</p>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-mono text-[var(--text-secondary)] mb-2 flex justify-between">
-                                    <span>Emotion Sensitivity</span>
-                                    <span className="text-[var(--accent)]">{aiConfig.emotionSensitivity.toFixed(2)}</span>
-                                </label>
-                                <input type="range" min="0.4" max="0.9" step="0.05" value={aiConfig.emotionSensitivity}
-                                    onChange={e => setAiConfig(c => ({ ...c, emotionSensitivity: parseFloat(e.target.value) }))}
-                                    className="w-full accent-[var(--accent)]" />
-                                <p className="text-[10px] text-[var(--text-dim)] mt-1">Lower = Detects micro-expressions. Higher = Only extreme expressions.</p>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-mono text-[var(--text-secondary)] mb-2 flex justify-between">
-                                    <span>Head Pose Margin</span>
-                                    <span className="text-[var(--accent)]">{aiConfig.headPoseMargin.toFixed(2)}</span>
-                                </label>
-                                <input type="range" min="0.2" max="1.0" step="0.1" value={aiConfig.headPoseMargin}
-                                    onChange={e => setAiConfig(c => ({ ...c, headPoseMargin: parseFloat(e.target.value) }))}
-                                    className="w-full accent-[var(--accent)]" />
-                                <p className="text-[10px] text-[var(--text-dim)] mt-1">Margin before triggering 'Looking Away'. Higher = More leeway.</p>
-                            </div>
-                        </div>
-                        <div className="p-4 border-t border-[var(--border)] flex justify-end">
-                            <button onClick={() => setShowAiSettings(false)} className="px-5 py-2 rounded-lg bg-[var(--accent)] text-black font-bold text-sm hover:brightness-110 transition-all">
-                                Done
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <AiCalibrationDialog
+                    dialogRef={aiDialogRef}
+                    config={aiConfig}
+                    onChange={setAiConfig}
+                    applyLabel={role === 'host' ? 'Apply to candidates' : 'Done'}
+                    onApply={() => {
+                        // Applies to every candidate's on-device engine (and later joiners)
+                        if (role === 'host') socketRef.current?.emit('ai-config', { roomId: roomCodeRef.current, config: aiConfig })
+                        setShowAiSettings(false)
+                    }}
+                    onClose={() => setShowAiSettings(false)}
+                />
             )}
 
-            {isCalibrating && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md flex-col text-[var(--text-primary)] font-mono">
-                    <div className="w-12 h-12 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin mb-6"></div>
-                    <h2 className="text-2xl font-bold text-[var(--accent)] tracking-widest mb-2">
-                        {antiCheatMsg?.toUpperCase() || "LOADING AI MODELS... (50MB)"}
-                    </h2>
-                    <p className="text-[var(--text-secondary)] text-sm mb-1">Please wait while the AI initializes.</p>
-                    <p className="text-[var(--text-dim)] text-xs">This may take a moment on slower connections.</p>
-                </div>
-            )}
+            {isCalibrating && <CalibratingOverlay message={antiCheatMsg} />}
 
-            {/* End Session Confirm Modal */}
             {showKillConfirm && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
-                        <h3 className="text-xl font-bold text-[var(--red)] mb-2">End Session?</h3>
-                        <p className="text-sm text-[var(--text-secondary)] mb-6">This will terminate the room and disconnect all participants immediately.</p>
-                        <div className="flex gap-3">
-                            <button onClick={() => setShowKillConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
-                            <button onClick={() => {
-                                socketRef.current?.emit('kill-session', roomCode);
-                                router.push('/app');
-                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">End Now</button>
-                        </div>
-                    </div>
-                </div>
+                <ConfirmDialog
+                    dialogRef={killDialogRef}
+                    titleId="end-session-title"
+                    title="End Session?"
+                    body="This will terminate the room and disconnect all participants immediately."
+                    confirmLabel="End Now"
+                    danger
+                    onCancel={() => setShowKillConfirm(false)}
+                    onConfirm={() => { socketRef.current?.emit('kill-session', roomCode); router.push('/app') }}
+                />
             )}
 
-            {/* Leave Room Confirm Modal */}
             {showLeaveConfirm && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 text-center">
-                        <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">Leave Room?</h3>
-                        <p className="text-sm text-[var(--text-secondary)] mb-6">You are about to disconnect from this session.</p>
-                        <div className="flex gap-3">
-                            <button onClick={() => setShowLeaveConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--elevated)]">Cancel</button>
-                            <button onClick={() => {
-                                socketRef.current?.emit('leave-session', roomCode);
-                                router.push('/app');
-                            }} className="flex-1 py-2.5 rounded-lg bg-[var(--red)] text-[var(--text-primary)] font-bold hover:brightness-110">Leave Now</button>
-                        </div>
-                    </div>
+                <ConfirmDialog
+                    dialogRef={leaveDialogRef}
+                    titleId="leave-room-title"
+                    title="Leave Room?"
+                    body="You are about to disconnect from this session."
+                    confirmLabel="Leave Now"
+                    onCancel={() => setShowLeaveConfirm(false)}
+                    onConfirm={() => { socketRef.current?.emit('leave-session', roomCode); router.push('/app') }}
+                />
+            )}
+
+            {panicNotice && (
+                <div role="alert" className="fixed top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 rounded-xl border border-[var(--red)]/50 bg-[var(--bg)]/95 px-4 py-3 text-sm font-semibold text-[var(--red)] shadow-2xl backdrop-blur">
+                    <ShieldOff className="w-4 h-4" />
+                    {panicNotice}
                 </div>
             )}
 
@@ -2910,6 +3303,7 @@ function SessionContent() {
                         ip: requestingUser.ip || 'Unknown IP',
                     }}
                     onAllow={(nextPermission, options) => {
+                        if (nextPermission !== 'view') window.ipcRenderer?.send('set-remote-input-lock', false)
                         socketRef.current?.emit('access-granted', nextPermission, {
                             ...options,
                             targetId: requestingUser.controllerId,
@@ -2926,50 +3320,18 @@ function SessionContent() {
             )}
 
             {showSharePicker && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
-                    <div className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-xl flex flex-col h-[80vh] overflow-hidden shadow-2xl">
-                        <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--background)]">
-                            <h2 className="text-xl font-bold font-display text-[var(--text-primary)]">Select screen or window to share</h2>
-                            <button onClick={() => setShowSharePicker(false)} className="text-[var(--text-dim)] hover:text-[var(--text-primary)]">
-                                <X className="w-6 h-6" />
-                            </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg)]">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                                {shareSources.map((source) => (
-                                    <div 
-                                        key={source.id}
-                                        onClick={async () => {
-                                            setShowSharePicker(false);
-                                            if ((window as any).api && (window as any).api.setShareSource) {
-                                                await (window as any).api.setShareSource(source.id);
-                                            }
-                                            startSharing();
-                                        }}
-                                        className="flex flex-col group cursor-pointer bg-[var(--surface)] rounded-lg overflow-hidden border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-[0_0_15px_rgba(0,212,255,0.3)] transition-all duration-200"
-                                    >
-                                        <div className="aspect-video bg-[var(--bg)] flex items-center justify-center overflow-hidden p-2 relative">
-                                            {source.thumbnail ? (
-                                                <img src={source.thumbnail} alt={source.name} className="max-w-full max-h-full object-contain rounded drop-shadow-md" />
-                                            ) : (
-                                                <div className="text-[var(--text-dim)] flex flex-col items-center">
-                                                    <Monitor className="w-8 h-8 mb-2 opacity-50" />
-                                                    <span className="text-xs">No preview</span>
-                                                </div>
-                                            )}
-                                            {source.isScreen && (
-                                                <div className="absolute top-2 right-2 bg-[var(--accent)] text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase">Entire Screen</div>
-                                            )}
-                                        </div>
-                                        <div className="p-3 border-t border-[var(--border)] bg-[var(--background)] group-hover:bg-[var(--elevated)]">
-                                            <p className="text-sm font-semibold text-[var(--text-primary)] truncate" title={source.name}>{source.name}</p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <SharePickerDialog
+                    dialogRef={shareDialogRef}
+                    sources={shareSources}
+                    onClose={() => setShowSharePicker(false)}
+                    onPick={async (source) => {
+                        setShowSharePicker(false)
+                        if ((window as any).api && (window as any).api.setShareSource) {
+                            await (window as any).api.setShareSource(source.id)
+                        }
+                        startSharing()
+                    }}
+                />
             )}
 
             {(showPet || sessionMode === 'supervised') && <PetCanvas petState={petState} sessionMode={sessionMode} petMessage={petMessage} isCanvasMode={isCanvasMode} />}

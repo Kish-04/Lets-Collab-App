@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getAuthHeaders, getBackendUrl } from '@/lib/utils';
+import { explorerTxUrl, getAuthHeaders, getBackendUrl } from '@/lib/utils';
 
 export default function SessionHistoryWrapper() {
   return (
@@ -17,6 +17,26 @@ function SessionHistoryViewer() {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [verification, setVerification] = useState<any>(null);
+  const [chain, setChain] = useState<{ name: string; explorerTxBaseUrl: string | null } | null>(null);
+  const [verifying, setVerifying] = useState(false);
+
+  const runVerification = async () => {
+    if (!sessionId) return;
+    setVerifying(true);
+    try {
+      const res = await fetch(`${getBackendUrl()}/api/sessions/${encodeURIComponent(sessionId)}/verify`, {
+        credentials: 'include',
+        headers: getAuthHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      setVerification(res.ok ? data : { success: false, message: data.message || 'Verification failed' });
+    } catch (err: any) {
+      setVerification({ success: false, message: err.message || 'Verification failed' });
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   useEffect(() => {
     if (!sessionId) {
@@ -37,6 +57,7 @@ function SessionHistoryViewer() {
         }
         if (data.success) {
           setLogs(data.logs);
+          setChain(data.chain || null);
         } else {
           setError(data.message || 'Failed to fetch history');
         }
@@ -55,12 +76,63 @@ function SessionHistoryViewer() {
         <h1 className="text-3xl font-bold mb-2 tracking-tight text-[var(--text-primary)]/">
           On-Chain Permission History
         </h1>
-        <p className="text-gray-400 mb-8 font-medium">Session ID: <span className="text-cyan-400 font-mono bg-cyan-950/30 px-2 py-0.5 rounded border border-cyan-900/50">{sessionId}</span></p>
+        <p className="text-gray-400 mb-6 font-medium">Session ID: <span className="text-cyan-400 font-mono bg-cyan-950/30 px-2 py-0.5 rounded border border-cyan-900/50">{sessionId}</span></p>
+
+        <div className="mb-8 p-5 rounded-xl bg-[var(--elevated)] border border-[var(--border)]/60 shadow-xl">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-bold text-[var(--text-primary)]">Audit Integrity</h2>
+              <p className="text-sm text-gray-400">Recomputes every stored log hash and compares it with the on-chain record.</p>
+            </div>
+            <button
+              onClick={runVerification}
+              disabled={verifying || !sessionId}
+              className="px-4 py-2 rounded-lg bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 text-sm font-bold transition-colors disabled:opacity-50"
+            >
+              {verifying ? 'Verifying...' : 'Verify integrity'}
+            </button>
+          </div>
+
+          {verification && (
+            !verification.success ? (
+              <p className="mt-4 text-sm text-red-400">{verification.message}</p>
+            ) : !verification.chainActive ? (
+              <div className="mt-4 space-y-2 text-sm">
+                <p className="text-gray-400">{verification.message}</p>
+                <SignedChainLine chain={verification.signedChain} />
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3 text-sm">
+                <p className={`font-bold ${verification.intact ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {verification.chainStatus === 'unconfirmed' ? 'No contradictions, but none of these records could be found on the blockchain (mock mode or failed anchoring).' : verification.intact ? 'Local logs match the blockchain.' : 'Tampering detected: local logs do not match the blockchain.'}
+                </p>
+                <div className="flex flex-wrap gap-2 font-mono text-xs">
+                  <span className="px-2 py-1 rounded bg-emerald-500/10 text-emerald-400">verified {verification.summary.verified}</span>
+                  <span className="px-2 py-1 rounded bg-red-500/10 text-red-400">tampered {verification.summary.tampered}</span>
+                  <span className="px-2 py-1 rounded bg-red-500/10 text-red-400">deleted locally {verification.summary.missing_local}</span>
+                  <span className="px-2 py-1 rounded bg-gray-500/10 text-gray-400">not on chain {verification.summary.not_on_chain}</span>
+                  <span className={`px-2 py-1 rounded ${verification.transcript.status === 'verified' ? 'bg-emerald-500/10 text-emerald-400' : verification.transcript.status === 'tampered' ? 'bg-red-500/10 text-red-400' : 'bg-gray-500/10 text-gray-400'}`}>
+                    chat &amp; evidence: {verification.transcript.status.replace('_', ' ')}
+                  </span>
+                </div>
+                <SignedChainLine chain={verification.signedChain} />
+                {verification.results.filter((r: any) => r.status === 'tampered' || r.status === 'missing_local').map((r: any, i: number) => (
+                  <div key={i} className="p-3 rounded-lg bg-red-950/30 border border-red-900/50 font-mono text-xs break-all">
+                    <p className="text-red-300 font-bold">{r.eventType} - {r.status === 'tampered' ? 'payload altered' : 'record deleted locally'}</p>
+                    {r.payload && <p className="text-gray-400 mt-1">stored: {r.payload}</p>}
+                    <p className="text-gray-500 mt-1">chain hash: {r.chainHash}</p>
+                    {r.recomputedHash && <p className="text-gray-500">local hash: {r.recomputedHash}</p>}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
 
         {loading ? (
           <div className="flex items-center justify-center p-12 bg-[var(--elevated)] rounded-xl border border-[var(--border)]/60 shadow-2xl backdrop-blur-sm">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500"></div>
-            <span className="ml-4 text-cyan-400/80 font-medium">Querying Sepolia Blockchain...</span>
+            <span className="ml-4 text-cyan-400/80 font-medium">Querying audit blockchain...</span>
           </div>
         ) : error ? (
           <div className="bg-red-950/30 border border-red-900/50 text-red-400 p-6 rounded-xl shadow-2xl backdrop-blur-sm flex items-start gap-4">
@@ -102,7 +174,7 @@ function SessionHistoryViewer() {
                     )}
                     {typeof log.txHash === 'string' && log.txHash.startsWith('0x') ? (
                       <a
-                        href={`https://sepolia.etherscan.io/tx/${log.txHash}`}
+                        href={explorerTxUrl(log.txHash, chain?.explorerTxBaseUrl)}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1.5 mt-3 text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-md font-mono"
@@ -123,5 +195,26 @@ function SessionHistoryViewer() {
         )}
       </div>
     </div>
+  );
+}
+
+// Result of the server's signed, hash-linked audit chain (works with or without the blockchain)
+function SignedChainLine({ chain }: { chain?: { status: string; length: number; brokenAt?: number; eventType?: string; reason?: string; keyId?: string; unsignedLegacy?: number } }) {
+  if (!chain) return null;
+  if (chain.status === 'unsigned') {
+    return <p className="font-mono text-xs text-gray-400">Signed audit chain: none recorded for this session (recorded before signing was enabled).</p>;
+  }
+  if (chain.status === 'broken') {
+    return (
+      <p className="font-mono text-xs text-red-400">
+        Signed audit chain BROKEN at entry {chain.brokenAt} ({chain.eventType}): {chain.reason}.
+      </p>
+    );
+  }
+  return (
+    <p className="font-mono text-xs text-emerald-400">
+      Signed audit chain intact: {chain.length} entries, key {chain.keyId}
+      {chain.unsignedLegacy ? ` (${chain.unsignedLegacy} older unsigned)` : ''}.
+    </p>
   );
 }

@@ -40,6 +40,15 @@ const sessionLogSchema = new mongoose.Schema({
     by: String,
     label: String,
   }],
+  anchors: [{
+    eventType: String,
+    payload: String,
+    dataHash: String,
+    txHash: String,
+    txStatus: String, // pending | confirmed | failed (blockchainLogger onStatus)
+    createdAt: String,
+    chain: { type: mongoose.Schema.Types.Mixed }, // { seq, prev, hash, sig, keyId } (auditChain.js)
+  }],
   federated: { type: mongoose.Schema.Types.Mixed },
   examData: { type: mongoose.Schema.Types.Mixed },
   riskScore: { type: Number, default: 0 },

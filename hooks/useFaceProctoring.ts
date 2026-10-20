@@ -16,6 +16,11 @@ export function useFaceProctoring(
     role: string | null,
     onViolation: (type: string, message: string) => void
 ) {
+    // Callers pass an inline callback; keep the latest one in a ref so the detection loop is not
+    // torn down and restarted on every render
+    const onViolationRef = useRef(onViolation);
+    onViolationRef.current = onViolation;
+
     const landmarkerRef = useRef<FaceLandmarker | null>(null);
     const requestRef = useRef<number>(0);
     const lastVideoTime = useRef(-1);
@@ -52,6 +57,7 @@ export function useFaceProctoring(
                     numFaces: 5
                 });
                 if (isMounted) landmarkerRef.current = faceLandmarker;
+                else faceLandmarker.close(); // finished loading after unmount: release its GPU/Wasm memory
             } catch (err) {
                 console.warn("Failed to initialize FaceLandmarker:", err);
             }
@@ -103,7 +109,7 @@ export function useFaceProctoring(
                         if (numFaces === 0) {
                             if (state.noFaceSince === 0) state.noFaceSince = now;
                             else if (now - state.noFaceSince > PROCTOR_CONFIG.NO_FACE_TIMEOUT_MS) {
-                                onViolation('no_face', "Please make sure you're in front of the camera and facing the screen.");
+                                onViolationRef.current('no_face', "Please make sure you're in front of the camera and facing the screen.");
                                 state.noFaceSince = now;
                             }
                         } else {
@@ -113,7 +119,7 @@ export function useFaceProctoring(
                         if (numFaces > 1) {
                             if (state.multipleFacesSince === 0) state.multipleFacesSince = now;
                             else if (now - state.multipleFacesSince > PROCTOR_CONFIG.MULTIPLE_FACES_TIMEOUT_MS) {
-                                onViolation('multiple_faces', "Multiple faces detected. Please make sure you're alone.");
+                                onViolationRef.current('multiple_faces', "Multiple faces detected. Please make sure you're alone.");
                                 state.multipleFacesSince = now;
                             }
                         } else {
@@ -128,7 +134,7 @@ export function useFaceProctoring(
                             if (Math.abs(yaw) > PROCTOR_CONFIG.HEAD_YAW_THRESHOLD || Math.abs(pitch) > PROCTOR_CONFIG.HEAD_PITCH_THRESHOLD) {
                                 if (state.lookAwaySince === 0) state.lookAwaySince = now;
                                 else if (now - state.lookAwaySince > PROCTOR_CONFIG.LOOK_AWAY_TIMEOUT_MS) {
-                                    onViolation('look_away', "Please make sure you're facing the screen directly.");
+                                    onViolationRef.current('look_away', "Please make sure you're facing the screen directly.");
                                     state.lookAwaySince = now;
                                 }
                             } else {
@@ -152,7 +158,7 @@ export function useFaceProctoring(
                                 if (isDartingEyes) {
                                     if (state.eyeDartSince === 0) state.eyeDartSince = now;
                                     else if (now - state.eyeDartSince > PROCTOR_CONFIG.EYE_DART_TIMEOUT_MS) {
-                                        onViolation('eye_darting', "Suspicious eye movement detected. Please keep your eyes on the screen.");
+                                        onViolationRef.current('eye_darting', "Suspicious eye movement detected. Please keep your eyes on the screen.");
                                         state.eyeDartSince = now + 5000; // Reset to avoid spam
                                     }
                                 } else {
@@ -178,5 +184,5 @@ export function useFaceProctoring(
 
         requestRef.current = requestAnimationFrame(processFrame);
         return () => cancelAnimationFrame(requestRef.current);
-    }, [sessionMode, role, videoRef, onViolation]);
+    }, [sessionMode, role, videoRef]);
 }

@@ -1,51 +1,87 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, ImageBackground, TouchableOpacity, Modal, Platform, TextInput, ScrollView, Dimensions, Alert, Image } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, ImageBackground, TouchableOpacity, Modal, Platform, TextInput, ScrollView, Dimensions, Alert, Image, RefreshControl } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
-import { BACKEND_URL, getAuthHeaders } from '../../lib/api';
-import { ShieldAlert, X, Sun, Moon, Search, Download, Flag, CheckCircle, AlertTriangle } from 'lucide-react-native';
+import { BACKEND_URL, getAuthHeaders, getStoredAuthToken } from '../../lib/api';
+import { shareExport, toCsv, writeExportFile } from '../../lib/exportFile';
+import { ShieldAlert, X, Sun, Moon, Search, Download, Flag, CheckCircle, AlertTriangle, ImageOff } from 'lucide-react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { AnimatedPressable } from '../../components/AnimatedPressable';
 import { PieChart } from 'react-native-chart-kit';
+import io, { Socket } from 'socket.io-client';
+import { useFocusEffect } from 'expo-router';
+
+// Evidence URLs from the server are signed, short-lived /uploads paths
+const evidenceUri = (url?: string) => (url ? (url.startsWith('http') ? url : `${BACKEND_URL}${url}`) : null);
+
+const normalizeAlert = (a: any) => {
+  const penalty = a.penalty || 0;
+  return {
+    ...a,
+    roomId: a.room || a.roomId || 'SYSTEM',
+    penalty,
+    totalRisk: Math.min(100, (a.totalRisk || penalty)),
+    flagged: Boolean(a.flagged),
+    falsePositive: Boolean(a.falsePositive),
+  };
+};
 
 export default function AlertsScreen() {
   const { colors, theme, toggleTheme } = useTheme();
   const [alerts, setAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
   const [imageError, setImageError] = useState(false);
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [search, setSearch] = useState('');
+  const socketRef = useRef<Socket | null>(null);
 
-  useEffect(() => {
-    const fetchAlerts = async () => {
-      try {
-        const headers = await getAuthHeaders();
-        const res = await fetch(`${BACKEND_URL}/api/admin/reports`, { headers });
-        const data = await res.json();
-        if (data.alerts) {
-          // Add some derived fields for mobile matching the web API shape
-          const processed = data.alerts.map((a: any) => {
-            const room = a.room || a.roomId || 'SYSTEM';
-            const penalty = a.penalty || 0;
-            return {
-              ...a,
-              roomId: room,
-              penalty,
-              totalRisk: Math.min(100, (a.totalRisk || penalty)),
-              flagged: Boolean(a.flagged),
-              falsePositive: Boolean(a.falsePositive),
-            };
-          });
-          setAlerts(processed);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchAlerts();
+  const fetchAlerts = useCallback(async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${BACKEND_URL}/api/admin/reports`, { headers });
+      const data = await res.json();
+      if (data.alerts) setAlerts(data.alerts.map(normalizeAlert));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  // Reload history whenever the tab is focused (this also renews the signed evidence links)
+  useFocusEffect(useCallback(() => { fetchAlerts(); }, [fetchAlerts]));
+
+  // Live alerts pushed to the admins room, same as the web dashboard
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const token = await getStoredAuthToken();
+      if (!token || cancelled) return;
+      const socket = io(BACKEND_URL, { auth: { token }, transports: ['websocket', 'polling'] });
+      socketRef.current = socket;
+      socket.on('system-alert', (payload: any) => {
+        const entry = normalizeAlert({
+          ...payload,
+          _id: payload._id || `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          time: new Date().toISOString(),
+        });
+        setAlerts(prev => [entry, ...prev].slice(0, 500));
+      });
+    })();
+    return () => {
+      cancelled = true;
+      socketRef.current?.disconnect();
+      socketRef.current = null;
+    };
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchAlerts();
+  };
 
   const friendlyType = (raw: string) => {
     const map: Record<string, string> = {
@@ -90,40 +126,47 @@ export default function AlertsScreen() {
     setWarnModalVisible(true);
   };
 
-  const submitWarning = async () => {
+  // Same socket actions as the web dashboard, so warnings and terminations are logged and anchored
+  const submitWarning = () => {
     if (!warnRoomId) return;
-    try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${BACKEND_URL}/api/admin/rooms/${warnRoomId}/warn`, { 
-        method: 'POST', 
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: warnMessage || "Admin has issued a warning." })
-      });
-      if (res.ok) {
-        Alert.alert("Warn User", `Warning sent successfully to room ${warnRoomId}`);
-        setWarnModalVisible(false);
-      } else {
-        Alert.alert("Error", `Failed to send warning`);
-      }
-    } catch (err) {
-      console.error(err);
-      Alert.alert("Error", `Network error sending warning`);
+    if (!socketRef.current?.connected) {
+      Alert.alert("Error", "Not connected to the server");
+      return;
     }
+    socketRef.current.emit('admin-warn-user', { roomId: warnRoomId, message: warnMessage || "Warning from administrator." });
+    Alert.alert("Warn User", `Warning sent to room ${warnRoomId}`);
+    setWarnModalVisible(false);
   };
 
-  const handleKillSession = async (roomId: string) => {
+  const handleKillSession = (roomId: string) => {
+    Alert.alert("Kill Session", `Terminate room ${roomId} for everyone?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Terminate",
+        style: "destructive",
+        onPress: () => {
+          if (!socketRef.current?.connected) {
+            Alert.alert("Error", "Not connected to the server");
+            return;
+          }
+          socketRef.current.emit('kill-session', roomId);
+          setSelectedAlert(null);
+        },
+      },
+    ]);
+  };
+
+  const exportCsv = async () => {
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${BACKEND_URL}/api/admin/rooms/${roomId}/kill`, { method: 'POST', headers });
-      if (res.ok) {
-        Alert.alert("Kill Session", `Session terminated for room ${roomId}`);
-        setSelectedAlert(null);
-      } else {
-        Alert.alert("Error", `Failed to terminate session`);
-      }
+      const csv = toCsv(
+        ["Time", "Room", "Alert Type", "Message", "Risk Delta", "Total Risk", "Flagged", "False Positive"],
+        filtered.map(a => [new Date(a.time || a.timestamp).toISOString(), a.roomId, friendlyType(a.event || a.type), a.message, a.penalty, a.totalRisk, a.flagged, a.falsePositive]),
+      );
+      const uri = writeExportFile(`alerts_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`, csv);
+      await shareExport(uri, 'CSV');
     } catch (err) {
       console.error(err);
-      Alert.alert("Error", `Network error terminating session`);
+      Alert.alert("Export Failed", "Could not create the CSV file.");
     }
   };
 
@@ -236,6 +279,7 @@ export default function AlertsScreen() {
           renderItem={renderItem}
           contentContainerStyle={styles.listContainer}
           ListEmptyComponent={ListEmpty}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
           ListHeaderComponent={
             <View style={styles.headerContent}>
               <View style={[styles.analyticsCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
@@ -310,7 +354,7 @@ export default function AlertsScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                <TouchableOpacity onPress={() => Alert.alert('Export', 'CSV Exported')} style={[styles.exportBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                <TouchableOpacity onPress={exportCsv} style={[styles.exportBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                   <Download size={14} color={colors.textPrimary} />
                   <Text style={[styles.exportBtnText, { color: colors.textPrimary }]}>CSV</Text>
                 </TouchableOpacity>
@@ -374,15 +418,27 @@ export default function AlertsScreen() {
 
                   <View style={[styles.infoBox, { backgroundColor: 'rgba(255,255,255,0.02)', borderColor: colors.border, marginBottom: 16, height: 160, justifyContent: 'center', alignItems: 'center', overflow: 'hidden', position: 'relative' }]}>
                     <Text style={[styles.metricLabel, { color: colors.textDim, zIndex: 10, position: 'absolute', top: 12, left: 12 }]}>AI EVIDENCE</Text>
-                    {selectedAlert.evidenceUrl ? (
-                      <Image 
-                        source={{ uri: imageError ? 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=500&q=80' : (selectedAlert.evidenceUrl.startsWith('http') ? selectedAlert.evidenceUrl : `${BACKEND_URL}${selectedAlert.evidenceUrl}`) }} 
-                        style={{ position: 'absolute', width: '100%', height: '100%', opacity: 0.6 }} 
-                        resizeMode="cover"
-                        onError={() => setImageError(true)}
-                      />
+                    {selectedAlert.evidenceUrl && !imageError ? (
+                      <TouchableOpacity activeOpacity={0.85} onPress={() => setViewerUri(evidenceUri(selectedAlert.evidenceUrl))} style={{ position: 'absolute', width: '100%', height: '100%' }}>
+                        <Image
+                          source={{ uri: evidenceUri(selectedAlert.evidenceUrl)! }}
+                          style={{ width: '100%', height: '100%' }}
+                          resizeMode="cover"
+                          onError={() => setImageError(true)}
+                        />
+                        <Text style={[styles.metricLabel, { position: 'absolute', bottom: 8, right: 12, color: '#fff', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 6, borderRadius: 4 }]}>TAP TO ENLARGE</Text>
+                      </TouchableOpacity>
+                    ) : selectedAlert.evidenceUrl ? (
+                      // Never substitute a stock image for evidence
+                      <View style={{ alignItems: 'center', gap: 6 }}>
+                        <ImageOff size={32} color={colors.textDim} />
+                        <Text style={[styles.metricLabel, { color: colors.textDim }]}>Evidence link expired - pull to refresh</Text>
+                      </View>
                     ) : (
-                      <ShieldAlert size={40} color={colors.red} />
+                      <View style={{ alignItems: 'center', gap: 6 }}>
+                        <ShieldAlert size={32} color={colors.red} />
+                        <Text style={[styles.metricLabel, { color: colors.textDim }]}>No screenshot captured</Text>
+                      </View>
                     )}
                   </View>
 
@@ -411,6 +467,15 @@ export default function AlertsScreen() {
               </>
             )}
           </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!viewerUri} animationType="fade" transparent={true} onRequestClose={() => setViewerUri(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }}>
+          {viewerUri && <Image source={{ uri: viewerUri }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />}
+          <TouchableOpacity onPress={() => setViewerUri(null)} style={{ position: 'absolute', top: Platform.OS === 'ios' ? 60 : 30, right: 20, padding: 10 }}>
+            <X size={24} color="#fff" />
+          </TouchableOpacity>
         </View>
       </Modal>
 

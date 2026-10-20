@@ -3,11 +3,13 @@ const multer = require('multer');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const router = express.Router();
 const User = require('./User');
 const Alert = require('./alert');
 const SessionLog = require('./sessionLog');
 const { verifyJwt } = require('./config');
+const { signUploadUrl } = require('./uploadAccess');
 const mockStore = require('./mockStore');
 
 const onlineEmails = new Set();
@@ -50,12 +52,11 @@ async function loadAuthenticatedUser(req, res) {
 
   try {
     const decoded = verifyJwt(token);
-    const user = global.dbConnected
+    let user = global.dbConnected
       ? await User.findById(decoded.id)
       : mockStore.findUserById(decoded.id);
 
     if (!user || user.banned) {
-      console.log('[loadAuthenticatedUser] user not found or banned in DB');
       if (decoded.id === 'admin-id' || decoded.email === 'kishankarthiks222@gmail.com' || decoded.email === 'admin@letscollab.com') {
         const emailToUse = decoded.email || 'admin@letscollab.com';
         const mockStore = require('./mockStore');
@@ -88,17 +89,13 @@ async function protectAuthenticated(req, res, next) {
 }
 
 async function protectAdmin(req, res, next) {
-  console.log('[protectAdmin] Invoked for', req.url);
   const user = await loadAuthenticatedUser(req, res);
   if (!user) {
-    console.log('[protectAdmin] loadAuthenticatedUser returned null');
     return;
   }
   if (user.role !== 'admin') {
-    console.log('[protectAdmin] User is not admin:', user.role);
     return res.status(403).json({ success: false, message: 'Not authorized as an admin' });
   }
-  console.log('[protectAdmin] Admin authorized:', user.email);
   req.user = user;
   next();
 }
@@ -114,11 +111,27 @@ const s3 = new S3Client({
   forcePathStyle: true,
 });
 
+// Evidence is only ever images or recorded video. Anything else (HTML, SVG, scripts) would be served
+// from the API origin to admins, so it is refused, and the stored name never reuses the client's.
+const EVIDENCE_TYPES = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'video/webm': 'webm',
+  'video/mp4': 'mp4',
+};
+
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
     fileSize: Number(process.env.EVIDENCE_MAX_BYTES || 25 * 1024 * 1024),
+  },
+  fileFilter: (req, file, cb) => {
+    if (EVIDENCE_TYPES[file.mimetype]) return cb(null, true);
+    const err = new Error('Evidence must be a PNG, JPEG or WebP image, or a WebM or MP4 video.');
+    err.status = 415;
+    cb(err);
   },
 });
 
@@ -128,8 +141,21 @@ function uploadEvidenceFile(req, res, next) {
     if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ success: false, message: 'Evidence file is too large.' });
     }
-    return res.status(400).json({ success: false, message: err.message || 'Invalid evidence upload.' });
+    return res.status(err.status || 400).json({ success: false, message: err.message || 'Invalid evidence upload.' });
   });
+}
+
+function evidenceFileName(file) {
+  return `${Date.now()}-${crypto.randomUUID()}.${EVIDENCE_TYPES[file.mimetype]}`;
+}
+
+// Admins, the room's host, and its approved controllers may attach evidence to a live room
+function canUploadToRoom(user, room) {
+  if (!room) return false;
+  if (user.role === 'admin') return true;
+  if (!user.email) return false;
+  if (room.hostEmail === user.email) return true;
+  return Array.from(room.controllers?.values() || []).some(participant => participant.email === user.email);
 }
 
 router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async (req, res) => {
@@ -145,8 +171,7 @@ router.post('/upload-evidence', protectAuthenticated, uploadEvidenceFile, async 
       return res.status(403).json({ success: false, message: 'Only the session host or an admin can upload evidence for this room.' });
     }
 
-    const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const fileName = `evidence/${Date.now()}-${safeName}`;
+    const fileName = `evidence/${evidenceFileName(req.file)}`;
     const bucket = process.env.S3_BUCKET_NAME || 'ircp-evidence-bucket';
 
     if (process.env.NODE_ENV === 'production' || process.env.USE_S3 === 'true') {
@@ -212,13 +237,14 @@ router.post('/upload-violation-screenshot', protectAuthenticated, uploadEvidence
     const label = req.body.label || 'Violation Detected';
     const liveRoom = roomCode ? findLiveRoom(roomCode) : null;
     
-    // Allow if they are in the active room (either as host, controller, or observer)
     if (!liveRoom) {
       return res.status(404).json({ success: false, message: 'Room not found or no longer active' });
     }
+    if (!canUploadToRoom(req.user, liveRoom)) {
+      return res.status(403).json({ success: false, message: 'Only members of this session can attach evidence to it.' });
+    }
 
-    const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const fileName = `evidence/${Date.now()}-${safeName}`;
+    const fileName = `evidence/${evidenceFileName(req.file)}`;
 
     const uploadPath = path.join(__dirname, 'uploads', 'evidence');
     fs.mkdirSync(uploadPath, { recursive: true });
@@ -226,8 +252,8 @@ router.post('/upload-violation-screenshot', protectAuthenticated, uploadEvidence
     
     const fileUrl = `/uploads/evidence/${fileName.split('/').pop()}`;
 
-    // Update the SessionLog evidence array
-    const SessionLog = require('./sessionLog');
+    // Stored on the live room only: archiveSession saves it with the session when it ends. Writing to
+    // SessionLog by room code here attached it to an older session that happened to reuse the code.
     const newEvidence = {
       id: Date.now().toString(),
       time: new Date().toLocaleTimeString(),
@@ -237,15 +263,6 @@ router.post('/upload-violation-screenshot', protectAuthenticated, uploadEvidence
       url: fileUrl
     };
 
-    if (global.dbConnected) {
-      await SessionLog.findOneAndUpdate(
-        { roomCode },
-        {
-          $push: { evidence: newEvidence }
-        }
-      ).catch(err => console.error('Failed to append evidence to session log', err));
-    }
-    
     // Also push to the live room in memory so dashboard sees it instantly
     if (liveRoom) {
       if (!liveRoom.evidence) liveRoom.evidence = [];
@@ -316,13 +333,9 @@ router.post('/users/:id/role', async (req, res) => {
 });
 
 router.get('/reports', async (req, res) => {
-  console.log('[API /reports] Request received!');
-  console.log('[API /reports] global.dbConnected:', Boolean(global.dbConnected));
-  console.log('[API /reports] req.user:', req.user ? req.user.email : 'None');
   
   try {
     if (!global.dbConnected) {
-      console.log('[API /reports] Returning mock data because dbConnected is false!');
       const userActivity = mockStore.listUsers().map(user => ({
         name: user.name,
         email: user.email,
@@ -342,7 +355,7 @@ router.get('/reports', async (req, res) => {
         message: alert.message,
         penalty: alert.penalty,
         time: alert.createdAt,
-        evidenceUrl: alert.evidenceUrl,
+        evidenceUrl: signUploadUrl(alert.evidenceUrl) || undefined,
         flagged: Boolean(alert.flagged),
         falsePositive: Boolean(alert.falsePositive),
       }));
@@ -375,9 +388,7 @@ router.get('/reports', async (req, res) => {
       });
     }
 
-    console.log('[API /reports] DB is connected. Querying User.find({})...');
     const users = await User.find({}).select('-password -otp -otpExpires').sort({ sessionCount: -1 });
-    console.log('[API /reports] Found users:', users.length);
     const userActivity = users.map(user => ({
       name: user.name,
       email: user.email,
@@ -399,7 +410,7 @@ router.get('/reports', async (req, res) => {
       message: alert.message,
       penalty: alert.penalty,
       time: alert.createdAt,
-      evidenceUrl: alert.evidenceUrl,
+      evidenceUrl: signUploadUrl(alert.evidenceUrl) || undefined,
       flagged: Boolean(alert.flagged),
       falsePositive: Boolean(alert.falsePositive),
     }));
@@ -437,33 +448,56 @@ router.get('/reports', async (req, res) => {
 });
 
 router.post('/alerts/:id/status', async (req, res) => {
-  if (!global.dbConnected) return res.json({ success: true, message: 'Mock mode (no db)' });
   try {
     const { flagged, falsePositive } = req.body;
-    const alert = await Alert.findById(req.params.id);
-    if (!alert) return res.status(404).json({ success: false, message: 'Alert not found' });
-    
-    if (typeof flagged === 'boolean') alert.flagged = flagged;
-    if (typeof falsePositive === 'boolean') alert.falsePositive = falsePositive;
-    
-    await alert.save();
-    res.json({ success: true, alert });
+    const updates = {};
+    if (typeof flagged === 'boolean') updates.flagged = flagged;
+    if (typeof falsePositive === 'boolean') updates.falsePositive = falsePositive;
+
+    let alert;
+    let wasFalsePositive = false;
+    if (global.dbConnected) {
+      alert = await Alert.findById(req.params.id);
+      if (!alert) return res.status(404).json({ success: false, message: 'Alert not found' });
+      wasFalsePositive = alert.falsePositive;
+      Object.assign(alert, updates);
+      await alert.save();
+    } else {
+      const existing = mockStore.listAlerts(1000).find(item => String(item._id) === String(req.params.id));
+      if (!existing) return res.status(404).json({ success: false, message: 'Alert not found' });
+      wasFalsePositive = Boolean(existing.falsePositive);
+      alert = mockStore.updateAlert(req.params.id, updates);
+    }
+
+    // Newly judged a false positive: feed it back to that device's federated model as a label-0 sample
+    let labelSent = false;
+    if (updates.falsePositive === true && !wasFalsePositive) {
+      labelSent = require('./index').sendFalsePositiveLabel(alert);
+    }
+    res.json({ success: true, alert, labelSent });
   } catch (err) {
     console.error('Update alert status error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
+// Same effect as the dashboard socket actions: logged, anchored, and kill really ends the room
+const roomCodeParam = (req) => String(req.params.id || '').trim().toUpperCase();
+
 router.post('/rooms/:id/warn', (req, res) => {
-  const { io } = require('./index');
-  io.to(req.params.id).emit('system-warning', req.body.message || 'Warning from administrator.');
+  const { warnRoom } = require('./index');
+  if (!warnRoom(roomCodeParam(req), req.body && req.body.message)) {
+    return res.status(404).json({ success: false, message: 'Session not found or already ended.' });
+  }
   res.json({ success: true, message: 'Warning sent.' });
 });
 
-router.post('/rooms/:id/kill', (req, res) => {
-  const { io } = require('./index');
-  io.to(req.params.id).emit('kill-session');
-  res.json({ success: true, message: 'Session killed.' });
+router.post('/rooms/:id/kill', async (req, res) => {
+  const { terminateRoom } = require('./index');
+  if (!await terminateRoom(roomCodeParam(req), 'admin')) {
+    return res.status(404).json({ success: false, message: 'Session not found or already ended.' });
+  }
+  res.json({ success: true, message: 'Session ended.' });
 });
 
 module.exports = { router, onlineEmails, setRoomLookup, protectAuthenticated, protectAdmin };

@@ -12,15 +12,17 @@ contextBridge.exposeInMainWorld('__LETSCOLLAB_BACKEND_URL__', backendUrl);
 const existingApi = window.api || {};
 contextBridge.exposeInMainWorld('api', {
   ...existingApi,
-  askGemini: (prompt) => ipcRenderer.invoke('gemini:ask', prompt),
+  askGemini: (prompt, codeContext) => ipcRenderer.invoke('gemini:ask', prompt, codeContext),
+  getPanicShortcuts: () => ipcRenderer.invoke('get-panic-shortcuts'),
   getShareableSources: () => ipcRenderer.invoke('get-shareable-sources'),
   setShareSource: (sourceId) => ipcRenderer.invoke('set-share-source', sourceId),
+  oauthLogin: (provider) => ipcRenderer.invoke('oauth-login', provider),
 });
 
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels
-    const validChannels = ['execute-input', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'start-drag', 'set-pet-enabled', 'set-ignore-mouse-events'];
+    const validChannels = ['execute-input', 'set-remote-input-lock', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'start-drag', 'set-pet-enabled', 'set-ignore-mouse-events'];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
     }

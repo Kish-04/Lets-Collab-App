@@ -6,11 +6,15 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "check": "node --check index.js && node --check authRoutes.js && node --check adminRoutes.js && node --check blockchainLogger.js && node --check config.js && node --check mockStore.js",
+    "check": "node --check index.js && node --check authRoutes.js && node --check adminRoutes.js && node --check blockchainLogger.js && node --check config.js && node --check mockStore.js && node --check exam.js && node --check limits.js && node --check socketGuard.js && node --check inputPolicy.js && node --check roomUtils.js && node --check accountRoutes.js && node --check reviewRoutes.js && node --check faceRoutes.js && node --check lti.js && node --check ltiRoutes.js && node --check sfu.js && node --check auditChain.js",
     "compile:contract": "node compile.js",
     "test:api": "jest test/api.test.js --detectOpenHandles --forceExit",
-    "test:contracts": "hardhat test test/SessionAudit.js",
-    "test": "npm run test:api && npm run test:contracts"
+    "test:contracts": "hardhat test test/SessionAudit.js test/AuditVerification.js",
+    "test": "npm run test:api && npm run test:contracts",
+    "deploy:amoy": "hardhat run scripts/deploy.js --network amoy",
+    "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
+    "verify:polygon": "hardhat verify --network polygon",
+    "test:chain": "node test/blockchainLogger.integration.js"
   },
   "keywords": [],
   "author": "",
@@ -27,6 +31,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.1",
     "jsonwebtoken": "^9.0.3",
+    "mediasoup": "3.28.0",
     "mongoose": "^9.3.0",
     "multer": "^2.2.0",
     "nodemailer": "^8.0.2",
