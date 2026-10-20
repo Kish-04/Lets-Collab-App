@@ -100,6 +100,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reviews', require('./reviewRoutes'));
 app.use('/api/face', require('./faceRoutes'));
+app.use('/api/lti', require('./ltiRoutes'));
+const lti = require('./lti');
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 // Each call spends the Gemini quota: signed-in users only, 20 questions per user per minute
@@ -1189,6 +1191,33 @@ async function reportFaceCheck(roomCode, user, result) {
   return true;
 }
 
+// Exam result per candidate: correct answers out of the questions that have an answer key
+function examScores(room) {
+  const graded = (room.exam?.questions || []).filter(q => q.answerKey);
+  if (graded.length === 0) return [];
+  const byEmail = new Map();
+  graded.forEach((question) => {
+    Object.values(room.exam.answers[question.id] || {}).forEach((answer) => {
+      if (!answer?.isFinal || !answer.email) return;
+      byEmail.set(answer.email, (byEmail.get(answer.email) || 0) + (answer.correct ? 1 : 0));
+    });
+  });
+  return Array.from(byEmail.entries()).map(([email, given]) => ({ email, given, maximum: graded.length }));
+}
+
+function sendLtiGrades(room) {
+  const entry = lti.linkFor(room.ltiLink);
+  if (entry && entry.roomCode && !rooms.has(entry.roomCode)) entry.roomCode = null;
+  const scores = examScores(room);
+  if (scores.length === 0) return;
+  lti.sendScores(room.ltiLink, scores)
+    .then(sent => console.log(`[LTI] sent ${sent} of ${scores.length} grade(s) to the course`))
+    .catch(err => console.error('[LTI] grade passback failed:', err.message));
+}
+
+// For /api/lti/room: is this room still live?
+const liveRoomCode = code => rooms.has(code);
+
 async function closeRoomAfterHostLeft(roomId) {
   const room = rooms.get(roomId);
   if (!room) return;
@@ -1347,6 +1376,7 @@ async function archiveSession(roomCode, reason) {
   if (!room || room.archived) return;
   room.archived = true;
   anchorEvent(roomCode, 'SESSION_ARCHIVED', { reason, ...transcriptDigest(room) }, room.hostEmail || '');
+  if (room.ltiLink) sendLtiGrades(room);
   clearFederatedRound(room);
   const endedAt = Date.now();
   pushEvent(roomCode, 'kill', reason);
@@ -1684,6 +1714,13 @@ io.on('connection', (socket) => {
       exam: { questions: [], answers: {} },
       archived: false,
     };
+    // Opened from a course activity (LTI): students launching that activity are sent to this room,
+    // and grades go back to the course when it ends. Only the instructor who launched it may link it.
+    const ltiLink = typeof meta.ltiLink === 'string' ? lti.linkFor(meta.ltiLink) : null;
+    if (ltiLink && ltiLink.hostEmail && ltiLink.hostEmail === actor.email) {
+      ltiLink.roomCode = code;
+      room.ltiLink = meta.ltiLink;
+    }
     rooms.set(code, room);
     socket.join(code);
     socket.roomCode = code;
@@ -2631,6 +2668,7 @@ io.on('connection', (socket) => {
       ...finalAnswer,
       isFinal: true,
       correct,
+      email: room.controllers.get(socket.id)?.email || undefined,
       timestamp: Date.now()
     };
     if (correct !== null) socket.emit('exam-answer-result', { questionId, correct });
@@ -2838,4 +2876,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, server, io, sendFalsePositiveLabel, terminateRoom, warnRoom, reportFaceCheck };
+module.exports = { app, server, io, sendFalsePositiveLabel, terminateRoom, warnRoom, reportFaceCheck, liveRoomCode, examScores };

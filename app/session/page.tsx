@@ -214,6 +214,8 @@ function SessionContent() {
     const createDirect = searchParams.get("create") === "true"
     const joinDirect = searchParams.get("join") === "true"
     const requestedMode: SessionMode = searchParams.get("mode") === "supervised" ? "supervised" : "collaboration"
+    // Opened from a course activity (LTI launch): links the new room to that activity for students and grades
+    const ltiLink = searchParams.get("lti") || undefined
 
     // ── Setup state ───────────────────────────────────────────────────────────
     const [setupMode, setSetupMode] = useState<"choose" | "join" | null>(
@@ -1357,7 +1359,7 @@ function SessionContent() {
                 // Reconnected after a drop: take the existing room back instead of opening a new one
                 socket.emit('resume-host', { roomId: roomCodeRef.current })
             } else if (asRole === 'host') {
-                socket.emit('create-room', { name: localStorage.getItem('ircp_name') || 'Host', mode: sessionModeRef.current, appearance: readPersonalAppearance() })
+                socket.emit('create-room', { name: localStorage.getItem('ircp_name') || 'Host', mode: sessionModeRef.current, appearance: readPersonalAppearance(), ltiLink })
             } else if (asRole === 'admin') {
                 const room = code || joinInput
                 setRoomCode(room)
