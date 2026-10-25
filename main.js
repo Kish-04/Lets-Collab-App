@@ -3,6 +3,7 @@ const serve = require('electron-serve');
 const path = require('path');
 const fs = require('fs');
 const { generateReply } = require('./gemini-service');
+const { mapBrowserKeyToRobotJS, mapModifiers } = require('./remoteKeyMap');
 
 const getLogPath = (filename) => {
   try {
@@ -99,10 +100,24 @@ function isTrustedRendererUrl(value) {
     const urlObj = new URL(value);
     const isApp = urlObj.protocol === 'app:';
     const isLocalhost = urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1';
-    return isApp || isLocalhost;
+    // Installed builds only ever load the bundled app:// pages; a local dev server is trusted only
+    // in unpackaged development runs, so another local web page cannot drive execute-input
+    return isApp || (!app.isPackaged && isLocalhost);
   } catch (e) {
     return false;
   }
+}
+
+// A window that navigates keeps its preload API, so it may only move between trusted pages;
+// web links open in the default browser instead
+function lockNavigation(win) {
+  const guard = (event, url) => {
+    if (isTrustedRendererUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+  };
+  win.webContents.on('will-navigate', guard);
+  win.webContents.on('will-redirect', guard);
 }
 
 function isTrustedIpcSender(event, channel) {
@@ -119,6 +134,51 @@ function clampNumber(value, min, max, fallback = 0) {
 }
 
 let mainWindow = null;
+
+// ── Panic revoke ───────────────────────────────────────────────────────────────
+// The lock lives in the main process so it takes effect the instant the shortcut is pressed:
+// no network round trip, and it works even if the renderer is busy. It is lifted only when the
+// host grants control again from the UI (set-remote-input-lock false).
+const PANIC_SHORTCUTS = ['Shift+Escape', 'CommandOrControl+Alt+Escape'];
+let registeredPanicShortcuts = [];
+let remoteInputLocked = false;
+const heldRemoteKeys = new Set();
+const heldRemoteButtons = new Set();
+
+// Release anything the controller was holding (a drag, Shift/Ctrl, gamepad buttons) so nothing stays pressed
+function releaseHeldRemoteInput() {
+  if (robot) {
+    heldRemoteButtons.forEach((button) => { try { robot.mouseToggle('up', button); } catch (e) {} });
+    heldRemoteKeys.forEach((key) => { try { robot.keyToggle(key, 'up'); } catch (e) {} });
+    ['shift', 'control', 'alt', 'command'].forEach((key) => { try { robot.keyToggle(key, 'up'); } catch (e) {} });
+  }
+  heldRemoteButtons.clear();
+  heldRemoteKeys.clear();
+  if (virtualGamepad && typeof virtualGamepad.resetInputs === 'function') {
+    try { virtualGamepad.resetInputs(); } catch (e) {}
+  }
+}
+
+function triggerPanicRevoke(source) {
+  remoteInputLocked = true;
+  releaseHeldRemoteInput();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('panic-revoke-control', { source });
+  }
+}
+
+function registerPanicShortcuts() {
+  registeredPanicShortcuts = PANIC_SHORTCUTS.filter((accelerator) => {
+    try {
+      return globalShortcut.register(accelerator, () => triggerPanicRevoke(accelerator));
+    } catch (e) {
+      return false;
+    }
+  });
+  if (registeredPanicShortcuts.length === 0) {
+    console.warn('[PANIC] No panic shortcut could be registered (keys already taken by another app).');
+  }
+}
 let petWindow = null;
 let petEnabled = true;
 
@@ -171,6 +231,8 @@ function createWindow() {
     }
   });
 
+  lockNavigation(petWindow);
+  petWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   loadURL(petWindow).then(() => {
     petWindow.loadURL('app://-/pet.html');
     petWindow.hide();
@@ -183,6 +245,7 @@ function createWindow() {
   mainWindow.on('closed', () => { if (petWindow && !petWindow.isDestroyed()) petWindow.close(); });
 
   // Security checks
+  lockNavigation(mainWindow);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
     return { action: 'deny' };
@@ -244,11 +307,7 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
-  globalShortcut.register('Shift+Escape', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('panic-revoke-control');
-    }
-  });
+  registerPanicShortcuts();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -264,15 +323,68 @@ app.on('window-all-closed', () => {
 });
 
 // IPC Handlers
-ipcMain.handle('gemini:ask', async (event, prompt) => {
-  return generateReply(prompt);
+ipcMain.handle('gemini:ask', async (event, prompt, codeContext) => {
+  if (!isTrustedIpcSender(event, 'gemini:ask')) return '';
+  return generateReply(prompt, codeContext);
+});
+
+ipcMain.handle('oauth-login', async (event, provider) => {
+  if (!isTrustedIpcSender(event, 'oauth-login')) return false;
+  if (provider !== 'google' && provider !== 'github') return false;
+  const backendUrl = getConfiguredBackendUrl();
+  const authUrl = `${backendUrl}/api/auth/${provider}`;
+  
+  return new Promise((resolve) => {
+    const authWindow = new BrowserWindow({
+      width: 600,
+      height: 800,
+      parent: mainWindow,
+      modal: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    
+    // Spoof Origin for backend CORS if necessary
+    authWindow.webContents.session.webRequest.onBeforeSendHeaders(
+      (details, callback) => {
+        details.requestHeaders['Origin'] = 'http://localhost:8081';
+        callback({ cancel: false, requestHeaders: details.requestHeaders });
+      }
+    );
+
+    authWindow.loadURL(authUrl);
+    
+    const handleNavigation = (url) => {
+      try {
+        const urlObj = new URL(url);
+        if (urlObj.searchParams.get('oauth') === 'success') {
+          authWindow.close();
+          resolve(true);
+        } else if (urlObj.searchParams.get('error')) {
+          authWindow.close();
+          resolve(false);
+        }
+      } catch (e) {}
+    };
+
+    authWindow.webContents.on('will-redirect', (e, url) => handleNavigation(url));
+    authWindow.webContents.on('did-navigate', (e, url) => handleNavigation(url));
+    
+    authWindow.on('closed', () => {
+      resolve(false);
+    });
+  });
 });
 
 ipcMain.on('pet-state-update', (event, data) => {
+  if (!isTrustedIpcSender(event, 'pet-state-update')) return;
   if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send('pet-sync-state', data);
 });
 
 ipcMain.on('set-pet-enabled', (event, enabled) => {
+  if (!isTrustedIpcSender(event, 'set-pet-enabled')) return;
   petEnabled = enabled;
   if (petWindow && !petWindow.isDestroyed()) {
     if (!enabled) petWindow.hide();
@@ -281,6 +393,7 @@ ipcMain.on('set-pet-enabled', (event, enabled) => {
 });
 
 ipcMain.on('move-pet-window', (event, { x, y }) => {
+  if (!isTrustedIpcSender(event, 'move-pet-window')) return;
   if (petWindow && !petWindow.isDestroyed()) {
     const [currentX, currentY] = petWindow.getPosition();
     petWindow.setPosition(Math.round(currentX + x), Math.round(currentY + y));
@@ -288,12 +401,15 @@ ipcMain.on('move-pet-window', (event, { x, y }) => {
 });
 
 ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
+  if (!isTrustedIpcSender(event, 'set-ignore-mouse-events')) return;
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.setIgnoreMouseEvents(ignore, { forward: true });
   }
 });
 
-ipcMain.handle('get-shareable-sources', async () => {
+ipcMain.handle('get-shareable-sources', async (event) => {
+  // Thumbnails of every window and screen: only for the app's own pages
+  if (!isTrustedIpcSender(event, 'get-shareable-sources')) return [];
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 300, height: 200 }, fetchWindowIcons: true });
     let screenIndex = 0;
@@ -311,7 +427,8 @@ ipcMain.handle('get-shareable-sources', async () => {
   }
 });
 
-ipcMain.handle('set-share-source', (_event, sourceId) => {
+ipcMain.handle('set-share-source', (event, sourceId) => {
+  if (!isTrustedIpcSender(event, 'set-share-source')) return false;
   pendingShareSourceId = typeof sourceId === 'string' ? sourceId : null;
   
   if (sharedWindowBoundsInterval) {
@@ -350,11 +467,13 @@ ipcMain.handle('set-share-source', (_event, sourceId) => {
 });
 
 ipcMain.on('toggle-fullscreen', (event) => {
+  if (!isTrustedIpcSender(event, 'toggle-fullscreen')) return;
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.setFullScreen(!win.isFullScreen());
 });
 
 ipcMain.on('enable-kiosk-mode', (event, enable) => {
+  if (!isTrustedIpcSender(event, 'enable-kiosk-mode')) return;
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) {
     win.setKiosk(enable);
@@ -386,9 +505,18 @@ ipcMain.on('set-clipboard-guard', (event, locked) => {
 });
 
 // Remote Input (RobotJS / ViGEmClient)
+ipcMain.handle('get-panic-shortcuts', (event) => (isTrustedIpcSender(event, 'get-panic-shortcuts') ? registeredPanicShortcuts : []));
+
+ipcMain.on('set-remote-input-lock', (event, locked) => {
+  if (!isTrustedIpcSender(event, 'set-remote-input-lock')) return;
+  remoteInputLocked = Boolean(locked);
+  if (remoteInputLocked) releaseHeldRemoteInput();
+});
+
 ipcMain.on('execute-input', (event, payload) => {
   if (!isTrustedIpcSender(event, 'execute-input')) return;
   if (!payload || typeof payload !== 'object') return;
+  if (remoteInputLocked) return;
 
   if (payload.type === 'gamepad-state') {
     if (virtualGamepad) {
@@ -426,7 +554,8 @@ ipcMain.on('execute-input', (event, payload) => {
   if (!robot) return;
 
   // Security check: Block inputs if sharing a specific window that is currently minimized or closed
-  if (pendingShareSourceId && pendingShareSourceId.startsWith('window:') && currentSharedWindowBounds === 'hidden') {
+  // (Only a window share ever sets 'hidden'; pendingShareSourceId is already cleared once sharing starts.)
+  if (currentSharedWindowBounds === 'hidden') {
     return;
   }
 
@@ -444,16 +573,30 @@ ipcMain.on('execute-input', (event, payload) => {
 
     switch (payload.type) {
       case 'mousemove': robot.moveMouse(realX, realY); break;
-      case 'mousedown': robot.mouseToggle("down", payload.button === 2 ? "right" : "left"); break;
-      case 'mouseup': robot.mouseToggle("up", payload.button === 2 ? "right" : "left"); break;
+      case 'mousedown': {
+        const button = payload.button === 2 ? "right" : "left";
+        robot.mouseToggle("down", button);
+        heldRemoteButtons.add(button);
+        break;
+      }
+      case 'mouseup': {
+        const button = payload.button === 2 ? "right" : "left";
+        robot.mouseToggle("up", button);
+        heldRemoteButtons.delete(button);
+        break;
+      }
       case 'wheel': robot.scrollMouse(0, payload.deltaY > 0 ? -1 : 1); break;
       case 'keydown':
       case 'keyup':
+        // Every key is passed through: what a controller may do is the host's choice of permission,
+        // and Shift+Esc / Ctrl+Alt+Esc drops every controller to view-only at any moment
         if (payload.key) {
            const mappedKey = mapBrowserKeyToRobotJS(payload.key, payload.code);
            if (mappedKey) {
              const modifiers = mapModifiers(payload.modifiers);
              robot.keyToggle(mappedKey, payload.type === 'keydown' ? 'down' : 'up', modifiers);
+             if (payload.type === 'keydown') heldRemoteKeys.add(mappedKey);
+             else heldRemoteKeys.delete(mappedKey);
            }
         }
         break;
@@ -461,28 +604,3 @@ ipcMain.on('execute-input', (event, payload) => {
   } catch (err) {}
 });
 
-function mapModifiers(mods) {
-  if (!mods) return [];
-  const active = [];
-  if (mods.shift) active.push('shift');
-  if (mods.ctrl) active.push('ctrl');
-  if (mods.alt) active.push('alt');
-  if (mods.meta) active.push('command');
-  return active;
-}
-
-function mapBrowserKeyToRobotJS(key, code) {
-  const keyLower = key.toLowerCase();
-  const aliases = { arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right', esc: 'escape', pageup: 'pageup', pagedown: 'pagedown' };
-  if (aliases[keyLower]) return aliases[keyLower];
-  
-  const exactMatches = ['backspace', 'delete', 'enter', 'tab', 'escape', 'up', 'down', 'right', 'left', 'home', 'end', 'pageup', 'pagedown', 'space'];
-  if (exactMatches.includes(keyLower)) return keyLower;
-
-  if (keyLower === " " || keyLower === "spacebar") return "space";
-  if (keyLower.length === 1 && keyLower.match(/[a-z0-9]/)) return keyLower;
-
-  if (code && code.toLowerCase().startsWith('key')) return code[3].toLowerCase();
-  if (code && code.toLowerCase().startsWith('digit')) return code[5];
-  return null;
-}

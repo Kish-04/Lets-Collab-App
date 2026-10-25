@@ -1,5 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
+import { getAuthHeaders } from '@/lib/utils';
+import type * as Y from 'yjs';
+import { observePeerDocs } from '@/lib/CrdtSync';
 
 export interface ExamQuestion {
     id: string;
@@ -24,6 +27,36 @@ const defaultSnippets: Record<string, string> = {
     html: '<!DOCTYPE html>\n<html>\n<head>\n    <title>Page Title</title>\n</head>\n<body>\n    \n</body>\n</html>'
 };
 
+// Read-only view of a candidate's code, streamed keystroke-by-keystroke over the CRDT channel.
+// Falls back to the last draft received through the server when no peer-to-peer copy exists yet.
+function LiveCodeView({ doc, questionId, fallback, language }: { doc?: Y.Doc; questionId: string; fallback: string; language: string }) {
+    const [liveText, setLiveText] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!doc) return;
+        const yText = doc.getText(`monaco:${questionId}`);
+        const update = () => setLiveText(yText.length > 0 ? yText.toString() : null);
+        update();
+        yText.observe(update);
+        return () => yText.unobserve(update);
+    }, [doc, questionId]);
+
+    return (
+        <div className="relative h-full">
+            {liveText !== null && (
+                <span className="absolute top-2 right-3 z-10 text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">Live</span>
+            )}
+            <MonacoEditor
+                height="100%"
+                language={language}
+                theme="vs-dark"
+                value={liveText ?? fallback}
+                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, padding: { top: 12 } }}
+            />
+        </div>
+    );
+}
+
 interface ExamHostDashboardProps {
     onPushQuestion: (question: ExamQuestion) => void;
     liveAnswers: Record<string, Record<string, any>>; 
@@ -41,6 +74,14 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
     const [isRecording, setIsRecording] = useState(false);
     const [voicePrompt, setVoicePrompt] = useState<string | null>(null);
     const [sentQuestions, setSentQuestions] = useState<ExamQuestion[]>([]);
+    const [candidateDocs, setCandidateDocs] = useState<Record<string, Y.Doc>>({});
+
+    useEffect(() => {
+        const { dispose } = observePeerDocs('exam-code', (peerId, doc) => {
+            setCandidateDocs(prev => ({ ...prev, [peerId]: doc }));
+        });
+        return dispose;
+    }, []);
     const [answerKey, setAnswerKey] = useState<string>('');
     const [currentReviewIndex, setCurrentReviewIndex] = useState<number>(0);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -102,7 +143,7 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
         try {
             const res = await fetch('/api/execute', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                 body: JSON.stringify({
                     language: language,
                     version: '*', 
@@ -343,12 +384,11 @@ export function ExamHostDashboard({ onPushQuestion, liveAnswers, localStream }: 
                                                     </div>
                                                     {qObj?.type === 'code' ? (
                                                         <div className="h-48 border border-[var(--border)]/60 rounded-xl overflow-hidden shadow-inner bg-[var(--bg)]/60 mt-2">
-                                                            <MonacoEditor
-                                                                height="100%"
+                                                            <LiveCodeView
+                                                                doc={candidateDocs[controllerId]}
+                                                                questionId={qObj.id}
                                                                 language={qObj.language || 'javascript'}
-                                                                theme="vs-dark"
-                                                                value={ans.text || ''}
-                                                                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, padding: { top: 12 } }}
+                                                                fallback={ans.text || ''}
                                                             />
                                                         </div>
                                                     ) : (

@@ -11,6 +11,11 @@ export function useObjectProctoring(
     role: string | null,
     onViolation: (type: string, message: string) => void
 ) {
+    // Callers pass an inline callback; keep the latest one in a ref so the detection loop is not
+    // torn down and restarted on every render
+    const onViolationRef = useRef(onViolation);
+    onViolationRef.current = onViolation;
+
     const detectorRef = useRef<ObjectDetector | null>(null);
     const requestRef = useRef<number>(0);
     const lastVideoTime = useRef(-1);
@@ -103,7 +108,7 @@ export function useObjectProctoring(
                         if (detectedForbiddenObject) {
                             if (state.phoneVisibleSince === 0) state.phoneVisibleSince = now;
                             else if (now - state.phoneVisibleSince > PROCTOR_CONFIG.FORBIDDEN_OBJECT_TIMEOUT_MS) {
-                                onViolation('forbidden_object', `Forbidden object detected: ${detectedForbiddenObject}. Please put away any unauthorized materials.`);
+                                onViolationRef.current('forbidden_object', `Forbidden object detected: ${detectedForbiddenObject}. Please put away any unauthorized materials.`);
                                 state.phoneVisibleSince = now + 5000; // Reset to avoid spam
                             }
                         } else {
@@ -124,5 +129,5 @@ export function useObjectProctoring(
 
         requestRef.current = requestAnimationFrame(processFrame);
         return () => cancelAnimationFrame(requestRef.current);
-    }, [sessionMode, role, videoRef, onViolation]);
+    }, [sessionMode, role, videoRef]);
 }

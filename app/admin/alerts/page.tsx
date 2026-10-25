@@ -108,7 +108,7 @@ function AlertDetailsModal({
           <div className="rounded-xl overflow-hidden border border-[var(--border)]/60 bg-[var(--elevated)]/40">
              <div className="px-4 py-3 border-b border-[var(--border)]/60 bg-[var(--elevated)]/80 flex items-center justify-between">
                 <span className="text-xs font-mono text-[var(--text-dim)] uppercase tracking-wider">AI Evidence Graph</span>
-                <span className="text-[10px] bg-[var(--accent)]/20 text-[var(--accent)] px-2 py-0.5 rounded border border-[var(--accent)]/30">CONFIDENCE: 98%</span>
+                <span className="text-[10px] bg-[var(--accent)]/20 text-[var(--accent)] px-2 py-0.5 rounded border border-[var(--accent)]/30">RISK +{alert.penalty}</span>
              </div>
              <div className="p-6 flex flex-col items-center justify-center bg-[var(--bg)]/50 min-h-[160px] relative overflow-hidden">
                 {alert.evidenceUrl ? (
@@ -116,7 +116,8 @@ function AlertDetailsModal({
                     src={alert.evidenceUrl.startsWith('http') ? alert.evidenceUrl : `${getBackendUrl()}${alert.evidenceUrl}`} 
                     alt="Evidence Snapshot" 
                     className="absolute inset-0 w-full h-full object-cover opacity-80" 
-                    onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=500&q=80' }}
+                    // Never substitute a stock image for evidence; an expired link just needs a refresh
+                    onError={(e) => { e.currentTarget.style.display = 'none' }}
                   />
                 ) : (
                   <>
@@ -238,6 +239,7 @@ export default function AlertsPage() {
         totalRisk,
         flagged: false,
         falsePositive: false,
+        evidenceUrl: payload.evidenceUrl,
       }
       setAlerts(prev => [entry, ...prev].slice(0, 200))
     })
@@ -265,25 +267,31 @@ export default function AlertsPage() {
   }
 
   const updateAlertStatus = async (id: string, updates: { flagged?: boolean, falsePositive?: boolean }) => {
-    // Optimistic UI updates
-    setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...updates } : a))
-    if (selectedAlert?._id === id) {
-      setSelectedAlert(prev => prev ? { ...prev, ...updates } : null)
+    const previous = alerts.find(a => a._id === id)
+    const apply = (patch: Partial<Alert>) => {
+      setAlerts(prev => prev.map(a => a._id === id ? { ...a, ...patch } : a))
+      setSelectedAlert(prev => prev && prev._id === id ? { ...prev, ...patch } : prev)
     }
+    // Optimistic UI update, rolled back if the server does not save it
+    apply(updates)
 
+    let saved = false
     try {
-      const res = await fetch(`${getBackendUrl()}/api/admin/alerts/${id}/status`, {
+      // Without the JSON content type express.json leaves req.body empty and nothing is stored,
+      // which also meant false positives never reached the device as federated training labels
+      const res = await fetch(`${getBackendUrl()}/api/admin/alerts/${encodeURIComponent(id)}/status`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(updates),
       })
-      const data = await res.json()
-      if (!data.success) {
-        console.log('Update failed')
-      }
+      const data = await res.json().catch(() => ({}))
+      saved = res.ok && Boolean(data.success)
     } catch (e) {
       console.error('Failed to update alert', e)
-      console.log('Update failed')
+    }
+    if (!saved && previous) {
+      apply({ flagged: previous.flagged, falsePositive: previous.falsePositive })
+      window.alert('This verdict could not be saved. Alerts that were never stored (for example while the database was offline) cannot be reviewed.')
     }
   }
 

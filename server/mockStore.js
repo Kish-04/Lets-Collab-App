@@ -115,6 +115,14 @@ function addAlert(alert) {
   return item;
 }
 
+function updateAlert(id, patch) {
+  const alert = state.alerts.find(item => String(item._id) === String(id));
+  if (!alert) return null;
+  Object.assign(alert, patch);
+  persist();
+  return alert;
+}
+
 function listAlerts(limit = 500) {
   return state.alerts.slice(0, limit);
 }
@@ -138,6 +146,20 @@ function listSessionLogs(limit = 500) {
   return state.sessionLogs.slice(0, limit);
 }
 
+// Clears evidence and recordings stored for a room's archived sessions; returns what was removed
+function purgeSessionEvidence(roomCode) {
+  const removed = [];
+  state.sessionLogs.forEach((log) => {
+    if (log.roomCode !== roomCode) return;
+    (log.evidence || []).forEach(item => removed.push(item && item.url ? item.url : item));
+    (log.recordings || []).forEach(url => removed.push(url));
+    log.evidence = [];
+    log.recordings = [];
+  });
+  if (removed.length) persist();
+  return removed;
+}
+
 module.exports = {
   addAlert,
   addSessionLog,
@@ -146,8 +168,10 @@ module.exports = {
   findUserById,
   listAlerts,
   listSessionLogs,
+  purgeSessionEvidence,
   listUsers,
   publicUser,
   saveUser,
+  updateAlert,
   updateUser,
 };

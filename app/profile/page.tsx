@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { User, Lock, Mail, ArrowLeft, Check, ShieldAlert } from "lucide-react"
 import { getBackendUrl } from "@/lib/utils"
+import { FaceEnrollment } from "@/components/ircp/FaceEnrollment"
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -12,6 +13,7 @@ export default function ProfilePage() {
   const [formData, setFormData] = useState({
     name: "",
     email: "", // read-only
+    currentPassword: "",
     newPassword: "",
     confirmPassword: ""
   })
@@ -54,6 +56,12 @@ export default function ProfilePage() {
       return
     }
 
+    // A stolen session token alone must not be enough to take over the account
+    if (formData.newPassword && !formData.currentPassword) {
+      setErrorMsg("Enter your current password to set a new one.")
+      return
+    }
+
     setLoading(true)
     
     try {
@@ -62,7 +70,8 @@ export default function ProfilePage() {
       
       const payload = {
         name: formData.name,
-        newPassword: formData.newPassword || undefined
+        newPassword: formData.newPassword || undefined,
+        currentPassword: formData.newPassword ? formData.currentPassword : undefined
       }
 
       const res = await fetch(`${getBackendUrl()}/api/profile`, {
@@ -79,7 +88,7 @@ export default function ProfilePage() {
       
       if (res.ok) {
         setSuccessMsg("Profile updated successfully.")
-        setFormData(prev => ({ ...prev, newPassword: "", confirmPassword: "" }))
+        setFormData(prev => ({ ...prev, currentPassword: "", newPassword: "", confirmPassword: "" }))
         
         // Update local storage
         if (tokenStr) {
@@ -182,7 +191,20 @@ export default function ProfilePage() {
             <div className="pt-6 border-t border-[var(--border)] space-y-5">
               <div className="space-y-2">
                 <label className="text-xs font-bold tracking-widest uppercase text-[var(--text-dim)] block">Change Password (Optional)</label>
-                
+
+                <div className="relative group">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-dim)] group-focus-within:text-[var(--accent)] transition-colors" />
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    aria-label="Current password"
+                    placeholder="Current Password"
+                    value={formData.currentPassword}
+                    onChange={e => setFormData({ ...formData, currentPassword: e.target.value })}
+                    className="w-full bg-[rgba(var(--surface-rgb),0.5)] border border-[var(--border)] text-[var(--text-primary)] font-medium rounded-xl pl-12 pr-4 py-4 focus:border-[var(--accent)] outline-none transition-all focus:bg-[rgba(var(--surface-rgb),0.8)]"
+                  />
+                </div>
+
                 <div className="relative group">
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-dim)] group-focus-within:text-[var(--accent)] transition-colors" />
                   <input
@@ -219,6 +241,8 @@ export default function ProfilePage() {
               ) : 'Save Profile'}
             </button>
           </form>
+
+          <FaceEnrollment />
         </div>
       </motion.div>
     </div>

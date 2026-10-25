@@ -1,16 +1,45 @@
 'use client'
 
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState, useMemo } from 'react'
 import { Excalidraw, exportToBlob, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw'
 import "@excalidraw/excalidraw/index.css"
-import { dataChannelManager } from '@/lib/DataChannelManager'
+import * as Y from 'yjs'
+import { bindSharedDoc } from '@/lib/CrdtSync'
 import { X, Download, Plus, Trash2, Triangle, Star, Hexagon, Component, Heart, Octagon, Pentagon, Copy, ChevronLeft, ChevronRight, Database, Cloud, FileText, ArrowRight, Table as TableIcon, BarChart2, MessageCircle, Zap, PlusSquare, Ribbon, ArrowLeft, ArrowUp, ArrowDown, List, StickyNote, Highlighter, PaintBucket, Code, Moon, Sun, Type, Circle, Square, Diamond } from 'lucide-react'
-import { CryptoUtil } from '@/lib/CryptoUtil'
 
 interface Props {
     peerId?: string
     isHost: boolean
+    sessionMode?: string | null
     onClose: () => void
+}
+
+/*
+ * Whiteboard state lives in a Yjs doc so concurrent edits merge instead of overwriting each other:
+ *   elements  - flat map "<pageId>::<elementId>" -> Excalidraw element (last writer wins per element)
+ *   pageOrder - array of page ids, pageNames - map pageId -> name
+ * A flat element map is used (rather than one nested map per page) so two peers drawing on a
+ * brand-new page can never create competing page containers and lose each other's elements.
+ */
+const DEFAULT_PAGE = 'page-1'
+const LOCAL_ORIGIN = 'local-canvas'
+const pageKeyPrefix = (pageId: string) => `${pageId}::`
+
+// Docs outlive the canvas component so closing and reopening it keeps the drawing
+const whiteboardDocs = new Map<string, Y.Doc>()
+function getWhiteboardDoc(key: string) {
+    let doc = whiteboardDocs.get(key)
+    if (!doc) {
+        doc = new Y.Doc()
+        whiteboardDocs.set(key, doc)
+    }
+    return doc
+}
+
+const byFractionalIndex = (a: any, b: any) => {
+    const left = a.index ?? ''
+    const right = b.index ?? ''
+    return left < right ? -1 : left > right ? 1 : 0
 }
 
 class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, errorMsg: string}> {
@@ -40,16 +69,44 @@ class CanvasErrorBoundary extends React.Component<{children: React.ReactNode}, {
     }
 }
 
-export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
+export function StandaloneCanvas({ peerId, isHost, sessionMode, onClose }: Props) {
     const excalidrawAPIRef = useRef<any>(null);
-    const isApplyingRemoteUpdateRef = useRef(false);
-    const lastSentElementsVersionRef = useRef<number>(0);
+
+    // In supervised rooms each candidate's board is private to them and the invigilator: the host
+    // syncs only with the selected candidate and never relays. Collaboration rooms share one board.
+    const isSupervised = sessionMode === 'supervised';
+    const docKey = isSupervised && isHost ? (peerId ? `peer:${peerId}` : 'local') : 'shared';
+    const ydoc = useMemo(() => getWhiteboardDoc(docKey), [docKey]);
+    const yElements = useMemo(() => ydoc.getMap<any>('elements'), [ydoc]);
+    const yOrder = useMemo(() => ydoc.getArray<string>('pageOrder'), [ydoc]);
+    const yNames = useMemo(() => ydoc.getMap<string>('pageNames'), [ydoc]);
+
+    const readOrder = () => {
+        const order = Array.from(new Set(yOrder.toArray()));
+        return order.length ? order : [DEFAULT_PAGE];
+    }
+    const readNames = () => {
+        const names: Record<string, string> = {};
+        readOrder().forEach((id, index) => { names[id] = yNames.get(id) || `Page ${index + 1}`; });
+        return names;
+    }
+    const sceneFor = (pageId: string) => {
+        const prefix = pageKeyPrefix(pageId);
+        const elements: any[] = [];
+        yElements.forEach((element, key) => { if (key.startsWith(prefix)) elements.push(element); });
+        return elements.sort(byFractionalIndex);
+    }
+    // The default page is implicit until the first structural change, so peers never insert it twice
+    const ensureOrder = () => {
+        if (yOrder.length === 0) yOrder.push([DEFAULT_PAGE]);
+    }
 
     // Multi-Page State Management
-    const pagesMapRef = useRef<Record<string, any[]>>({ 'page-1': [] });
-    const [pageNames, setPageNames] = useState<Record<string, string>>({ 'page-1': 'Page 1' });
-    const [pageOrder, setPageOrder] = useState<string[]>(['page-1']);
-    const [activePageId, setActivePageId] = useState('page-1');
+    const [pageNames, setPageNames] = useState<Record<string, string>>(() => readNames());
+    const [pageOrder, setPageOrder] = useState<string[]>(() => readOrder());
+    const [activePageId, setActivePageId] = useState(() => readOrder()[0]);
+    const activePageRef = useRef(activePageId);
+    const initialElements = useMemo(() => sceneFor(activePageRef.current), [ydoc]); // eslint-disable-line react-hooks/exhaustive-deps
     const [editingPageId, setEditingPageId] = useState<string | null>(null);
 
     // Theme & Shapes Menu State
@@ -69,94 +126,79 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
     const [markdownModalOpen, setMarkdownModalOpen] = useState(false);
     const [autofillModalOpen, setAutofillModalOpen] = useState(false);
 
-    const getElementsVersion = (elements: any[]) => {
-        return elements.reduce((acc, el) => acc + (el.version || 0), 0);
-    }
-
-    const broadcastWorkspaceEvent = (action: string, payload: any) => {
-        const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
-        const packet = { type: 'excalidraw-workspace', action, ...payload };
-        CryptoUtil.encrypt(JSON.stringify(packet), roomId).then(encrypted => {
-            dataChannelManager.send('ircp-excalidraw', { encrypted }, peerId)
-        }).catch(err => console.error(err));
-    }
-
     const switchPage = (newId: string) => {
-        if (!excalidrawAPIRef.current) return;
-        pagesMapRef.current[activePageId] = excalidrawAPIRef.current.getSceneElements();
-        const newElements = pagesMapRef.current[newId] || [];
-        excalidrawAPIRef.current.updateScene({ elements: newElements });
+        activePageRef.current = newId;
         setActivePageId(newId);
+        excalidrawAPIRef.current?.updateScene({ elements: sceneFor(newId) });
     }
 
     const addPage = () => {
         const newId = `page-${Date.now()}`;
-        const newName = `Page ${Object.keys(pageNames).length + 1}`;
-        pagesMapRef.current[newId] = [];
-        setPageNames(prev => ({ ...prev, [newId]: newName }));
-        setPageOrder(prev => [...prev, newId]);
-        broadcastWorkspaceEvent('ADD_PAGE', { newId, newName, elements: [] });
+        const newName = `Page ${readOrder().length + 1}`;
+        ydoc.transact(() => {
+            ensureOrder();
+            yOrder.push([newId]);
+            yNames.set(newId, newName);
+        }, LOCAL_ORIGIN);
         switchPage(newId);
     }
 
     const duplicatePage = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!excalidrawAPIRef.current) return;
-        
-        const newId = `page-${Date.now()}`;
-        const newName = `${pageNames[id]} (Copy)`;
-        
-        const sourceElements = id === activePageId ? excalidrawAPIRef.current.getSceneElements() : (pagesMapRef.current[id] || []);
-        const clonedElements = sourceElements.map((el: any) => ({ ...el, id: `${el.id}-copy-${Date.now()}` }));
-        
-        pagesMapRef.current[newId] = clonedElements;
-        setPageNames(prev => ({ ...prev, [newId]: newName }));
-        
-        const currentIndex = pageOrder.indexOf(id);
-        const newOrder = [...pageOrder];
-        newOrder.splice(currentIndex + 1, 0, newId);
-        setPageOrder(newOrder);
-        
-        broadcastWorkspaceEvent('ADD_PAGE', { newId, newName, elements: clonedElements, insertAfter: id });
+        const stamp = Date.now();
+        const newId = `page-${stamp}`;
+        const newName = `${readNames()[id]} (Copy)`;
+        const clonedElements = sceneFor(id)
+            .filter((el: any) => !el.isDeleted)
+            .map((el: any) => ({ ...el, id: `${el.id}-copy-${stamp}` }));
+
+        ydoc.transact(() => {
+            ensureOrder();
+            const index = yOrder.toArray().indexOf(id);
+            yOrder.insert(index === -1 ? yOrder.length : index + 1, [newId]);
+            yNames.set(newId, newName);
+            clonedElements.forEach((el: any) => yElements.set(pageKeyPrefix(newId) + el.id, el));
+        }, LOCAL_ORIGIN);
         switchPage(newId);
     }
 
     const movePage = (id: string, direction: 'left' | 'right', e: React.MouseEvent) => {
         e.stopPropagation();
-        const index = pageOrder.indexOf(id);
+        const newOrder = readOrder();
+        const index = newOrder.indexOf(id);
         if (index === -1) return;
         if (direction === 'left' && index === 0) return;
-        if (direction === 'right' && index === pageOrder.length - 1) return;
-        
-        const newOrder = [...pageOrder];
+        if (direction === 'right' && index === newOrder.length - 1) return;
+
         const swapIndex = direction === 'left' ? index - 1 : index + 1;
         [newOrder[index], newOrder[swapIndex]] = [newOrder[swapIndex], newOrder[index]];
-        
-        setPageOrder(newOrder);
-        broadcastWorkspaceEvent('REORDER_PAGES', { newOrder });
+        ydoc.transact(() => {
+            yOrder.delete(0, yOrder.length);
+            yOrder.insert(0, newOrder);
+        }, LOCAL_ORIGIN);
     }
 
     const deletePage = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-        const keys = Object.keys(pageNames);
-        if (keys.length <= 1) return;
-        
-        const newNames = { ...pageNames };
-        delete newNames[id];
-        delete pagesMapRef.current[id];
-        setPageNames(newNames);
-        setPageOrder(prev => prev.filter(p => p !== id));
-        broadcastWorkspaceEvent('DELETE_PAGE', { targetId: id });
-        
-        if (activePageId === id) {
-            const newOrder = pageOrder.filter(p => p !== id);
-            switchPage(newOrder[newOrder.length - 1]);
-        }
+        if (readOrder().length <= 1) return;
+
+        ydoc.transact(() => {
+            ensureOrder();
+            const order = yOrder.toArray();
+            for (let i = order.length - 1; i >= 0; i--) {
+                if (order[i] === id) yOrder.delete(i, 1);
+            }
+            yNames.delete(id);
+            const prefix = pageKeyPrefix(id);
+            Array.from(yElements.keys()).forEach(key => { if (key.startsWith(prefix)) yElements.delete(key); });
+        }, LOCAL_ORIGIN);
     }
 
     const renamePage = (id: string, newName: string) => {
-        setPageNames(prev => ({ ...prev, [id]: newName }));
-        broadcastWorkspaceEvent('RENAME_PAGE', { targetId: id, newName });
+        ydoc.transact(() => {
+            ensureOrder();
+            yNames.set(id, newName);
+        }, LOCAL_ORIGIN);
         setEditingPageId(null);
     }
 
@@ -482,85 +524,64 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
         setActiveMenu(null);
     }
 
-    const onChange = (elements: readonly any[], appState: any) => {
-        if (isApplyingRemoteUpdateRef.current) return;
-        
-        const currentVersion = getElementsVersion(elements as any[]);
-        if (currentVersion === lastSentElementsVersionRef.current) return;
-        lastSentElementsVersionRef.current = currentVersion;
-        pagesMapRef.current[activePageId] = [...elements];
-
-        const payload = { type: 'excalidraw-sync', pageId: activePageId, elements };
-        const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
-        
-        CryptoUtil.encrypt(JSON.stringify(payload), roomId).then(encrypted => {
-            dataChannelManager.send('ircp-excalidraw', { encrypted }, peerId)
-        }).catch(err => console.error("Encryption failed for Excalidraw payload:", err));
+    // Write only elements whose version changed; Excalidraw includes deleted elements (isDeleted), so deletes sync too
+    const onChange = (elements: readonly any[]) => {
+        const prefix = pageKeyPrefix(activePageRef.current);
+        ydoc.transact(() => {
+            for (const element of elements) {
+                const stored = yElements.get(prefix + element.id);
+                if (!stored || stored.version !== element.version || stored.versionNonce !== element.versionNonce) {
+                    yElements.set(prefix + element.id, { ...element });
+                }
+            }
+        }, LOCAL_ORIGIN);
     };
 
     useEffect(() => {
-        const handleRemoteDraw = async (payloadWrapper: any) => {
-            if (!excalidrawAPIRef.current) return;
-            
-            try {
-                const roomId = new URLSearchParams(window.location.search).get('room') || 'default-secret';
-                let payload = payloadWrapper;
-                if (payloadWrapper.encrypted) {
-                    const decrypted = await CryptoUtil.decrypt(payloadWrapper.encrypted, roomId);
-                    payload = JSON.parse(decrypted);
-                }
-                
-                if (payload.type === 'excalidraw-workspace') {
-                    if (payload.action === 'ADD_PAGE') {
-                        pagesMapRef.current[payload.newId] = payload.elements || [];
-                        setPageNames(prev => ({ ...prev, [payload.newId]: payload.newName }));
-                        setPageOrder(prev => {
-                            if (payload.insertAfter) {
-                                const idx = prev.indexOf(payload.insertAfter);
-                                const newOrder = [...prev];
-                                newOrder.splice(idx + 1, 0, payload.newId);
-                                return newOrder;
-                            }
-                            return [...prev, payload.newId];
-                        });
-                    } else if (payload.action === 'DELETE_PAGE') {
-                        const newNames = { ...pageNames };
-                        delete newNames[payload.targetId];
-                        delete pagesMapRef.current[payload.targetId];
-                        setPageNames(newNames);
-                        setPageOrder(prev => {
-                            const newOrder = prev.filter(p => p !== payload.targetId);
-                            if (activePageId === payload.targetId) switchPage(newOrder[newOrder.length - 1]);
-                            return newOrder;
-                        });
-                    } else if (payload.action === 'RENAME_PAGE') {
-                        setPageNames(prev => ({ ...prev, [payload.targetId]: payload.newName }));
-                    } else if (payload.action === 'REORDER_PAGES') {
-                        setPageOrder(payload.newOrder);
-                    }
-                    return;
-                }
+        const applyRemoteElements = (event: Y.YMapEvent<any>, transaction: Y.Transaction) => {
+            if (transaction.origin === LOCAL_ORIGIN) return;
+            const api = excalidrawAPIRef.current;
+            if (!api) return;
+            const prefix = pageKeyPrefix(activePageRef.current);
+            if (!Array.from(event.keysChanged).some(key => key.startsWith(prefix))) return;
 
-                if (payload.type === 'excalidraw-sync') {
-                    if (payload.pageId === activePageId) {
-                        isApplyingRemoteUpdateRef.current = true;
-                        excalidrawAPIRef.current.updateScene({ elements: payload.elements });
-                        lastSentElementsVersionRef.current = getElementsVersion(payload.elements);
-                        setTimeout(() => { isApplyingRemoteUpdateRef.current = false; }, 50);
-                    }
-                    pagesMapRef.current[payload.pageId] = payload.elements;
-                }
-                
-            } catch (e) {
-                console.error("Failed to decrypt or apply remote draw", e);
-            }
-        }
+            // Keep a local element if it is newer than the synced copy (e.g. mid-drag)
+            const remote = sceneFor(activePageRef.current);
+            const remoteIds = new Set(remote.map((el: any) => el.id));
+            const local = api.getSceneElementsIncludingDeleted() as any[];
+            const localById = new Map(local.map(el => [el.id, el]));
+            const merged = remote.map((el: any) => {
+                const mine = localById.get(el.id);
+                return mine && mine.version > el.version ? mine : el;
+            });
+            local.forEach(el => { if (!remoteIds.has(el.id)) merged.push(el); });
+            api.updateScene({ elements: merged.sort(byFractionalIndex) });
+        };
 
-        dataChannelManager.on('ircp-excalidraw', handleRemoteDraw)
+        const applyPages = () => {
+            const order = readOrder();
+            setPageOrder(order);
+            setPageNames(readNames());
+            if (!order.includes(activePageRef.current)) switchPage(order[order.length - 1]);
+        };
+
+        yElements.observe(applyRemoteElements);
+        yOrder.observe(applyPages);
+        yNames.observe(applyPages);
+        applyPages();
+
+        const shouldSync = !(isSupervised && isHost && !peerId);
+        const unbind = shouldSync
+            ? bindSharedDoc('whiteboard', ydoc, { relay: isHost && !isSupervised, peerId: isSupervised && isHost ? peerId : undefined })
+            : () => {};
+
         return () => {
-            dataChannelManager.off('ircp-excalidraw', handleRemoteDraw)
-        }
-    }, [peerId, activePageId, pageNames, pageOrder]);
+            unbind();
+            yElements.unobserve(applyRemoteElements);
+            yOrder.unobserve(applyPages);
+            yNames.unobserve(applyPages);
+        };
+    }, [ydoc, isHost, isSupervised, peerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleSave = async () => {
         if (!excalidrawAPIRef.current) return;
@@ -840,6 +861,7 @@ export function StandaloneCanvas({ peerId, isHost, onClose }: Props) {
                             <Excalidraw 
                                 theme={theme}
                                 excalidrawAPI={(api) => excalidrawAPIRef.current = api}
+                                initialData={{ elements: initialElements }}
                                 onChange={onChange}
                                 UIOptions={{
                                     canvasActions: {

@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, ImageBackground, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, ImageBackground, Platform, Linking } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { BACKEND_URL, getStoredAuthToken } from '../../lib/api';
 import { RefreshCw, Network, Link as LinkIcon, Database, CheckCircle, Clock, Wifi, WifiOff, Sun, Moon } from 'lucide-react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { AnimatedPressable } from '../../components/AnimatedPressable';
+import { AuditIntegrity } from '../../components/AuditIntegrity';
 import io, { Socket } from 'socket.io-client';
 
 export default function BlockchainScreen() {
@@ -55,18 +56,22 @@ export default function BlockchainScreen() {
   };
 
   const logs = chainData?.logs || [];
-  const allEventTypes = Array.from(new Set(logs.map((l: any) => l.eventType)));
+  const allEventTypes: string[] = Array.from(new Set<string>(logs.map((l: any) => String(l.eventType))));
   const filtered = filterType === "all" ? logs : logs.filter((l: any) => l.eventType === filterType);
 
   const getEventStyle = (type: string) => {
     switch (type) {
       case 'ROOM_CREATED':
-      case 'SESSION_START': return { bg: 'rgba(0,196,140,0.2)', text: colors.emerald, border: 'rgba(0,196,140,0.3)' };
+      case 'SESSION_ARCHIVED':
+      case 'FEDERATED_AGGREGATE': return { bg: 'rgba(0,196,140,0.2)', text: colors.emerald, border: 'rgba(0,196,140,0.3)' };
       case 'USER_JOINED':
-      case 'JOIN': return { bg: 'rgba(110,63,255,0.2)', text: colors.violet, border: 'rgba(110,63,255,0.3)' };
-      case 'PERMISSION_CHANGE': return { bg: 'rgba(0,212,255,0.2)', text: colors.accent, border: 'rgba(0,212,255,0.3)' };
-      case 'KILL_SWITCH': return { bg: 'rgba(255,59,92,0.2)', text: colors.red, border: 'rgba(255,59,92,0.3)' };
-      case 'ANTICHEAT_ALERT': return { bg: 'rgba(240,165,0,0.2)', text: colors.amber, border: 'rgba(240,165,0,0.3)' };
+      case 'USER_LEFT': return { bg: 'rgba(110,63,255,0.2)', text: colors.violet, border: 'rgba(110,63,255,0.3)' };
+      case 'ACCESS_CHANGED': return { bg: 'rgba(0,212,255,0.2)', text: colors.accent, border: 'rgba(0,212,255,0.3)' };
+      case 'SESSION_TERMINATED':
+      case 'ACCESS_REVOKED': return { bg: 'rgba(255,59,92,0.2)', text: colors.red, border: 'rgba(255,59,92,0.3)' };
+      case 'AI_ANTI_CHEAT_ALERT':
+      case 'PERMISSION_VIOLATION':
+      case 'ADMIN_WARNING': return { bg: 'rgba(240,165,0,0.2)', text: colors.amber, border: 'rgba(240,165,0,0.3)' };
       default: return { bg: 'rgba(255,255,255,0.1)', text: colors.textPrimary, border: 'rgba(255,255,255,0.2)' };
     }
   };
@@ -88,7 +93,7 @@ export default function BlockchainScreen() {
           {chainData && (
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
               <View style={[styles.networkBadge, { backgroundColor: 'rgba(110,63,255,0.2)', borderColor: 'rgba(110,63,255,0.4)' }]}>
-                <Text style={[styles.networkText, { color: colors.violet }]}>SEPOLIA TESTNET</Text>
+                <Text style={[styles.networkText, { color: colors.violet }]}>{(chainData.chain?.name || 'Audit chain').toUpperCase()}</Text>
               </View>
               <View style={styles.metricCard}>
                 <View style={[styles.metricIcon, { backgroundColor: chainData.active ? 'rgba(0,196,140,0.1)' : 'rgba(240,165,0,0.1)' }]}>
@@ -132,7 +137,7 @@ export default function BlockchainScreen() {
 
         {logs.length > 0 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll} style={styles.filters}>
-            {['all', 'SYSTEM', 'SESSION', 'EVIDENCE'].map((type) => (
+            {['all', ...allEventTypes].map((type) => (
               <TouchableOpacity
                 key={type}
                 onPress={() => setFilterType(type)}
@@ -169,7 +174,20 @@ export default function BlockchainScreen() {
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={[styles.detailLabel, { color: colors.textDim }]}>Timestamp</Text>
-                      <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{log.timestamp}</Text>
+                      <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{log.timestamp ? new Date(log.timestamp * 1000).toLocaleString() : '—'}</Text>
+                    </View>
+                    <View style={[styles.dataHashBox, { borderColor: colors.border }]}>
+                      <Text style={[styles.detailLabel, { color: colors.textDim }]}>Data hash</Text>
+                      <Text style={[styles.hashValueFull, { color: colors.textSecondary }]} selectable>{log.dataHash}</Text>
+                    </View>
+                    {chainData?.chain?.explorerTxBaseUrl && typeof log.txHash === 'string' && log.txHash.startsWith('0x') && (
+                      <TouchableOpacity onPress={() => Linking.openURL(`${chainData.chain.explorerTxBaseUrl}${log.txHash}`)} style={[styles.detailRow, { marginTop: 8 }]}>
+                        <Text style={[styles.detailLabel, { color: colors.accent }]}>View on block explorer</Text>
+                        <LinkIcon size={12} color={colors.accent} />
+                      </TouchableOpacity>
+                    )}
+                    <View style={{ marginTop: 8 }}>
+                      <AuditIntegrity sessionId={log.sessionId} />
                     </View>
                   </View>
                 )}

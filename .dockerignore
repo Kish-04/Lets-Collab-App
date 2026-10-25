@@ -1,14 +1,14 @@
 **/node_modules
 **/.next
 .git
-.env
-.env.*
-!.env.example
-!server/.env.example
+# Secrets: match .env files in every directory (server/.env holds the wallet key, OAuth and JWT secrets)
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
 chrome/
 mkcert.exe
-local-key.pem
-local-cert.pem
 *.log
 debug.log
 electron*.txt

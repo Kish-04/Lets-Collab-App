@@ -43,13 +43,14 @@ export default function RootLayout({
           (function() {
             if (typeof window === 'undefined') return;
 
-            // Centralized AI/Wasm error suppression for Next.js Turbopack
+            // Centralized AI/Wasm error suppression for Next.js Turbopack. Only messages that clearly
+            // come from the MediaPipe/TFLite WebAssembly runtime are downgraded; generic words such as
+            // "abort" or "memory" used to hide real failures (aborted requests, out-of-memory) too.
             var originalError = console.error;
             console.error = function() {
               var msg = String(arguments[0] || '').toLowerCase();
               var isWasmError = [
-                'index out of bounds', 'abort', 'wasm', 'memory',
-                'delegate', 'task failed', 'xnnpack'
+                'index out of bounds', 'wasm', 'xnnpack', 'tflite', 'mediapipe'
               ].some(function(term) { return msg.indexOf(term) !== -1; });
 
               if (isWasmError) {

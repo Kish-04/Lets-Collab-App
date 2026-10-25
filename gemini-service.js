@@ -25,7 +25,7 @@ function getConfiguredApiKey() {
   return '';
 }
 
-async function generateReply(prompt) {
+async function generateReply(prompt, codeContext) {
   const geminiApiKey = getConfiguredApiKey();
   if (!geminiApiKey) {
     return "I'm offline! Please add GEMINI_API_KEY to your .env file or app-config.json.";
@@ -39,7 +39,7 @@ async function generateReply(prompt) {
 You are a friendly robot pet without a tail, so do not mention wagging a tail or anything about a tail.
 Your goal is to help the Host and Controller debug code or use the app. Keep your answers concise, friendly, and helpful.
 IMPORTANT: You MUST start every single answer with a funny robotic sound word like *Beep Bop*, *Bzzzzt*, or *Whirr*. Do not forget this.
-The user said: "${prompt}"`;
+The user said: "${prompt}"${codeContext && codeContext.code ? '\n\nThe user is currently editing this ' + String(codeContext.language || 'code').slice(0, 30) + ' code:\n```\n' + String(codeContext.code).slice(0, 8000) + '\n```' : ''}`;
 
     const result = await model.generateContent(systemPrompt);
     const response = await result.response;

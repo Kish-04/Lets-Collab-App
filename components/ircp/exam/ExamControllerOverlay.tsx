@@ -1,58 +1,61 @@
 import React, { useState, useRef, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
+import { getAuthHeaders } from '@/lib/utils';
 import { ExamQuestion } from './ExamHostDashboard';
 import * as Y from 'yjs';
-import { dataChannelManager } from '@/lib/DataChannelManager';
+import { bindSharedDoc } from '@/lib/CrdtSync';
+import { setPetCodeContext } from '@/lib/petContext';
 
 interface ExamControllerOverlayProps {
     questions: ExamQuestion[];
     onDraftUpdate: (questionId: string, answer: any) => void;
     onSubmit: (questionId: string, answer: any) => void;
+    // Server grading result per submitted question (true = correct)
+    results?: Record<string, boolean>;
 }
 
-export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: ExamControllerOverlayProps) {
+export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit, results = {} }: ExamControllerOverlayProps) {
     const [answers, setAnswers] = useState<Record<string, any>>({});
     const [isRecording, setIsRecording] = useState<Record<string, boolean>>({});
     const [currentIndex, setCurrentIndex] = useState(0);
-    const [feedback, setFeedback] = useState<Record<string, { status: 'correct' | 'wrong' }>>({});
+    const [submitted, setSubmitted] = useState<Record<string, boolean>>({});
+    const feedback: Record<string, { status: 'correct' | 'wrong' }> = Object.fromEntries(
+        Object.entries(results).map(([id, correct]) => [id, { status: correct ? 'correct' : 'wrong' }])
+    );
     const mediaRecorderRefs = useRef<Record<string, MediaRecorder>>({});
     const audioChunksRefs = useRef<Record<string, Blob[]>>({});
     const yDocRef = useRef<Y.Doc>(new Y.Doc());
-    const yTextRef = useRef<Y.Text>(yDocRef.current.getText('monaco'));
+    const bindingRef = useRef<{ destroy: () => void } | null>(null);
     
     useEffect(() => {
-        const doc = yDocRef.current;
-        const updateHandler = (update: Uint8Array, origin: any) => {
-            if (origin !== 'remote') {
-                const arr = Array.from(update);
-                dataChannelManager.send('yjs-update', { update: arr });
-            }
-        };
-        doc.on('update', updateHandler);
-
-        const remoteHandler = (payload: any) => {
-            if (payload && payload.update) {
-                const arr = new Uint8Array(payload.update);
-                Y.applyUpdate(doc, arr, 'remote');
-            }
-        };
-        dataChannelManager.on('yjs-update', remoteHandler);
+        // Streams keystrokes to the invigilator only; the host never relays one candidate's code to another
+        const unbind = bindSharedDoc('exam-code', yDocRef.current);
 
         return () => {
-            doc.off('update', updateHandler);
-            dataChannelManager.off('yjs-update', remoteHandler);
+            unbind();
+            bindingRef.current?.destroy();
+            bindingRef.current = null;
         };
     }, []);
 
-    const handleEditorMount = async (editor: any) => {
+    // One shared Y.Text per question; seeded from the editor so the starter code/draft is not wiped on bind
+    const handleEditorMount = async (editor: any, questionId: string) => {
         const { MonacoBinding } = await import('y-monaco');
-        new MonacoBinding(yTextRef.current, editor.getModel(), new Set([editor]), null);
+        const model = editor.getModel();
+        if (!model) return;
+        const yText = yDocRef.current.getText(`monaco:${questionId}`);
+        if (yText.length === 0 && model.getValue()) yText.insert(0, model.getValue());
+        bindingRef.current?.destroy();
+        bindingRef.current = new MonacoBinding(yText, model, new Set([editor]), null);
+        setPetCodeContext(model.getValue(), questions.find(item => item.id === questionId)?.language);
     };
 
     const handleAnswerChange = (qId: string, val: string) => {
         const newAns = { ...answers[qId], text: val };
         setAnswers(prev => ({ ...prev, [qId]: newAns }));
-        onDraftUpdate(qId, newAns);
+        // Typing sends the text only; the server keeps an existing recording
+        const { audio: _keptOnServer, ...textDraft } = newAns;
+        onDraftUpdate(qId, textDraft);
     };
 
     const toggleRecording = async (qId: string) => {
@@ -103,7 +106,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
         try {
             const res = await fetch('/api/execute', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                 body: JSON.stringify({
                     language: language,
                     version: '*', 
@@ -124,6 +127,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
     };
 
     const handleSubmit = async (qId: string) => {
+        if (submitted[qId]) return;
         const q = questions.find(question => question.id === qId);
         let finalAnswer = answers[qId] || { text: q?.type === 'code' ? q.starterCode || '' : '' };
         
@@ -152,19 +156,8 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
             });
         }
         
-        if (q?.answerKey) {
-            let isCorrect = false;
-            const keyLower = q.answerKey.toLowerCase().trim();
-            if (q.type === 'mc' || q.type === 'poll') {
-                isCorrect = (finalAnswer.text || '').toLowerCase().trim() === keyLower;
-            } else if (q.type === 'code') {
-                isCorrect = (finalAnswer.output || '').toLowerCase().trim().includes(keyLower);
-            } else {
-                isCorrect = (finalAnswer.text || '').toLowerCase().trim().includes(keyLower);
-            }
-            setFeedback(prev => ({ ...prev, [qId]: { status: isCorrect ? 'correct' : 'wrong' } }));
-        }
-
+        // Grading happens on the server (candidates never receive the answer key)
+        setSubmitted(prev => ({ ...prev, [qId]: true }));
         onSubmit(qId, finalAnswer);
     };
 
@@ -176,7 +169,9 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
     return (
         <div className="w-full h-full flex flex-col p-6 font-sans text-[var(--text-primary)] relative">
             <button
-                onClick={() => questions.forEach(q => handleSubmit(q.id))}
+                onClick={() => {
+                    if (window.confirm('Submit every answer and close the exam? You cannot change them afterwards.')) questions.forEach(q => handleSubmit(q.id))
+                }}
                 className="absolute top-6 right-6 w-8 h-8 flex items-center justify-center rounded-full bg-[var(--elevated)] border border-[var(--border)]/60 text-[var(--text-primary)] hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all font-bold"
                 title="Close and Submit All"
             >
@@ -237,7 +232,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
                                                 const newAns = { ...answers[q.id] };
                                                 delete newAns.audio;
                                                 setAnswers(prev => ({ ...prev, [q.id]: newAns }));
-                                                onDraftUpdate(q.id, newAns);
+                                                onDraftUpdate(q.id, { ...newAns, audio: null }); // null removes it on the server
                                             }}
                                             className="text-red-400 hover:text-red-300 font-bold px-2"
                                         >
@@ -284,12 +279,17 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
                         <div className="flex flex-col gap-3">
                             <div className="h-72 border border-[var(--border)]/60 rounded-xl overflow-hidden shadow-inner bg-[var(--bg)]/60">
                                 <MonacoEditor
+                                    key={q.id}
+                                    path={q.id}
                                     height="100%"
                                     language={q.language || 'javascript'}
                                     theme="vs-dark"
-                                    value={answers[q.id]?.text ?? q.starterCode ?? ''}
-                                    onChange={(val) => handleAnswerChange(q.id, val || '')}
-                                    onMount={handleEditorMount}
+                                    defaultValue={answers[q.id]?.text ?? q.starterCode ?? ''}
+                                    onChange={(val) => {
+                                        handleAnswerChange(q.id, val || '')
+                                        setPetCodeContext(val || '', q.language)
+                                    }}
+                                    onMount={(editor) => handleEditorMount(editor, q.id)}
                                     options={{ minimap: { enabled: false }, fontSize: 14, padding: { top: 16 } }}
                                 />
                             </div>
@@ -320,6 +320,7 @@ export function ExamControllerOverlay({ questions, onDraftUpdate, onSubmit }: Ex
                         )}
                         <button 
                             onClick={() => handleSubmit(q.id)}
+                            disabled={submitted[q.id]}
                             className="bg-gradient-to-r from-blue-600 to-indigo-600 text-[var(--text-primary)] font-bold px-8 py-2.5 rounded-xl shadow-lg hover:shadow-blue-500/25 hover:from-blue-500 hover:to-indigo-500 transition-all active:scale-[0.98]"
                         >
                             Submit Answer
