@@ -17,7 +17,7 @@ import { io, Socket } from "socket.io-client"
 import { motion } from "framer-motion"
 import { User, Copy, Check, MousePointer2, Keyboard, Maximize2, Minimize2, Video, VideoOff, Mic, MicOff, Settings, ShieldAlert, Monitor, Gamepad2, ArrowLeftRight, Square, Eye, MousePointer, X,
     MessageSquare, Send, Camera, Disc, Clipboard, ClipboardX, Copy as CopyIcon, Maximize, Minimize, Crosshair, Zap, Radio, AlertTriangle, Link, Volume2,
-    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft, ShieldOff, Activity
+    VolumeX, ChevronDown, ChevronUp, ArrowLeft, XCircle, LogOut, Brain, PenTool, RefreshCw, Bot, PanelLeft, ShieldOff, Activity, Loader2
 } from 'lucide-react'
 import {
     StatusBadge, RoomCodeDisplay, DataCard, TerminalLine,
@@ -168,9 +168,21 @@ function SessionContent() {
     const [panicNotice, setPanicNotice] = useState<string | null>(null)
     const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
     const [selectedControllerId, setSelectedControllerId] = useState<string | null>(null)
+    // Controller only: the level asked of the host and whether the host turned it down
+    const [permissionRequest, setPermissionRequest] = useState<{ level: PermissionLevel; status: 'pending' | 'denied' } | null>(null)
     const [clipboardAllowed, setClipboardAllowed] = useState(false)
     // chatMessages holds messages exactly as relayed (e2e ciphertext); decryption happens for display only
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+    // Lines only this device sees (proctoring warnings, @pet answers); session-state keeps them
+    const pushLocalChatLine = useCallback((text: string) => setChatMessages(prev => [...prev, {
+        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        time: new Date().toISOString(),
+        senderId: 'system',
+        senderName: 'System',
+        role: 'admin' as const,
+        text,
+        localOnly: true,
+    }].slice(-100)), [])
     const [decryptedChat, setDecryptedChat] = useState<Record<string, string | null>>({})
     const [e2eKeyVersion, setE2eKeyVersion] = useState(0)
     const [e2eFingerprint, setE2eFingerprint] = useState('')
@@ -219,6 +231,8 @@ function SessionContent() {
     const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>('none')
     const [avatarError, setAvatarError] = useState<string | null>(null)
     const customAvatarObjectUrlRef = useRef<string | null>(null)
+    // Mirrors the ref so picking a new custom image re-runs the media effect even when the style stays 'custom'
+    const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null)
     const prevAvatarStyleRef = useRef<AvatarStyle>('none')
     
     const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyle>('none')
@@ -465,8 +479,17 @@ function SessionContent() {
                 if (currentVideoSource) avatarStream = avatar3DRef.current.start(currentVideoSource);
             } else {
                 avatar3DRef.current?.stop();
-                if (!virtualAvatarRef.current) virtualAvatarRef.current = new VirtualAvatar();
-                virtualAvatarRef.current.setAvatarStyle(avatarStyle);
+                if (!virtualAvatarRef.current) {
+                    virtualAvatarRef.current = new VirtualAvatar();
+                    virtualAvatarRef.current.onLoadError = (err) => {
+                        // The avatar drops its overlay on its own; keep the picker in step and say why
+                        setAvatarError(err instanceof Error && err.message === 'Avatar image failed to load'
+                            ? 'Avatar image failed to load'
+                            : 'Face tracking failed to load');
+                        setAvatarStyle('none');
+                    };
+                }
+                virtualAvatarRef.current.setAvatarStyle(avatarStyle, avatarStyle === 'custom' ? customAvatarObjectUrlRef.current ?? undefined : undefined);
                 if (currentVideoSource) avatarStream = virtualAvatarRef.current.start(currentVideoSource);
             }
 
@@ -483,7 +506,7 @@ function SessionContent() {
         }
         
         
-    }, [voiceFilter, avatarStyle, backgroundStyle, customBackgroundUrl, hasLocalMedia]);
+    }, [voiceFilter, avatarStyle, customAvatarUrl, backgroundStyle, customBackgroundUrl, hasLocalMedia]);
 
     useEffect(() => () => {
         avatar3DRef.current?.dispose();
@@ -607,7 +630,10 @@ function SessionContent() {
             // Acknowledgement with a timeout: a lost reply no longer leaves a listener behind, and a
             // late reply can no longer be matched to the next ping
             socket.timeout(2500).emit('ping-ircp', (err: Error | null) => {
-                if (!err) setLatency(Math.round(performance.now() - startedAt))
+                if (err) return
+                const measured = Math.round(performance.now() - startedAt)
+                latencyRef.current = measured
+                setLatency(measured)
             })
         }, 3000)
         return () => window.clearInterval(timer)
@@ -1021,6 +1047,8 @@ function SessionContent() {
                 }
             })
             if (currentRoleRef.current !== 'controller') return
+            // Read through the ref: this interval outlives the render whose latency state it closed over
+            const latency = latencyRef.current
             const health: ParticipantQuality["health"] =
                 latency > 180 || packetLossValue > 8 ? 'poor'
                     : latency > 110 || packetLossValue > 3 ? 'fair'
@@ -1345,10 +1373,23 @@ function SessionContent() {
             setPermission(state.permission); 
             setParticipants(state.participants || [])
             setPendingJoinRequests(state.pendingRequests || [])
-            setChatMessages(state.messages || [])
+            // The server list replaces the relayed messages; lines only this device made are merged back in
+            setChatMessages(prev => {
+                const localLines = prev.filter(message => message.localOnly)
+                const serverMessages: ChatMessage[] = state.messages || []
+                if (!localLines.length) return serverMessages
+                return [...serverMessages, ...localLines]
+                    .sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0))
+                    .slice(-100)
+            })
             announceE2E(socket, state.roomCode)
             setObserverCount(state.observerCount || 0)
-            if (Array.isArray(state.events)) setRoomEvents(state.events.map((event: any) => ({ ...event, time: roomTimeToIso(event.time) })))
+            // An event already shown keeps the time it got then, even if its own time cannot be read
+            if (Array.isArray(state.events)) setRoomEvents(prev => state.events.map((event: any, index: number) => {
+                const shown = prev[index]
+                const fallback = shown && shown.type === event.type && shown.message === event.message ? shown.time : undefined
+                return { ...event, time: roomTimeToIso(event.time, fallback) }
+            }))
             if (typeof state.riskScore === 'number') setRoomRisk(state.riskScore)
             if (state.aiConfig && currentRoleRef.current === 'controller') setAiConfig(prev => ({ ...prev, ...state.aiConfig }))
             setExamQuestions(state.examQuestions || [])
@@ -1359,6 +1400,7 @@ function SessionContent() {
             setMouseEnabled(approvedPermission === 'full' || approvedPermission === 'mouse')
             setKeyboardEnabled(approvedPermission === 'full' || approvedPermission === 'keyboard')
             setClipboardAllowed(Boolean(approvedClipboard))
+            setStatusMessage('')
             setConnectionState('connecting')
             // Admitted (again, after a reconnect): the media server needs this socket's camera stream
             setSfuAdmission(n => n + 1)
@@ -1420,9 +1462,13 @@ function SessionContent() {
             setMouseEnabled(nextPermission === 'full' || nextPermission === 'mouse')
             setKeyboardEnabled(nextPermission === 'full' || nextPermission === 'keyboard')
             if (typeof options.clipboardAllowed === 'boolean') setClipboardAllowed(options.clipboardAllowed)
+            setPermissionRequest(null)
             addLog('permission', `Access changed to ${nextPermission.toUpperCase()}`)
         })
-        socket.on('access-denied', () => addLog('permission', 'Access request denied by host'))
+        socket.on('access-denied', () => {
+            setPermissionRequest(prev => prev ? { ...prev, status: 'denied' } : prev)
+            addLog('permission', 'Access request denied by host')
+        })
         socket.on('clipboard-policy', ({ allowed }: { allowed: boolean }) => {
             setClipboardAllowed(Boolean(allowed))
             addLog('permission', `Clipboard shortcuts ${allowed ? 'enabled' : 'blocked'}`)
@@ -1650,12 +1696,36 @@ function SessionContent() {
                 })
             }
         })
+        // Waiting room: the host has not let this controller in yet
+        socket.on('join-pending', ({ message }: { roomCode?: string; mode?: SessionMode; message?: string } = {}) => {
+            setStatusMessage('Waiting for the host to let you in…')
+            setConnectionState('connecting')
+            addLog('system', message || 'Waiting for host approval')
+        })
+        // Host: a controller left or was removed; release its call so departed peers do not pile up
+        socket.on('controller-left', ({ controllerId }: { controllerId?: string } = {}) => {
+            if (currentRoleRef.current !== 'host' || !controllerId) return
+            hostPcRefs.current.get(controllerId)?.close()
+            hostPcRefs.current.delete(controllerId)
+            const qualityTimer = statsTimerRefs.current.get(`quality-${controllerId}`)
+            if (qualityTimer) clearInterval(qualityTimer)
+            statsTimerRefs.current.delete(`quality-${controllerId}`)
+            hostInputChannelRefs.current.delete(controllerId)
+            pendingIceRef.current.delete(controllerId)
+        })
         socket.on('join-denied', ({ reason }: { reason?: string }) => {
+            setStatusMessage('')
             alert(reason || 'Host denied the connection request.')
             router.push('/app')
         })
         socket.on('room-not-found', () => {
-            setSetupError('Room not found or unavailable.')
+            setSetupError('Room not found or unavailable. Check the code and try again.')
+            setStatusMessage('')
+            setConnectionState('idle')
+            setRoomCode(null)
+            // Drop this connection so pressing Join Room again opens a fresh one for the new code
+            socket.disconnect()
+            if (socketRef.current === socket) socketRef.current = null
             setSetupMode('join')
         })
         socket.on('kill-session', () => {
@@ -1796,6 +1866,11 @@ function SessionContent() {
             setupSocket(role, joinInput || undefined)
         }
     }, [setupMode, role, joinInput, setupSocket])
+
+    // /session without a room or create/join flag has nothing to show: go back to the app
+    useEffect(() => {
+        if (setupMode === 'choose') router.replace('/app')
+    }, [setupMode, router])
 
     // Panic revoke: drops EVERY controller to View Only at once. In the desktop app the main process
     // has already locked remote input and released held keys/buttons before this runs.
@@ -1978,6 +2053,20 @@ function SessionContent() {
     }
 
     const updatePermission = (nextPermission: PermissionLevel) => {
+        // A controller cannot change its own access: it asks the host, who answers with the request modal
+        if (role === 'controller') {
+            const activeRoom = roomCodeRef.current
+            if (!activeRoom || !socketRef.current) return
+            if (nextPermission === permission) {
+                setPermissionRequest(null)
+                return
+            }
+            socketRef.current.emit('request-access', { permission: nextPermission }, activeRoom)
+            setPermissionRequest({ level: nextPermission, status: 'pending' })
+            addLog('permission', `Requested ${nextPermission.toUpperCase()} access from the host`)
+            return
+        }
+        if (role !== 'host') return
         setPermission(nextPermission)
         // Granting control again lifts a panic lock in the desktop app
         if (role === 'host' && nextPermission !== 'view') window.ipcRenderer?.send('set-remote-input-lock', false)
@@ -2280,6 +2369,14 @@ function SessionContent() {
         const text = chatInput.trim()
         const activeRoom = roomCodeRef.current
         if (!text || !activeRoom) return
+        const asksPet = text.toLowerCase().startsWith('@pet')
+        // Same rule as the floating pet: no AI help for a candidate during a supervised exam
+        if (asksPet && currentRoleRef.current === 'controller' && sessionModeRef.current === 'supervised') {
+            setChatInput('')
+            setChatOpen(true)
+            pushLocalChatLine('🐶 [Pet AI]: The pet assistant is disabled during supervised exams.')
+            return
+        }
         const session = e2eRef.current
         if (!session?.hasKey()) {
             addLog('system', 'Chat is waiting for the end-to-end encryption key from the host')
@@ -2290,17 +2387,10 @@ function SessionContent() {
         setChatInput('')
         setChatOpen(true)
 
-        if (text.toLowerCase().startsWith('@pet')) {
+        if (asksPet) {
             setPetState('Thinking')
             // The answer is shown only to the asker (the room got the encrypted @pet message itself)
-            const showPetLine = (line: string) => setChatMessages(prev => [...prev, {
-                id: `pet-${Date.now()}`,
-                time: new Date().toISOString(),
-                senderId: 'system',
-                senderName: 'System',
-                role: 'admin',
-                text: line,
-            }])
+            const showPetLine = pushLocalChatLine
             try {
                 showPetLine(`🐶 [Pet AI]: ${await askPet(text.replace(/^@pet/i, '').trim() || 'Hello!')}`)
             } catch (err: any) {
@@ -2334,14 +2424,7 @@ function SessionContent() {
             setPetMessage('');
         }, 8000);
 
-        setChatMessages(prev => [...prev, {
-            id: Date.now().toString(),
-            time: new Date().toISOString(),
-            senderId: 'system',
-            senderName: 'System',
-            role: 'admin',
-            text: `⚠️ [System Warning]: ${message}`
-        }]);
+        pushLocalChatLine(`⚠️ [System Warning]: ${message}`);
     };
 
     useFaceProctoring(localCamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 20));
@@ -2525,6 +2608,10 @@ function SessionContent() {
         };
     }, [sessionMode, role, reportMalpractice]);
 
+    if (setupMode === "choose") {
+        return <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center text-[var(--text-dim)] font-mono">Loading Session...</div>
+    }
+
     if (setupMode === "join") {
         return (
             <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center p-4 font-sans">
@@ -2535,12 +2622,23 @@ function SessionContent() {
                         placeholder="Enter 8-digit Room Code"
                         maxLength={8}
                         value={joinInput}
-                        onChange={e => setJoinInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                        className="w-full text-center font-mono font-bold tracking-[0.2em] text-[var(--accent)] bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-3 mb-6 focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-glow)] outline-none transition-all"
+                        onChange={e => { setJoinInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')); setSetupError('') }}
+                        aria-invalid={setupError ? true : undefined}
+                        aria-describedby={setupError ? 'join-setup-error' : undefined}
+                        className={cn(
+                            "w-full text-center font-mono font-bold tracking-[0.2em] text-[var(--accent)] bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-3 focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-glow)] outline-none transition-all",
+                            setupError ? "mb-2 border-[var(--red)]" : "mb-6"
+                        )}
                     />
+                    {setupError && (
+                        <p id="join-setup-error" role="alert" className="mb-4 text-xs text-[var(--red)]">{setupError}</p>
+                    )}
                     <button 
                         onClick={() => {
-                            if (joinInput.length > 0) setSetupMode(null)
+                            if (joinInput.length > 0) {
+                                setSetupError('')
+                                setSetupMode(null)
+                            }
                         }}
                         className="w-full py-3 rounded-lg bg-[var(--accent)] text-black font-bold hover:brightness-110 transition-all"
                     >
@@ -2855,7 +2953,7 @@ function SessionContent() {
                                 </p>
                             </div>
                         )}
-                        {role === 'host' && (
+                        {role === 'host' && sessionMode === 'supervised' && (
                             <button onClick={() => setShowAiSettings(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-bold transition-colors">
                                 <Zap className="w-4 h-4" />
                                 AI Calibrate
@@ -2864,13 +2962,31 @@ function SessionContent() {
                         <div className="space-y-1 mt-3">
                             {permissionLevels.map(lvl => {
                                 const Icon = lvl.icon;
+                                // The host edits the selected controller; a controller sees its own access
+                                const isCurrent = (role === 'host' ? selectedPermission : permission) === lvl.id
+                                const isRequested = role === 'controller' && permissionRequest?.status === 'pending' && permissionRequest.level === lvl.id
                                 return (
-                                    <button key={lvl.id} onClick={() => updatePermission(lvl.id)} className={cn("w-full h-11 flex items-center gap-3 px-3", selectedPermission === lvl.id ? "bg-[var(--accent)]/10 text-[var(--accent)]" : "text-[var(--text-dim)]")}>
+                                    <button
+                                        key={lvl.id}
+                                        onClick={() => updatePermission(lvl.id)}
+                                        disabled={role !== 'host' && role !== 'controller'}
+                                        aria-pressed={isCurrent}
+                                        title={role === 'controller' && !isCurrent ? `Ask the host for ${lvl.label}` : undefined}
+                                        className={cn("w-full h-11 flex items-center gap-3 px-3", isCurrent ? "bg-[var(--accent)]/10 text-[var(--accent)]" : isRequested ? "text-[var(--amber)]" : "text-[var(--text-dim)]")}
+                                    >
                                         <Icon className="w-4 h-4" />
                                         <span className="text-[13px] font-medium">{lvl.label}</span>
+                                        {isRequested && <span className="ml-auto text-[10px] font-mono uppercase">Requested</span>}
                                     </button>
                                 );
                             })}
+                            {role === 'controller' && permissionRequest && (
+                                <p role="status" className={cn("px-3 py-1 text-[11px]", permissionRequest.status === 'denied' ? "text-[var(--red)]" : "text-[var(--text-secondary)]")}>
+                                    {permissionRequest.status === 'denied'
+                                        ? `The host declined your request for ${permissionLevels.find(l => l.id === permissionRequest.level)?.label || permissionRequest.level}.`
+                                        : `Requested ${permissionLevels.find(l => l.id === permissionRequest.level)?.label || permissionRequest.level} — waiting for the host`}
+                                </p>
+                            )}
                             {role === 'host' && selectedParticipant && (
                                 <button
                                     onClick={() => updateClipboardPolicy(!selectedClipboardAllowed)}
@@ -3004,6 +3120,7 @@ function SessionContent() {
                                                 }
                                                 const url = URL.createObjectURL(file);
                                                 customAvatarObjectUrlRef.current = url;
+                                                setCustomAvatarUrl(url);
                                                 setAvatarStyle('custom');
                                                 setAvatarError(null);
                                                 e.target.value = '';
@@ -3113,6 +3230,13 @@ function SessionContent() {
                                 />
                                 {sessionMode === 'collaboration' && <WhiteboardOverlay isHost={role === 'host'} />}
                             </>
+                        )}
+                        {role === 'controller' && statusMessage && connectionState !== 'connected' && (
+                            <div role="status" className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 pointer-events-none text-center px-6">
+                                <Loader2 className="w-8 h-8 animate-spin text-[var(--accent)]" />
+                                <p className="text-sm font-medium text-[var(--text-primary)]">{statusMessage}</p>
+                                {roomCode && <p className="font-mono text-[11px] tracking-[0.2em] text-[var(--text-dim)]">ROOM {roomCode}</p>}
+                            </div>
                         )}
                         {role === 'host' && !isStreaming && (
                             <GlowButton onClick={startSharingProcess} size="lg" className="px-8 py-3 rounded-full pointer-events-auto">START SHARING</GlowButton>
@@ -3303,6 +3427,7 @@ function SessionContent() {
                         device: requestingUser.device || 'Remote device',
                         ip: requestingUser.ip || 'Unknown IP',
                     }}
+                    requestedPermission={['view', 'mouse', 'keyboard', 'full'].includes(requestingUser.permission) ? requestingUser.permission : undefined}
                     onAllow={(nextPermission, options) => {
                         if (nextPermission !== 'view') window.ipcRenderer?.send('set-remote-input-lock', false)
                         socketRef.current?.emit('access-granted', nextPermission, {

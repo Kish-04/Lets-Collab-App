@@ -33,6 +33,7 @@ export interface AntiCheatConfig {
 const DEFAULT_CONFIG: AntiCheatConfig = {
   eyeTrackingThreshold: 0.80,
   emotionSensitivity: 0.65,
+  // Normalised 0-1 level of the speech band (see speechBandLevel), the same scale calibrate() writes
   audioVolumeThreshold: 0.05,
   headPoseMargin: 0.50,
   baselineBlinkRate: 15
@@ -51,6 +52,9 @@ export class AntiCheatEngine {
   private audioContext: AudioContext | null = null;
   private audioAnalyser: AnalyserNode | null = null;
   private speechRecognition: any = null;
+  // True only between the recogniser's onstart and its onerror/onend: an errored or stopped
+  // recogniser must not silence the loud-noise check
+  private speechRecognitionActive: boolean = false;
   private missingFaceFrames: number = 0;
   
   private isProcessingFace: boolean = false;
@@ -123,6 +127,16 @@ export class AntiCheatEngine {
     this.statusCallback = callback;
   }
 
+  // Average of the speech-frequency bins (approx 344Hz to 3440Hz at fftSize 256), normalised to 0-1.
+  // Calibration and the runtime check both use this, so the stored threshold means the same thing.
+  private speechBandLevel(analyser: AnalyserNode) {
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
+    const speechBins = Array.from(dataArray).slice(2, 21);
+    if (speechBins.length === 0) return 0;
+    return speechBins.reduce((a, b) => a + b, 0) / speechBins.length / 255;
+  }
+
   private setStatus(status: InitStatus, message: string) {
     this.initStatus = status;
     this.statusCallback?.(status, message);
@@ -156,12 +170,7 @@ export class AntiCheatEngine {
         samplesCollected++;
 
         if (tempAnalyser) {
-          const bufferLength = tempAnalyser.frequencyBinCount;
-          const dataArray = new Uint8Array(bufferLength);
-          tempAnalyser.getByteFrequencyData(dataArray);
-          let sum = 0;
-          for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-          volumeSamples.push(sum / bufferLength);
+          volumeSamples.push(this.speechBandLevel(tempAnalyser));
         }
 
         if (this.faceLandmarker && videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
@@ -180,7 +189,8 @@ export class AntiCheatEngine {
           clearInterval(sampleInterval);
           if (volumeSamples.length > 0) {
             const avgNoise = volumeSamples.reduce((a, b) => a + b, 0) / volumeSamples.length;
-            this.config.audioVolumeThreshold = Math.max(20, avgNoise + 15);
+            // Same margins as before (floor 20, noise + 15 on the 0-255 byte scale), expressed on 0-1
+            this.config.audioVolumeThreshold = Math.max(20 / 255, avgNoise + 15 / 255);
           }
           if (poseVariances.length > 5) {
             const avgVar = poseVariances.reduce((a,b)=>a+b,0)/poseVariances.length;
@@ -232,7 +242,9 @@ export class AntiCheatEngine {
                 }
             }
           };
-          this.speechRecognition.onerror = () => {};
+          this.speechRecognition.onstart = () => { this.speechRecognitionActive = true; };
+          this.speechRecognition.onerror = () => { this.speechRecognitionActive = false; };
+          this.speechRecognition.onend = () => { this.speechRecognitionActive = false; };
           this.speechRecognition.start();
         }
       } catch (err) {}
@@ -255,17 +267,12 @@ export class AntiCheatEngine {
           if (this.audioContext.state === 'suspended') {
               this.audioContext.resume().catch(() => {});
           }
-          const dataArray = new Uint8Array(this.audioAnalyser.frequencyBinCount);
-          this.audioAnalyser.getByteFrequencyData(dataArray);
-          
-          // Filter for human speech frequencies (approx 344Hz to 3440Hz)
-          const speechBins = Array.from(dataArray).slice(2, 21);
           // Use average volume of just the speech frequencies to prevent random noise spikes from triggering it
-          const avgSpeechVolume = speechBins.reduce((a, b) => a + b, 0) / speechBins.length;
-          const normalizedVolume = avgSpeechVolume / 255;
+          const normalizedVolume = this.speechBandLevel(this.audioAnalyser);
           
           if (normalizedVolume > this.config.audioVolumeThreshold) {
-              if (!this.speechRecognition) {
+              // Speech recognition reports talking itself, but only while it is actually listening
+              if (!this.speechRecognitionActive) {
                   this.emitEvent("VOICE_DETECTED" as any, "Loud noise detected (potential talking)", 5);
               }
           }
@@ -337,6 +344,7 @@ export class AntiCheatEngine {
     if (this.audioContext) this.audioContext.close().catch(() => {});
     this.speechRecognition?.stop();
     this.speechRecognition = null;
+    this.speechRecognitionActive = false;
   }
 
   public handleKeyEvent(type: 'keydown' | 'keyup', key: string) {

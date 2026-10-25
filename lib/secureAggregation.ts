@@ -166,10 +166,18 @@ export function revealShares(held: Map<string, HeldShare>, survivors: string[], 
     return revealed
 }
 
+// Uniform in [0, 1) with 53 random bits from the Web Crypto CSPRNG: privacy noise must not be
+// predictable, which Math.random does not promise
+function secureUniform() {
+    const words = crypto.getRandomValues(new Uint32Array(2))
+    return ((words[0] >>> 5) * 67108864 + (words[1] >>> 6)) / 9007199254740992
+}
+
+// Standard normal draw (Box-Muller)
 function gaussian() {
     let u = 0
-    while (u === 0) u = Math.random()
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random())
+    while (u === 0) u = secureUniform()
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * secureUniform())
 }
 
 /**

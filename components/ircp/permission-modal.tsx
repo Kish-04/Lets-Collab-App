@@ -19,6 +19,8 @@ interface PermissionRequestModalProps {
     device: string
     ip: string
   }
+  /** The level the controller asked for: the dialog starts on it */
+  requestedPermission?: PermissionLevel
 }
 
 const permissionLevels = [
@@ -41,9 +43,16 @@ export function PermissionRequestModal({
   onClose, 
   onAllow, 
   onDeny,
-  requester 
+  requester,
+  requestedPermission
 }: PermissionRequestModalProps) {
-  const [selectedPermission, setSelectedPermission] = useState<PermissionLevel>("view")
+  const [selectedPermission, setSelectedPermission] = useState<PermissionLevel>(requestedPermission || "view")
+  // A new request while the dialog is mounted starts on the newly requested level
+  const [shownRequest, setShownRequest] = useState(requestedPermission)
+  if (shownRequest !== requestedPermission) {
+    setShownRequest(requestedPermission)
+    setSelectedPermission(requestedPermission || "view")
+  }
   const [hasTimeLimit, setHasTimeLimit] = useState(false)
   const [timeLimit, setTimeLimit] = useState(15)
   const [logSession, setLogSession] = useState(true)

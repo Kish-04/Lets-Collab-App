@@ -13,10 +13,14 @@ export function canonicalProctoringType(type: string) {
     return upper
 }
 
-// Server room events carry only a local "HH:MM:SS"; anchor them to today so they sort with device logs
-export function roomTimeToIso(time: string) {
-    const match = /^(d{1,2}):(d{2}):(d{2})$/.exec(String(time || ''))
-    if (!match) return new Date().toISOString()
+// Server room events carry an ISO time (server/roomUtils.js nowTime); older servers sent only a local
+// "HH:MM:SS", which is anchored to today so it sorts with device logs. Anything else gets the fallback
+// (default now) so a caller re-reading the same event can keep the time it gave it the first time.
+export function roomTimeToIso(time: string, fallback?: string) {
+    const raw = String(time || '').trim()
+    if (/^\d{4}-\d{2}-\d{2}T/.test(raw) && !Number.isNaN(Date.parse(raw))) return raw
+    const match = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(raw)
+    if (!match) return fallback || new Date().toISOString()
     const at = new Date()
     at.setHours(Number(match[1]), Number(match[2]), Number(match[3]), 0)
     return at.toISOString()
@@ -62,6 +66,8 @@ export type ChatMessage = {
     senderName: string
     role: "host" | "controller" | "admin"
     text: string
+    // Made on this device only (proctoring warnings, @pet answers); never sent, kept across session-state
+    localOnly?: boolean
 }
 export type EvidenceItem = {
     id?: string
