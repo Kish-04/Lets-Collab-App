@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('api', {
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels
-    const validChannels = ['execute-input', 'set-remote-input-lock', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'start-drag', 'set-pet-enabled', 'set-ignore-mouse-events'];
+    const validChannels = ['execute-input', 'set-remote-input-lock', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'set-pet-enabled', 'set-ignore-mouse-events'];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
     }
@@ -33,6 +33,5 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
       // Deliberately strip event as it includes `sender` 
       ipcRenderer.on(channel, (event, ...args) => func(...args));
     }
-  },
-  getDeviceLogs: () => ipcRenderer.invoke('get-device-logs')
+  }
 });

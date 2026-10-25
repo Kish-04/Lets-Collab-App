@@ -6,15 +6,18 @@ import { getPetCodeContext } from './petContext'
 export async function askPet(message: string): Promise<string> {
     const body = JSON.stringify({ message, codeContext: getPetCodeContext() })
     const headers = { 'Content-Type': 'application/json', ...getAuthHeaders() }
+    // A failing endpoint may still explain why (e.g. the API key was rejected): keep that for the user
+    let reason = ''
     for (const url of [`${getBackendUrl()}/api/pet`, '/api/pet']) {
         try {
             const res = await fetch(url, { method: 'POST', headers, body })
-            if (!res.ok) continue
-            const data = await res.json()
-            if (typeof data.text === 'string' && data.text) return data.text
+            const data = await res.json().catch(() => null)
+            const text = typeof data?.text === 'string' ? data.text : ''
+            if (res.ok && text) return text
+            if (text && !reason) reason = text
         } catch {
             // try the next endpoint
         }
     }
-    throw new Error('The pet assistant is unavailable right now.')
+    throw new Error(reason || 'The pet assistant is unavailable right now.')
 }

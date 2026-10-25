@@ -153,9 +153,6 @@ function SessionDrawer({
             <button onClick={() => onObserve(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
               <Eye className="h-4 w-4" /> View Host Screen
             </button>
-            <a href={`/session?room=${encodeURIComponent(session.id)}&role=admin`} target="_blank" rel="noreferrer" title="Opens the room in a new tab. The host and participants see that an administrator joined; a collaboration host must approve." className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors">
-              <Eye className="h-4 w-4" /> Join as Administrator
-            </a>
           </div>
         </div>
 

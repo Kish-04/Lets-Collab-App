@@ -11,9 +11,12 @@ const CONNECTING = 'Connecting to the exam media server…';
 const NO_CAMERAS = 'No candidate cameras yet; they appear here as candidates connect.';
 const DISABLED = 'The exam media server is not enabled on this server (SFU_ENABLED). Use Live Sessions to view candidates one at a time.';
 
+// The video view, resolved once at load on native (tiles only render there); a component looked
+// up inside render would count as a new component type on every render
+const RTCView: ReturnType<typeof getRTCView> = sfuSupported ? getRTCView() : (View as any);
+
 function CameraTile({ tile }: { tile: Tile }) {
   const { colors } = useTheme();
-  const RTCView = getRTCView();
   return (
     <View style={[styles.tile, { borderColor: colors.border }]} accessibilityLabel={`Camera of ${tile.name}`}>
       <RTCView streamURL={tile.streamURL} objectFit="cover" style={styles.video} />

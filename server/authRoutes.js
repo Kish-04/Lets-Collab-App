@@ -261,7 +261,10 @@ async function sendOTPEmail(toEmail, otp, name = 'User') {
 }
 
 function otpDeliveryErrorMessage() {
-  return 'Email verification service is not configured. Set EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, and EMAILJS_PUBLIC_KEY on the backend.';
+  const configured = Boolean(resendClient) || Boolean(process.env.EMAILJS_SERVICE_ID && process.env.EMAILJS_TEMPLATE_ID && process.env.EMAILJS_PUBLIC_KEY);
+  return configured
+    ? 'The verification email could not be sent right now. Please try again in a minute.'
+    : 'Email verification is not set up on the server (no Resend or EmailJS settings).';
 }
 
 function validateRegisterInput(name, email, password) {
@@ -604,36 +607,36 @@ router.get('/google', (req, res, next) => {
   passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
 });
 
-router.get('/google/callback', 
-  (req, res, next) => {
-    passport.authenticate('google', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
+// Where the web app lives (FRONTEND_URL may point at /app)
+function frontendBase() {
+  return (process.env.FRONTEND_URL || 'http://localhost:8081').replace(/\/+$/, '').replace(/\/app$/, '');
+}
+
+// Both providers end here. The browser gets the login token in the URL fragment (after #), which is
+// never sent to any server or written to access logs, like the LTI launch: pages that send
+// "Authorization: Bearer" (Face ID, My flags, the pet, ...) then work for OAuth users too.
+function oauthCallback(provider) {
+  return (req, res, next) => {
+    passport.authenticate(provider, { session: false }, (err, user) => {
       if (err) console.error('[OAuth] sign-in failed:', err.message || err);
       if (err || !user) {
-        let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
-        if (frontendUrl.endsWith('/app')) {
-          frontendUrl = frontendUrl.slice(0, -4);
-        }
-        if (frontendUrl.endsWith('/')) {
-          frontendUrl = frontendUrl.slice(0, -1);
-        }
-        return res.redirect(`${frontendUrl}/app?error=banned_or_failed`);
+        const reason = err ? 'failed' : 'not_allowed';
+        return res.redirect(`${frontendBase()}/app?oauth=error&reason=${reason}`);
       }
-      
       const token = generateToken(user._id, user.email);
       setAuthCookie(res, token);
-      
-      let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
-      if (frontendUrl.endsWith('/app')) {
-        frontendUrl = frontendUrl.slice(0, -4);
-      }
-      if (frontendUrl.endsWith('/')) {
-        frontendUrl = frontendUrl.slice(0, -1);
-      }
-      const redirectUrl = `${frontendUrl}/app?oauth=success&email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(user.name || user.email)}`;
-      res.redirect(redirectUrl);
+      const fragment = new URLSearchParams({
+        token,
+        email: user.email || '',
+        name: user.name || user.email || '',
+        role: user.role === 'admin' ? 'admin' : 'user',
+      });
+      res.redirect(`${frontendBase()}/app?oauth=success#${fragment.toString()}`);
     })(req, res, next);
-  }
-);
+  };
+}
+
+router.get('/google/callback', oauthCallback('google'));
 
 router.get('/github', (req, res, next) => {
   if (!process.env.GITHUB_CLIENT_ID) {
@@ -642,36 +645,7 @@ router.get('/github', (req, res, next) => {
   passport.authenticate('github', { scope: ['user:email'] })(req, res, next);
 });
 
-router.get('/github/callback', 
-  (req, res, next) => {
-    passport.authenticate('github', { session: false, failureRedirect: '/app?error=auth_failed' }, (err, user, info) => {
-      if (err) console.error('[OAuth] sign-in failed:', err.message || err);
-      if (err || !user) {
-        let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
-        if (frontendUrl.endsWith('/app')) {
-          frontendUrl = frontendUrl.slice(0, -4);
-        }
-        if (frontendUrl.endsWith('/')) {
-          frontendUrl = frontendUrl.slice(0, -1);
-        }
-        return res.redirect(`${frontendUrl}/app?error=banned_or_failed`);
-      }
-      
-      const token = generateToken(user._id, user.email);
-      setAuthCookie(res, token);
-      
-      let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8081';
-      if (frontendUrl.endsWith('/app')) {
-        frontendUrl = frontendUrl.slice(0, -4);
-      }
-      if (frontendUrl.endsWith('/')) {
-        frontendUrl = frontendUrl.slice(0, -1);
-      }
-      const redirectUrl = `${frontendUrl}/app?oauth=success&email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(user.name || user.email)}`;
-      res.redirect(redirectUrl);
-    })(req, res, next);
-  }
-);
+router.get('/github/callback', oauthCallback('github'));
 
 module.exports = router;
 

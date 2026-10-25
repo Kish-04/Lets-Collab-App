@@ -48,9 +48,9 @@ The user said: "${prompt}"${codeContext && codeContext.code ? '\n\nThe user is c
     console.error("Gemini API Error in Electron:", error);
     const errorMsg = String(error.message || error);
     if (errorMsg.includes('401') || errorMsg.includes('invalid authentication credentials')) {
-      return "Hmm, I'm having trouble connecting to my central knowledge base right now. But I'm here if you need to test the UI!";
+      return 'The AI assistant is unavailable right now: the Gemini API key on the server was rejected. Ask the administrator to check GEMINI_API_KEY.';
     }
-    return "API Error: " + errorMsg;
+    return "The AI assistant could not answer: " + errorMsg;
   }
 }
 

@@ -4,6 +4,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
 const User = require('./User');
+const Alert = require('./alert');
 const mockStore = require('./mockStore');
 const auditChain = require('./auditChain');
 const { verifyJwt } = require('./config');
@@ -57,14 +58,9 @@ The user said: "${message}"${codeContext && codeContext.code ? '\n\nThe user is 
     console.error("Gemini API Error:", error);
     const errorMsg = String(error.message || error);
     if (errorMsg.includes('401') || errorMsg.includes('invalid authentication credentials')) {
-      const casualResponses = [
-        "Hmm, I'm having trouble connecting to my central knowledge base right now. But I'm here if you need to test the UI!",
-        "My cognitive circuits are offline at the moment due to an API issue, but your interface looks great!",
-        "I'd love to help with that, but I'm currently running in limited mode. Everything else is looking good though!"
-      ];
-      return res.json({ text: casualResponses[Math.floor(Math.random() * casualResponses.length)] });
+      return res.status(503).json({ text: 'The AI assistant is unavailable right now: the Gemini API key on the server was rejected. Ask the administrator to check GEMINI_API_KEY.' });
     }
-    return res.json({ text: "API Error: " + errorMsg });
+    return res.status(502).json({ text: 'The AI assistant could not answer: ' + errorMsg });
   }
 });
 

@@ -15,14 +15,18 @@ export default function TabLayout() {
   const [role, setRole] = useState<string | null>(null);
   useEffect(() => { void getStoredRole().then(setRole); }, []);
   const adminOnly = role === 'user' ? { href: null } : {};
-  const icon = (Icon: typeof Activity) => ({ color, focused }: { color: ColorValue; focused: boolean }) => (
-    <Icon
-      size={24}
-      color={color}
-      strokeWidth={focused ? 3 : 2}
-      style={focused && { shadowColor: colors.accent, shadowOpacity: 0.8, shadowRadius: 15, shadowOffset: { width: 0, height: 0 } }}
-    />
-  );
+  const icon = (Icon: typeof Activity) => {
+    const TabIcon = ({ color, focused }: { color: ColorValue; focused: boolean }) => (
+      <Icon
+        size={24}
+        color={color}
+        strokeWidth={focused ? 3 : 2}
+        style={focused && { shadowColor: colors.accent, shadowOpacity: 0.8, shadowRadius: 15, shadowOffset: { width: 0, height: 0 } }}
+      />
+    );
+    TabIcon.displayName = 'TabIcon';
+    return TabIcon;
+  };
 
   return (
     <AdminDataProvider>

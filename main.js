@@ -356,15 +356,17 @@ ipcMain.handle('oauth-login', async (event, provider) => {
 
     authWindow.loadURL(authUrl);
     
+    // The backend redirects to /app?oauth=success#token=... (or ?oauth=error): hand that address to
+    // the app, which reads the token from it like the web app does
+    let settled = false;
     const handleNavigation = (url) => {
       try {
         const urlObj = new URL(url);
-        if (urlObj.searchParams.get('oauth') === 'success') {
+        const outcome = urlObj.searchParams.get('oauth');
+        if (outcome === 'success' || outcome === 'error' || urlObj.searchParams.get('error')) {
+          settled = true;
+          resolve(url);
           authWindow.close();
-          resolve(true);
-        } else if (urlObj.searchParams.get('error')) {
-          authWindow.close();
-          resolve(false);
         }
       } catch (e) {}
     };
@@ -373,7 +375,7 @@ ipcMain.handle('oauth-login', async (event, provider) => {
     authWindow.webContents.on('did-navigate', (e, url) => handleNavigation(url));
     
     authWindow.on('closed', () => {
-      resolve(false);
+      if (!settled) resolve(false);
     });
   });
 });

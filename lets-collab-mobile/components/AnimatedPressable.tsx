@@ -58,4 +58,6 @@ const AnimatedPressableComponent = React.forwardRef<any, AnimatedPressableProps>
   }
 );
 
+AnimatedPressableComponent.displayName = 'AnimatedPressable';
+
 export const AnimatedPressable = AnimatedPressableComponent;

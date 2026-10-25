@@ -145,6 +145,7 @@ export default function HomePage() {
   const [formData, setFormData] = useState({ name: "", email: "", password: "", otp: "" })
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
+  const [serverOnline, setServerOnline] = useState<boolean | null>(null)
   const [isAuth, setIsAuth] = useState(false)
   const [isDesktop, setIsDesktop] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -159,17 +160,10 @@ export default function HomePage() {
       setIsDesktop(true)
     }
 
-    // Handle OAuth callback from URL params
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('oauth') === 'success') {
-      const email = params.get('email') || '';
-      const name = params.get('name') || email;
-      const user = { name, email };
-      localStorage.setItem('ircp_user', JSON.stringify(user));
-      localStorage.setItem('ircp_name', name);
-      localStorage.setItem('ircp_email', email);
-      setIsAuth(true);
-      window.history.replaceState({}, document.title, window.location.pathname);
+    // Google/GitHub sign-in comes back to /app?oauth=success#token=... or ?oauth=error
+    if (new URLSearchParams(window.location.search).get('oauth')) {
+      completeOAuth(window.location.href)
+      window.history.replaceState({}, document.title, window.location.pathname)
     }
     
     // Connect to signaling server for live stats
@@ -191,8 +185,11 @@ export default function HomePage() {
     }, 2000)
     
     socket.on('connect', () => {
+      setServerOnline(true)
       socket.emit('get-session-count')
     })
+    socket.on('disconnect', () => setServerOnline(false))
+    socket.on('connect_error', () => setServerOnline(false))
 
     return () => {
       clearInterval(interval)
@@ -296,8 +293,63 @@ export default function HomePage() {
 
   const handleLogout = async () => {
     try { await fetch(`${getBackendUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' }) } catch (e) {}
-    localStorage.removeItem('ircp_user')
+    for (const key of ['ircp_user', 'ircp_name', 'ircp_email', 'ircp_role']) localStorage.removeItem(key)
     setIsAuth(false)
+  }
+
+  // Reads the result of a Google/GitHub sign-in: the server puts the login token and account details
+  // in the URL fragment (never sent to any server), or reports ?oauth=error with a reason
+  function completeOAuth(returnUrl: string) {
+    let url: URL
+    try { url = new URL(returnUrl) } catch { return }
+    if (url.searchParams.get('oauth') !== 'success') {
+      setAuthMode('login')
+      setErrorMsg(url.searchParams.get('reason') === 'not_allowed'
+        ? 'That account cannot sign in (it may be blocked). Contact an administrator.'
+        : 'Sign-in with that provider did not complete. Please try again.')
+      return
+    }
+    const details = new URLSearchParams(url.hash.slice(1))
+    const token = details.get('token') || ''
+    const email = details.get('email') || ''
+    const name = details.get('name') || email
+    const role = details.get('role') === 'admin' ? 'admin' : 'user'
+    if (!token) {
+      setAuthMode('login')
+      setErrorMsg('Sign-in did not return a session. Please try again.')
+      return
+    }
+    localStorage.setItem('ircp_user', JSON.stringify({ token, name, email, role }))
+    localStorage.setItem('ircp_name', name)
+    localStorage.setItem('ircp_email', email)
+    localStorage.setItem('ircp_role', role)
+    setIsAuth(true)
+    setAuthMode(null)
+  }
+
+  // The desktop app signs in through its own window and hands back the address it ended on
+  const desktopOAuth = async (provider: 'google' | 'github') => {
+    const result = await (window as any).api.oauthLogin(provider)
+    if (typeof result === 'string') completeOAuth(result)
+    else if (result === false) {
+      setAuthMode('login')
+      setErrorMsg('Sign-in window was closed before it finished.')
+    }
+  }
+
+  // Registering again with the same details sends a fresh code (server/authRoutes.js /register)
+  const resendCode = async () => {
+    setErrorMsg('')
+    try {
+      const res = await fetch(`${getBackendUrl()}/api/auth/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ name: formData.name, email: formData.email, password: formData.password }),
+      })
+      const data = await res.json().catch(() => ({}))
+      setErrorMsg(res.ok ? `A new code was sent to ${formData.email}.` : (data.message || 'Could not send a new code.'))
+    } catch {
+      setErrorMsg('Network error. Ensure the server is running.')
+    }
   }
 
   return (
@@ -326,8 +378,8 @@ export default function HomePage() {
             <motion.a 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              href="/downloads/Lets-Collab-Cloud-Setup.exe" 
-              download 
+              href="/#download"
+              title="Windows, macOS and Linux installers"
               className="hidden sm:flex items-center gap-2 px-5 py-2.5 bg-[var(--text-primary)] text-[var(--bg)] font-bold rounded-full shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)] transition-all text-sm"
             >
               <Download className="w-4 h-4" />
@@ -347,7 +399,7 @@ export default function HomePage() {
           className="flex-[0.55] p-12 lg:p-20 flex flex-col justify-center"
         >
           <motion.div variants={itemVariants}>
-            <StatusBadge status="live" label="Protocol Online" className="mb-8 w-fit bg-[var(--emerald)]/10 border-[var(--emerald)]/20 text-[var(--emerald)] font-bold tracking-widest uppercase text-xs px-4 py-1.5" />
+            <StatusBadge status={serverOnline ? "live" : serverOnline === null ? "connecting" : "high-risk"} label={serverOnline ? "Protocol Online" : serverOnline === null ? "Connecting…" : "Server unreachable"} className={`mb-8 w-fit font-bold tracking-widest uppercase text-xs px-4 py-1.5 ${serverOnline ? "bg-[var(--emerald)]/10 border-[var(--emerald)]/20 text-[var(--emerald)]" : ""}`} />
           </motion.div>
 
           <motion.h1 variants={itemVariants} className="font-display font-black text-6xl lg:text-[5.5rem] leading-[0.9] text-[var(--text-primary)] mb-8 tracking-tighter">
@@ -639,8 +691,7 @@ export default function HomePage() {
                       type="button"
                       onClick={async () => {
                         if (typeof window !== 'undefined' && (window as any).api && (window as any).api.oauthLogin) {
-                          const success = await (window as any).api.oauthLogin('google');
-                          if (success) window.location.search = '?oauth=success';
+                          await desktopOAuth('google');
                         } else {
                           window.location.href = `${getBackendUrl()}/api/auth/google`;
                         }
@@ -659,8 +710,7 @@ export default function HomePage() {
                       type="button"
                       onClick={async () => {
                         if (typeof window !== 'undefined' && (window as any).api && (window as any).api.oauthLogin) {
-                          const success = await (window as any).api.oauthLogin('github');
-                          if (success) window.location.search = '?oauth=success';
+                          await desktopOAuth('github');
                         } else {
                           window.location.href = `${getBackendUrl()}/api/auth/github`;
                         }
@@ -681,6 +731,9 @@ export default function HomePage() {
                   <p>Already have an account? <button onClick={() => setAuthMode('login')} className="text-[var(--text-primary)] hover:text-[var(--accent)] transition-colors ml-2">Login</button></p>
                 ) : authMode === 'forgot' ? (
                   <p>Remember your password? <button onClick={() => setAuthMode('login')} className="text-[var(--text-primary)] hover:text-[var(--accent)] transition-colors ml-2">Login</button></p>
+                ) : authMode === 'verify' ? (
+                  <p>Didn&apos;t get the code? <button type="button" onClick={resendCode} className="text-[var(--text-primary)] hover:text-[var(--accent)] transition-colors ml-2">Resend code</button>
+                    <button type="button" onClick={() => setAuthMode('register')} className="text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors ml-3">Change email</button></p>
                 ) : null}
               </div>
             </motion.div>
