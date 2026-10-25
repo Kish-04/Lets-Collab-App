@@ -72,10 +72,21 @@ function getAllowedOrigins() {
   return configured.length ? Array.from(new Set(configured)) : (isProduction ? [] : ['*']);
 }
 
+// This server's own public address. React Native's Android WebSocket sends the URL it connects to
+// as Origin, so the mobile app's sockets arrive with the backend's own origin. A same-origin request
+// is not cross-site, so it is always allowed. Render sets RENDER_EXTERNAL_URL itself.
+function getSelfOrigins() {
+  return [process.env.RENDER_EXTERNAL_URL, process.env.PUBLIC_SERVER_URL, process.env.LTI_TOOL_URL]
+    .flatMap(parseCsv)
+    .map((value) => { try { return new URL(value).origin; } catch { return null; } })
+    .filter(Boolean);
+}
+
 function isOriginAllowed(origin, allowedOrigins) {
   if (!origin) return true;
   if (allowedOrigins.includes('*')) return true;
   if (allowedOrigins.includes(origin)) return true;
+  if (getSelfOrigins().includes(origin)) return true;
 
   // The desktop app loads app://- and rewrites the Origin of its requests to http://localhost:8081
   // (main.js). In production only those exact origins are accepted, not every local port, since

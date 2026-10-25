@@ -895,20 +895,34 @@ function getTokenFromSocket(socket) {
   return token;
 }
 
+// The two built-in administrator logins (authRoutes.js) have no stored user record. The REST admin
+// routes accept their tokens (adminRoutes.js loadAuthenticatedUser); sockets must as well, or those
+// admins see reports but no live sessions, alerts or chain data.
+function isBuiltInAdminToken(decoded) {
+  return decoded?.id === 'admin-id' || decoded?.email === 'kishankarthiks222@gmail.com' || decoded?.email === 'admin@letscollab.com';
+}
+
 async function isAdminSocket(socket) {
   const token = getTokenFromSocket(socket);
   if (!token) return false;
   try {
     const decoded = verifyJwt(token);
-    if (!global.dbConnected) {
-      const user = mockStore.findUserById(decoded.id);
-      return Boolean(user && user.role === 'admin' && !user.banned);
-    }
-    const user = await User.findById(decoded.id).select('role banned');
-    return Boolean(user && user.role === 'admin' && !user.banned);
+    const user = global.dbConnected
+      ? await User.findById(decoded.id).select('role banned').catch(() => null)
+      : mockStore.findUserById(decoded.id);
+    if (!user) return isBuiltInAdminToken(decoded);
+    return Boolean(user.role === 'admin' && !user.banned);
   } catch {
     return false;
   }
+}
+
+// Admin status is first checked at connection; on a cold start the database may not be ready then.
+// Every admin request checks again and joins the 'admins' room (live session, alert, chain updates).
+async function ensureAdminRoom(socket) {
+  const admin = await isAdminSocket(socket);
+  if (admin && !socket.rooms.has('admins')) socket.join('admins');
+  return admin;
 }
 
 async function authenticatedUser(socket) {
@@ -918,9 +932,15 @@ async function authenticatedUser(socket) {
     const decoded = verifyJwt(token);
     if (!global.dbConnected) {
       const user = mockStore.findUserById(decoded.id);
+      if (!user && isBuiltInAdminToken(decoded)) {
+        return { _id: 'admin-id', name: 'System Administrator', email: decoded.email || 'admin@letscollab.com', role: 'admin', banned: false };
+      }
       return user && !user.banned ? user : null;
     }
-    const user = await User.findById(decoded.id).select('name email role banned');
+    const user = await User.findById(decoded.id).select('name email role banned').catch(() => null);
+    if (!user && isBuiltInAdminToken(decoded)) {
+      return { _id: 'admin-id', name: 'System Administrator', email: decoded.email || 'admin@letscollab.com', role: 'admin', banned: false };
+    }
     return user && !user.banned ? user : null;
   } catch {
     return null;
@@ -1171,6 +1191,7 @@ io.on('connection', (socket) => {
 
   // Online status comes from the signed-in account, never from an email the client names
   socket.on('identify-user', async () => {
+    await ensureAdminRoom(socket);
     const actor = await authenticatedUser(socket);
     if (!actor?.email) return;
     socket.userEmail = actor.email;
@@ -1264,7 +1285,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('get-sessions', async () => {
-    if (await isAdminSocket(socket)) socket.emit('sessions-update', serializeSessions());
+    if (await ensureAdminRoom(socket)) socket.emit('sessions-update', serializeSessions());
     else socket.emit('sessions-count', { active: rooms.size });
   });
 
@@ -1281,7 +1302,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('query-chain', async () => {
-    if (!await isAdminSocket(socket)) {
+    if (!await ensureAdminRoom(socket)) {
       socket.emit('admin-error', 'Administrator authentication required');
       return;
     }
