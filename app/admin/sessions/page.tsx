@@ -1,8 +1,8 @@
 "use client"
 
-import { CSSProperties, useEffect, useRef, useState } from "react"
-import { useRouter } from "next/navigation"
+import { CSSProperties, useCallback, useEffect, useRef, useState } from "react"
 import { io, Socket } from "socket.io-client"
+import { signOutAdmin, useAdminSocket, useLiveSessions, useSocketEvent } from "@/components/admin/AdminData"
 import { Activity, Ban, Eye, Keyboard, MousePointer, Search, ShieldOff, Square, UserMinus, X, Zap } from "lucide-react"
 import { DataCard, RiskGauge, StatusBadge, TxHash } from "@/components/ircp/shared"
 import { AppearanceConfig } from "@/lib/appearance"
@@ -75,7 +75,7 @@ function ObserverModal({
   onClose: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--bg)]/80 p-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--bg)]/80 p-6">
       <div style={appearanceStyle(session.appearance)} className="w-full max-w-5xl overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
           <div>
@@ -119,8 +119,8 @@ function SessionDrawer({
   const PermissionIcon = permissionIcons[session.permission]
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-[var(--bg)]/90 backdrop-blur-sm" onClick={onClose} />
-      <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[500px] flex-col overflow-y-auto border-l border-[var(--border)]/60 bg-[var(--surface)]/80 backdrop-blur-3xl shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
+      <div className="fixed inset-0 z-40 bg-[var(--bg)]/90" onClick={onClose} />
+      <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[500px] flex-col overflow-y-auto border-l border-[var(--border)]/60 bg-[var(--surface)]/80 shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
         <div className="flex items-center justify-between border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/60">
           <div>
             <p className="font-mono text-xs uppercase tracking-wider text-[var(--text-dim)]">Room {session.id}</p>
@@ -130,11 +130,11 @@ function SessionDrawer({
         </div>
 
         <div className="grid grid-cols-2 gap-3 border-b border-[var(--border)]/60 p-6">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--elevated)]/60 p-3">
             <p className="text-[10px] uppercase text-[var(--text-dim)] tracking-wider">Mode</p>
             <p className="mt-1 text-sm font-medium text-[var(--text-primary)]">{session.mode === "supervised" ? "Supervised Session" : "Collaboration"}</p>
           </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--elevated)]/60 p-3">
             <p className="text-[10px] uppercase text-[var(--text-dim)] tracking-wider">Controller Access</p>
             <p className="mt-1 flex items-center gap-2 text-sm font-medium text-[var(--accent)] drop-shadow-[0_0_5px_rgba(0,255,255,0.5)]"><PermissionIcon className="h-4 w-4" />{session.permission}</p>
           </div>
@@ -153,8 +153,8 @@ function SessionDrawer({
             <button onClick={() => onObserve(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
               <Eye className="h-4 w-4" /> View Host Screen
             </button>
-            <a href={`/?room=${session.id}&role=admin`} target="_blank" rel="noreferrer" className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors">
-              <Eye className="h-4 w-4" /> Enter Invisible Session
+            <a href={`/session?room=${encodeURIComponent(session.id)}&role=admin`} target="_blank" rel="noreferrer" title="Opens the room in a new tab. The host and participants see that an administrator joined; a collaboration host must approve." className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors">
+              <Eye className="h-4 w-4" /> Join as Administrator
             </a>
           </div>
         </div>
@@ -171,11 +171,10 @@ function SessionDrawer({
             }} className="flex items-center gap-2 rounded-lg border border-[var(--amber)] p-3 text-sm text-[var(--amber)] hover:bg-[var(--amber)]/10 transition-colors">
               <Activity className="h-4 w-4" /> Send Warning
             </button>
-            <button disabled={!session.controllerCount} onClick={() => onAction("admin-remove-controller", session)} className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--text-primary)] disabled:opacity-40">
-              <UserMinus className="h-4 w-4 text-[var(--amber)]" /> Remove controller
-            </button>
-            <button disabled={!session.controllerCount} onClick={() => onAction("admin-ban-participant", session, "controller")} className="flex items-center gap-2 rounded-lg border border-[var(--red)]/30 p-3 text-sm text-[var(--red)] disabled:opacity-40">
-              <Ban className="h-4 w-4" /> Ban controller
+            <button disabled={!session.controllerCount} onClick={() => {
+              if (window.confirm(`Remove all ${session.controllerCount} controller(s) from room ${session.id}?`)) onAction("admin-remove-controller", session)
+            }} className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--text-primary)] disabled:opacity-40">
+              <UserMinus className="h-4 w-4 text-[var(--amber)]" /> Remove all controllers
             </button>
             <button onClick={() => onAction("admin-ban-participant", session, "host")} className="flex items-center gap-2 rounded-lg border border-[var(--red)]/30 p-3 text-sm text-[var(--red)]">
               <Ban className="h-4 w-4" /> Ban host
@@ -188,7 +187,7 @@ function SessionDrawer({
             <div className="mt-4 space-y-2">
               <p className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Controller Targets</p>
               {session.controllers.map(controller => (
-                <div key={controller.id} className="rounded-lg border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm hover:border-[var(--border)]/60 transition-colors">
+                <div key={controller.id} className="rounded-lg border border-[var(--border)] bg-[var(--elevated)]/60 p-3 hover:border-[var(--border)]/60 transition-colors">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-[var(--text-primary)]">{controller.name}</p>
@@ -219,7 +218,7 @@ function SessionDrawer({
                   ) : (
                     <div className="flex aspect-video w-full items-center justify-center bg-[var(--bg)]/80 text-[10px] text-[var(--text-dim)]">No Image</div>
                   )}
-                  <div className="bg-[var(--bg)]/70 backdrop-blur-sm p-2 font-mono text-[10px] text-[var(--text-secondary)]">
+                  <div className="bg-[var(--bg)]/70 p-2 font-mono text-[10px] text-[var(--text-secondary)]">
                     <p className="truncate text-[var(--red)]">{ev.label || 'Violation Detected'}</p>
                     <p>{ev.time}</p>
                   </div>
@@ -235,7 +234,7 @@ function SessionDrawer({
           <p className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]"><Activity className="h-3 w-3" /> Activity Timeline</p>
           <div className="space-y-3">
             {[...session.events].reverse().slice(0, 20).map((event, index) => (
-              <div key={index} className="rounded-lg border border-[var(--border)] bg-[var(--elevated)]/60 p-3 backdrop-blur-sm hover:border-[var(--border)]/60 transition-colors">
+              <div key={index} className="rounded-lg border border-[var(--border)] bg-[var(--elevated)]/60 p-3 hover:border-[var(--border)]/60 transition-colors">
                 <div className="flex items-center justify-between text-[10px] text-[var(--text-dim)]"><span>{event.type.toUpperCase()}</span><span>{event.time}</span></div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">{event.message}</p>
               </div>
@@ -264,16 +263,19 @@ function SessionDrawer({
 }
 
 export default function SessionsPage() {
-  const router = useRouter()
-  const [sessions, setSessions] = useState<LiveSession[]>([])
-  const [selected, setSelected] = useState<LiveSession | null>(null)
-  const [observed, setObserved] = useState<LiveSession | null>(null)
+  // The list arrives on the dashboard's shared connection, so it is there as soon as the page opens
+  const liveSessions = useLiveSessions() as LiveSession[] | null
+  const sessions = liveSessions || []
+  const { socket } = useAdminSocket()
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selected = sessions.find(session => session.id === selectedId) || null
+  const [observedSession, setObservedSession] = useState<LiveSession | null>(null)
+  const observed = observedSession ? sessions.find(session => session.id === observedSession.id) || observedSession : null
   const [observerStatus, setObserverStatus] = useState("")
   const [search, setSearch] = useState("")
   const [notice, setNotice] = useState("")
-  const socketRef = useRef<Socket | null>(null)
+  const observerSocketRef = useRef<Socket | null>(null)
   const observerPcRef = useRef<RTCPeerConnection | null>(null)
-  const observedRef = useRef<LiveSession | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const iceServersRef = useRef<RTCIceServer[]>([])
 
@@ -283,24 +285,30 @@ export default function SessionsPage() {
     })
   }, [])
 
-  useEffect(() => {
+  useSocketEvent("admin-action-complete", ({ message }: { message: string }) => setNotice(message))
+  useSocketEvent("admin-error", (message: string) => setNotice(message))
+
+  // The server ends an observation when its connection closes, so each observation gets its own
+  // connection: closing it (modal closed, page left) reliably stops the host from streaming to us.
+  const stopObserving = useCallback(() => {
+    observerPcRef.current?.close()
+    observerPcRef.current = null
+    observerSocketRef.current?.disconnect()
+    observerSocketRef.current = null
+  }, [])
+  useEffect(() => stopObserving, [stopObserving])
+
+  const startObservation = (request: (connection: Socket) => void) => {
+    stopObserving()
     const token = getStoredAuthToken()
-    if (!token) {
-      router.push('/admin/login')
-      return
-    }
-    const socket = io(getBackendUrl(), { auth: { token }, withCredentials: true })
-    socketRef.current = socket
-    socket.on("connect", () => socket.emit("get-sessions"))
-    socket.on("sessions-update", (data: LiveSession[]) => {
-      setSessions(data)
-      setSelected(previous => previous ? data.find(session => session.id === previous.id) || null : null)
-      setObserved(previous => previous ? data.find(session => session.id === previous.id) || previous : null)
-    })
-    socket.on("observation-pending", () => setObserverStatus("Waiting for host approval"))
-    socket.on("observation-denied", () => setObserverStatus("Host declined screen observation"))
-    socket.on("observation-granted", () => setObserverStatus("Connecting to host screen"))
-    socket.on("observer-offer", async ({ offer, hostId }: { offer: RTCSessionDescriptionInit; hostId: string }) => {
+    if (!token) return signOutAdmin()
+    const connection = io(getBackendUrl(), { auth: { token }, withCredentials: true })
+    observerSocketRef.current = connection
+    connection.on("observation-pending", () => setObserverStatus("Waiting for host approval"))
+    connection.on("observation-denied", () => setObserverStatus("Host declined screen observation"))
+    connection.on("observation-granted", () => setObserverStatus("Connecting to host screen"))
+    connection.on("admin-error", (message: string) => setObserverStatus(message))
+    connection.on("observer-offer", async ({ offer, hostId }: { offer: RTCSessionDescriptionInit; hostId: string }) => {
       observerPcRef.current?.close()
       const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
       observerPcRef.current = pc
@@ -309,23 +317,18 @@ export default function SessionsPage() {
         setObserverStatus("Live observation active")
       }
       pc.onicecandidate = event => {
-        if (event.candidate) socket.emit("observer-ice-candidate", { targetId: hostId, candidate: event.candidate })
+        if (event.candidate) connection.emit("observer-ice-candidate", { targetId: hostId, candidate: event.candidate })
       }
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
-      socket.emit("observer-answer", { hostId, answer })
+      connection.emit("observer-answer", { hostId, answer })
     })
-    socket.on("observer-ice-candidate", async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
+    connection.on("observer-ice-candidate", async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
       try { await observerPcRef.current?.addIceCandidate(new RTCIceCandidate(candidate)) } catch { }
     })
-    socket.on("admin-action-complete", ({ message }: { message: string }) => setNotice(message))
-    socket.on("admin-error", (message: string) => setNotice(message))
-    return () => {
-      observerPcRef.current?.close()
-      socket.disconnect()
-    }
-  }, [router])
+    connection.once("connect", () => request(connection))
+  }
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -339,37 +342,39 @@ export default function SessionsPage() {
                     setNotice('Code Black cancelled: a reason of at least 5 characters is required.')
                     return
                 }
-                socketRef.current?.emit('secret-delete-recordings', { roomId: selected.id, confirmCode, reason: reason.trim() });
+                socket?.emit('secret-delete-recordings', { roomId: selected.id, confirmCode, reason: reason.trim() });
                 setNotice('Code Black requested…');
             }
         }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selected]);
+  }, [selected, socket]);
 
   const observe = (session: LiveSession) => {
-    observedRef.current = session
-    setObserved(session)
+    setObservedSession(session)
     setObserverStatus(session.mode === "collaboration" ? "Requesting host approval" : "Entering visible observation")
-    socketRef.current?.emit("request-observation", session.id)
+    startObservation(connection => connection.emit("request-observation", session.id))
   }
 
   const observeController = (session: LiveSession, controllerId: string) => {
-    observedRef.current = session
-    setObserved(session)
+    setObservedSession(session)
     setObserverStatus("Requesting controller feed")
-    socketRef.current?.emit("request-controller-observation", { roomId: session.id, targetId: controllerId })
+    startObservation(connection => connection.emit("request-controller-observation", { roomId: session.id, targetId: controllerId }))
   }
 
   const action = (event: string, session: LiveSession, target?: "host" | "controller", targetId?: string) => {
     const destructive = event === "kill-session" || event === "admin-ban-participant"
     if (destructive && !window.confirm(`Confirm ${event === "kill-session" ? "session termination" : `ban of the ${target}`}?`)) return
-    if (event === "admin-ban-participant") socketRef.current?.emit(event, { roomId: session.id, target, targetId })
-    else if (event === "admin-remove-controller") socketRef.current?.emit(event, { roomId: session.id, targetId })
-    else if (event === "admin-revoke-access") socketRef.current?.emit(event, session.id, targetId)
-    else if (event === "admin-warn-user") socketRef.current?.emit(event, { roomId: session.id, message: targetId }) // targetId carries message
-    else socketRef.current?.emit(event, session.id)
+    if (!socket?.connected) {
+      setNotice("Not connected to the server; try again in a moment.")
+      return
+    }
+    if (event === "admin-ban-participant") socket.emit(event, { roomId: session.id, target, targetId })
+    else if (event === "admin-remove-controller") socket.emit(event, { roomId: session.id, targetId })
+    else if (event === "admin-revoke-access") socket.emit(event, session.id, targetId)
+    else if (event === "admin-warn-user") socket.emit(event, { roomId: session.id, message: targetId }) // targetId carries message
+    else socket.emit(event, session.id)
     setNotice(event === "admin-revoke-access" ? "Controller access changed to View Only." : "Action submitted.")
   }
 
@@ -397,7 +402,7 @@ export default function SessionsPage() {
         <DataCard label="High Risk" value={sessions.filter(session => session.riskScore >= 70).length.toString()} color="red" />
         <DataCard label="Observers" value={sessions.reduce((total, session) => total + session.observerCount, 0).toString()} />
       </div>
-      <div className="overflow-hidden rounded-2xl border border-[var(--border)]/60 bg-[var(--surface)]/30 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
+      <div className="overflow-hidden rounded-2xl border border-[var(--border)]/60 bg-[var(--surface)]/70 shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
         <table className="w-full">
           <thead>
             <tr className="border-b border-[var(--border)]/60 bg-[var(--elevated)]/60">
@@ -408,7 +413,7 @@ export default function SessionsPage() {
             {filtered.map(session => {
               const PermissionIcon = permissionIcons[session.permission]
               return (
-                <tr key={session.id} onClick={() => setSelected(session)} className="cursor-pointer border-b border-[var(--border)] transition-colors hover:bg-[var(--elevated)]">
+                <tr key={session.id} onClick={() => setSelectedId(session.id)} className="cursor-pointer border-b border-[var(--border)] transition-colors hover:bg-[var(--elevated)]">
                   <td className="px-5 py-4 font-mono text-sm text-[var(--accent)] font-semibold">{session.id}</td>
                   <td className="px-5 py-4 text-sm text-[var(--text-primary)] font-medium">{session.host}</td>
                   <td className="px-5 py-4 text-xs text-[var(--text-secondary)]">{session.mode === "supervised" ? "Supervised" : "Collaboration"}</td>
@@ -422,11 +427,11 @@ export default function SessionsPage() {
             })}
           </tbody>
         </table>
-        {!filtered.length && <p className="p-16 text-center text-sm font-mono text-[var(--text-dim)]">No active sessions found.</p>}
+        {!filtered.length && <p className="p-16 text-center text-sm font-mono text-[var(--text-dim)]">{liveSessions === null ? "Loading sessions…" : "No active sessions found."}</p>}
       </div>
       <SessionDrawer
         session={selected}
-        onClose={() => setSelected(null)}
+        onClose={() => setSelectedId(null)}
         onObserve={observe}
         onObserveController={observeController}
         onAction={action}
@@ -437,9 +442,9 @@ export default function SessionsPage() {
           status={observerStatus}
           videoRef={videoRef}
           onClose={() => {
-            socketRef.current?.emit("end-controller-observation")
-            observerPcRef.current?.close()
-            setObserved(null)
+            observerSocketRef.current?.emit("end-controller-observation")
+            stopObserving()
+            setObservedSession(null)
             setObserverStatus("")
           }}
         />

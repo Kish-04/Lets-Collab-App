@@ -594,13 +594,19 @@ export function PermissionTag({
 // Transaction Hash Display
 export function TxHash({ 
   hash,
+  explorerUrl,
   className 
 }: { 
   hash: string
+  // Where the explorer button goes; by default a transaction page, and no button for something
+  // that is not a transaction hash (an off-chain placeholder, "Archived / Unavailable", ...)
+  explorerUrl?: string | null
   className?: string 
 }) {
   const [copied, setCopied] = useState(false)
-  const truncated = `${hash.slice(0, 6)}...${hash.slice(-4)}`
+  const isTxHash = /^0x[0-9a-fA-F]{64}$/.test(hash)
+  const truncated = hash.length > 14 ? `${hash.slice(0, 6)}...${hash.slice(-4)}` : hash
+  const link = explorerUrl === undefined ? (isTxHash ? explorerTxUrl(hash) : null) : explorerUrl
   
   const handleCopy = async () => {
     if (await copyToClipboard(hash)) {
@@ -619,15 +625,17 @@ export function TxHash({
       >
         <Copy className="w-3 h-3" />
       </button>
-      <a 
-        href={explorerTxUrl(hash)}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="p-0.5 text-[var(--text-dim)] hover:text-[var(--accent)] transition-colors"
-        aria-label="View on block explorer"
-      >
-        <ExternalLink className="w-3 h-3" />
-      </a>
+      {link && (
+        <a 
+          href={link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="p-0.5 text-[var(--text-dim)] hover:text-[var(--accent)] transition-colors"
+          aria-label="View on block explorer"
+        >
+          <ExternalLink className="w-3 h-3" />
+        </a>
+      )}
       {copied && (
         <span className="text-[var(--emerald)] text-[10px] animate-count-up">Copied!</span>
       )}

@@ -115,7 +115,8 @@ function SessionContent() {
 
     // ── Setup state ───────────────────────────────────────────────────────────
     const [setupMode, setSetupMode] = useState<"choose" | "join" | null>(
-        initialRoom ? "join" : createDirect ? null : (joinDirect ? "join" : searchParams.get("role") === "admin" ? null : "choose")
+        // An admin opened from the dashboard joins the given room straight away
+        searchParams.get("role") === "admin" ? null : initialRoom ? "join" : createDirect ? null : (joinDirect ? "join" : "choose")
     )
     const [joinInput, setJoinInput] = useState(initialRoom || "")
     const [setupError, setSetupError] = useState("")

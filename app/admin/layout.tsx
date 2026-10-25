@@ -1,9 +1,11 @@
 "use client"
 
+import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
+import { AdminDataProvider, SystemStatus } from "@/components/admin/AdminData"
 import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut, Scale, LayoutGrid } from "lucide-react"
-import { BrandMark, StatusBadge } from "@/components/ircp/shared"
+import { BrandMark } from "@/components/ircp/shared"
 import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 
 const navItems = [
@@ -75,13 +77,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
+    <AdminDataProvider>
     <div className="min-h-screen bg-[var(--bg)] relative overflow-hidden flex font-sans text-[var(--text-primary)]">
       {/* Background Orbs */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[var(--accent)]/10 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[var(--violet)]/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-[radial-gradient(closest-side,rgba(0,212,255,0.10),transparent)] pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-[radial-gradient(closest-side,rgba(139,92,246,0.10),transparent)] pointer-events-none" />
 
       {/* Floating Glass Sidebar */}
-      <aside className="w-[240px] m-4 rounded-2xl border border-[var(--border)]/60 bg-[var(--surface)]/30 backdrop-blur-xl flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.4)] z-10">
+      <aside className="w-[240px] m-4 rounded-2xl border border-[var(--border)]/60 bg-[var(--surface)]/80 flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.4)] z-10">
         {/* Logo */}
         <div className="p-5 border-b border-[var(--border)]">
           <div className="flex items-center gap-3">
@@ -97,7 +100,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Status */}
         <div className="p-4 border-b border-[var(--border)]">
-          <StatusBadge status="live" label="System Online" />
+          <SystemStatus />
         </div>
 
         {/* Navigation */}
@@ -107,7 +110,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             const isActive = pathname === item.href ||
               (item.href !== "/admin" && pathname.startsWith(item.href))
             return (
-              <button key={item.href} onClick={() => router.push(item.href)}
+              <Link key={item.href} href={item.href} prefetch
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-300",
                   isActive
@@ -116,7 +120,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 )}>
                 <Icon className={cn("w-4 h-4 transition-colors", isActive ? "text-[var(--accent)]" : "text-[var(--text-dim)]")} />
                 <span className="font-medium">{item.label}</span>
-              </button>
+              </Link>
             )
           })}
         </nav>
@@ -143,11 +147,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       {/* Main Content Area */}
       <main className="flex-1 h-screen overflow-y-auto z-0 p-4 pl-0">
-        <div className="w-full h-full rounded-2xl bg-[var(--surface)]/20 border border-[var(--border)]/60 backdrop-blur-md overflow-y-auto">
+        <div className="w-full h-full rounded-2xl bg-[var(--surface)]/60 border border-[var(--border)]/60 overflow-y-auto">
           {children}
         </div>
       </main>
     </div>
+    </AdminDataProvider>
   )
 }
 

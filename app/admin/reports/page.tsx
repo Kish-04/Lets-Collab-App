@@ -1,10 +1,10 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useState } from "react"
+import { useAdminReports } from "@/components/admin/AdminData"
 import { FileText, Download, RefreshCw, Users, Shield, Clock, Link2 } from "lucide-react"
 import { DataCard } from "@/components/ircp/shared"
-import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 
 type UserActivity = {
   name: string; email: string; role: string; sessionCount: number
@@ -17,6 +17,7 @@ type AlertEntry = {
 type ReportData = {
   userActivity: UserActivity[]
   alerts: AlertEntry[]
+  sessionHistory?: unknown[]
   generatedAt: string
   mock?: boolean
 }
@@ -76,7 +77,10 @@ function downloadPDF(title: string, headers: string[], rows: string[][], filenam
     </table>
     </body></html>`
   const win = window.open('', '_blank')
-  if (!win) return
+  if (!win) {
+    window.alert('Your browser blocked the print window. Allow pop-ups for this site, then try again (choose "Save as PDF" in the print dialog).')
+    return
+  }
   win.document.write(html)
   win.document.close()
   win.focus()
@@ -93,7 +97,7 @@ function ReportCard({
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl overflow-hidden hover:border-[var(--border-bright)] transition-all">
+    <div className="bg-[var(--surface)]/70 border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl overflow-hidden hover:border-[var(--border-bright)] transition-all">
       <div className="p-6 flex items-start justify-between bg-[var(--elevated)]/60">
         <div className="flex items-start gap-4">
           <div className={cn("p-3 rounded-xl border shadow-inner", `bg-[var(--${color})]/20 border-[var(--${color})]/30`)}>
@@ -115,7 +119,7 @@ function ReportCard({
               { label: "PDF", fn: onPDF, color: "var(--amber)" },
             ].map(btn => (
               <button key={btn.label} onClick={btn.fn}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/80 backdrop-blur-sm text-[10px] font-mono font-bold transition-all hover:border-current hover:bg-[var(--bg)]/80 shadow-sm"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/80 text-[10px] font-mono font-bold transition-all hover:border-current hover:bg-[var(--bg)]/80 shadow-sm"
                 style={{ color: btn.color }}>
                 <Download className="w-3.5 h-3.5 drop-shadow-[0_0_3px_currentColor]" />
                 {btn.label}
@@ -140,28 +144,15 @@ function ReportCard({
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ReportsPage() {
-  const router = useRouter()
-  const [data, setData] = useState<ReportData | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    if (!getStoredAuthToken()) router.push('/admin/login')
-  }, [router])
-
+  // Shared, cached report (components/admin/AdminData); "Regenerate All" asks the server again
+  const { data: shared, refresh } = useAdminReports()
+  const data = shared as ReportData | null
+  const [regenerating, setRegenerating] = useState(false)
+  const loading = !data
   const fetchReports = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`${getBackendUrl()}/api/admin/reports`, {
-        credentials: 'include',
-        headers: getAuthHeaders(),
-      })
-      const json = await res.json()
-      if (json.success) setData(json)
-    } catch (e) { console.error(e) }
-    finally { setLoading(false) }
+    setRegenerating(true)
+    try { await refresh() } finally { setRegenerating(false) }
   }
-
-  useEffect(() => { fetchReports() }, [])
 
   if (loading) return (
     <div className="p-6 flex flex-col items-center justify-center h-[60vh] gap-4">
@@ -212,7 +203,7 @@ export default function ReportsPage() {
     alerts,
     summary: {
       totalUsers: userActivity.length,
-      totalSessions: userActivity.reduce((s, u) => s + u.sessionCount, 0),
+      totalSessions: data.sessionHistory?.length ?? 0,
       totalAlerts: alerts.length,
       totalPenalty: alerts.reduce((s, a) => s + a.penalty, 0),
       blockedUsers: userActivity.filter(u => u.banned).length,
@@ -239,7 +230,7 @@ export default function ReportsPage() {
     'full_activity.pdf'
   )
 
-  const totalSessions = userActivity.reduce((s, u) => s + u.sessionCount, 0)
+  const totalSessions = data.sessionHistory?.length ?? 0
   const totalPenalty = alerts.reduce((s, a) => s + a.penalty, 0)
 
   return (
@@ -254,10 +245,10 @@ export default function ReportsPage() {
             </p>
           )}
         </div>
-        <button onClick={fetchReports}
+        <button onClick={fetchReports} disabled={regenerating}
           className="flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-black rounded-lg text-sm font-bold shadow-[0_0_15px_rgba(0,255,255,0.4)] hover:shadow-[0_0_25px_rgba(0,255,255,0.6)] hover:-translate-y-0.5 transition-all">
-          <RefreshCw className="w-4 h-4" />
-          Regenerate All
+          <RefreshCw className={cn("w-4 h-4", regenerating && "animate-spin")} />
+          {regenerating ? "Regenerating…" : "Regenerate All"}
         </button>
       </div>
 
@@ -353,7 +344,7 @@ export default function ReportsPage() {
               { label: 'Blocked Users', value: userActivity.filter(u => u.banned).length },
               { label: 'Verified Users', value: userActivity.filter(u => u.isVerified).length },
             ].map(s => (
-              <div key={s.label} className="p-4 bg-[var(--elevated)]/60 border border-[var(--border)] rounded-xl backdrop-blur-sm shadow-inner hover:bg-[var(--elevated)]/80 transition-colors">
+              <div key={s.label} className="p-4 bg-[var(--elevated)]/60 border border-[var(--border)] rounded-xl shadow-inner hover:bg-[var(--elevated)]/80 transition-colors">
                 <p className="font-mono text-[10px] text-[var(--text-dim)] uppercase tracking-wider flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-white/20"></span> {s.label}
                 </p>

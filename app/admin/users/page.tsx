@@ -1,13 +1,12 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { createPortal } from "react-dom"
-import { useRouter } from "next/navigation"
-import { io, Socket } from "socket.io-client"
+import { signOutAdmin, useAdminReports } from "@/components/admin/AdminData"
 import { Search, X, Shield, ShieldOff, UserCheck, UserX, Clock, ScanFace } from "lucide-react"
 import { DataCard, GlowButton, DangerButton } from "@/components/ircp/shared"
 import { UserActivityHeatmap } from "@/components/ircp/UserActivityHeatmap"
-import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+import { cn, getAuthHeaders, getBackendUrl } from "@/lib/utils"
 
 type AppUser = {
   _id: string
@@ -58,8 +57,8 @@ function UserDetailDrawer({
   return createPortal(
     <>
       <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
-      <div className="fixed inset-0 bg-[var(--bg)]/90 backdrop-blur-sm z-40" onClick={onClose} />
-      <div className="fixed top-0 right-0 h-full w-[420px] bg-[var(--surface)]/80 backdrop-blur-3xl border-l border-[var(--border)]/60 shadow-[-10px_0_30px_rgba(0,0,0,0.5)] z-50 overflow-y-auto"
+      <div className="fixed inset-0 bg-[var(--bg)]/90 z-40" onClick={onClose} />
+      <div className="fixed top-0 right-0 h-full w-[420px] bg-[var(--surface)]/80 border-l border-[var(--border)]/60 shadow-[-10px_0_30px_rgba(0,0,0,0.5)] z-50 overflow-y-auto"
         style={{ animation: "slideInRight 0.2s ease-out" }}>
 
         <div className="flex items-center justify-between p-6 border-b border-[var(--border)]/60 bg-[var(--elevated)]/60">
@@ -142,28 +141,14 @@ function UserDetailDrawer({
 }
 
 export default function UsersPage() {
-  const router = useRouter()
   const [users, setUsers] = useState<AppUser[]>([])
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null)
-  const [allSessions, setAllSessions] = useState<any[]>([])
+  // Session history for the activity heatmap comes from the shared, cached report
+  const { data: report } = useAdminReports()
+  const allSessions = report?.sessionHistory || []
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<"all" | "online" | "banned" | "unverified">("all")
-  const socketRef = useRef<Socket | null>(null)
-
-  useEffect(() => {
-    if (!getStoredAuthToken()) router.push('/admin/login')
-  }, [router])
-
-  useEffect(() => {
-    const token = getStoredAuthToken()
-    if (!token) return
-    const socket = io(getBackendUrl(), { auth: { token }, withCredentials: true })
-    socketRef.current = socket
-    const email = localStorage.getItem('ircp_email')
-    if (email) socket.emit('identify-user', email)
-    return () => { socket.disconnect() }
-  }, [])
 
   const fetchUsers = async () => {
     try {
@@ -171,19 +156,11 @@ export default function UsersPage() {
         credentials: 'include',
         headers: getAuthHeaders(),
       })
+      if (res.status === 401 || res.status === 403) return signOutAdmin()
       const data = await res.json()
       if (data.success) {
         setUsers(data.users)
         setSelectedUser(prev => prev ? (data.users.find((u: AppUser) => u._id === prev._id) || null) : null)
-      }
-      
-      const reportsRes = await fetch(`${getBackendUrl()}/api/admin/reports`, {
-        credentials: 'include',
-        headers: getAuthHeaders(),
-      })
-      const reportsData = await reportsRes.json()
-      if (reportsData.success) {
-        setAllSessions(reportsData.sessionHistory || [])
       }
     } catch (e) {
       console.error(e)
@@ -192,9 +169,13 @@ export default function UsersPage() {
     }
   }
 
+  // Online status and new sign-ups change often enough to refresh, but not every 10 seconds,
+  // and not while the tab is in the background
   useEffect(() => {
-    fetchUsers()
-    const id = setInterval(fetchUsers, 10000)
+    void fetchUsers()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchUsers()
+    }, 30000)
     return () => clearInterval(id)
   }, [])
 
@@ -281,7 +262,7 @@ export default function UsersPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-dim)]" />
           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search by name or email…"
-            className="w-72 pl-10 pr-4 py-2 bg-[var(--elevated)]/80 border border-[var(--border)]/60 rounded-xl text-sm text-[var(--text-primary)] placeholder:text-[var(--text-dim)] focus:border-[var(--accent)] outline-none backdrop-blur-sm transition-colors shadow-inner" />
+            className="w-72 pl-10 pr-4 py-2 bg-[var(--elevated)]/80 border border-[var(--border)]/60 rounded-xl text-sm text-[var(--text-primary)] placeholder:text-[var(--text-dim)] focus:border-[var(--accent)] outline-none transition-colors shadow-inner" />
         </div>
       </div>
 
@@ -292,7 +273,7 @@ export default function UsersPage() {
         <DataCard label="Admins" value={adminCount.toString()} color="violet" />
       </div>
 
-      <div className="flex gap-1 mb-4 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-xl p-1 w-fit shadow-[0_4px_16px_rgba(0,0,0,0.2)]">
+      <div className="flex gap-1 mb-4 bg-[var(--surface)]/70 border border-[var(--border)]/60 rounded-xl p-1 w-fit shadow-[0_4px_16px_rgba(0,0,0,0.2)]">
         {filterTabs.map(tab => (
           <button key={tab.key} onClick={() => setFilter(tab.key)}
             className={cn(
@@ -310,7 +291,7 @@ export default function UsersPage() {
         ))}
       </div>
 
-      <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
+      <div className="bg-[var(--surface)]/70 border border-[var(--border)]/60 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
         {loading ? (
           <div className="p-16 text-center text-[var(--text-dim)] font-mono text-sm">Loading users…</div>
         ) : filtered.length === 0 ? (

@@ -1,11 +1,10 @@
 "use client"
 
-import { useState, useEffect, useRef, Fragment } from "react"
-import { useRouter } from "next/navigation"
-import { io, Socket } from "socket.io-client"
+import { useState, Fragment } from "react"
+import { useAdminSocket, useOnAdminConnect, useSocketEvent } from "@/components/admin/AdminData"
 import { Link2, ChevronDown, RefreshCw, Wifi, WifiOff } from "lucide-react"
 import { DataCard, TxHash } from "@/components/ircp/shared"
-import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ChainLog = {
@@ -26,6 +25,7 @@ type ChainData = {
   contractAddress: string | null
   currentBlock?: number
   error?: string
+  chain?: { chainId: number; name: string; explorer: string | null; explorerTxBaseUrl: string | null }
 }
 
 // ── Event type styling ────────────────────────────────────────────────────────
@@ -39,6 +39,18 @@ const eventStyles: Record<string, { bg: string; text: string; shadow: string }> 
   SESSION_END: { bg: "bg-[var(--elevated)]/80", text: "text-[var(--text-primary)]/", shadow: "" },
   ANTICHEAT_ALERT: { bg: "bg-[var(--amber)]/20", text: "text-[var(--amber)]", shadow: "drop-shadow-[0_0_5px_rgba(251,191,36,0.5)]" },
 }
+// Names the server writes (server/index.js anchorEvent) share the styles above
+Object.assign(eventStyles, {
+  USER_LEFT: eventStyles.SESSION_END,
+  ACCESS_REVOKED: eventStyles.PERMISSION_CHANGE,
+  ADMIN_WARNING: eventStyles.ANTICHEAT_ALERT,
+  SESSION_TERMINATED: eventStyles.KILL_SWITCH,
+  SESSION_ARCHIVED: eventStyles.SESSION_END,
+  AI_ANTI_CHEAT_ALERT: eventStyles.ANTICHEAT_ALERT,
+  IDENTITY_MISMATCH: eventStyles.KILL_SWITCH,
+  EVIDENCE_PURGED: eventStyles.KILL_SWITCH,
+  FEDERATED_AGGREGATE: eventStyles.PERMISSION_CHANGE,
+})
 function getEventStyle(type: string) {
   return eventStyles[type] || { bg: "bg-[var(--elevated)]/80", text: "text-[var(--text-primary)]/", shadow: "" }
 }
@@ -55,9 +67,7 @@ function formatDate(unix: number): string {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function BlockchainPage() {
-  const router = useRouter()
-  const socketRef = useRef<Socket | null>(null)
-
+  const { socket } = useAdminSocket()
   const [chainData, setChainData] = useState<ChainData | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -65,42 +75,30 @@ export default function BlockchainPage() {
   const [filterType, setFilterType] = useState<string>("all")
   const [lastSynced, setLastSynced] = useState<string>("")
 
-  // Auth guard
-  useEffect(() => {
-    const token = getStoredAuthToken()
-    if (!token) router.push('/admin/login')
-  }, [router])
+  // Ask for the chain on the dashboard's shared connection (again after a reconnect)
+  useOnAdminConnect(next => next.emit('query-chain'))
 
-  // Connect and fetch
-  useEffect(() => {
-    const token = getStoredAuthToken()
-    if (!token) return
-    const socket = io(getBackendUrl(), { auth: { token }, withCredentials: true })
-    socketRef.current = socket
+  // Not allowed or chain query failed: say so instead of "Querying blockchain…" forever
+  useSocketEvent('admin-error', (message: string) => {
+    setChainData(prev => ({ ...(prev || { active: false, logs: [], totalCount: 0, contractAddress: null }), error: String(message) }))
+    setLoading(false)
+    setSyncing(false)
+  })
 
-    socket.on('connect', () => {
-      socket.emit('query-chain')
-    })
+  useSocketEvent('chain-data', (data: ChainData) => {
+    setChainData(data)
+    setLoading(false)
+    setSyncing(false)
+    setLastSynced(new Date().toLocaleTimeString('en-US', { hour12: false }))
+  })
 
-    socket.on('chain-data', (data: ChainData) => {
-      setChainData(data)
-      setLoading(false)
-      setSyncing(false)
-      setLastSynced(new Date().toLocaleTimeString('en-US', { hour12: false }))
-    })
-
-    // Also update when new chain-log events arrive (from host activity)
-    socket.on('chain-log', () => {
-      socket.emit('query-chain') // re-fetch after new tx
-    })
-
-    return () => { socket.disconnect() }
-  }, [])
+  // A new audit transaction from host activity: fetch the chain again
+  useSocketEvent('chain-log', () => socket?.emit('query-chain'))
 
   const handleSync = () => {
     if (syncing) return
     setSyncing(true)
-    socketRef.current?.emit('query-chain')
+    socket?.emit('query-chain')
   }
 
   // ── Derived data ────────────────────────────────────────────────────────
@@ -123,7 +121,7 @@ export default function BlockchainPage() {
             Blockchain Audit Trail
           </h1>
           <span className="px-2 py-1 rounded-md bg-[var(--violet)]/20 border border-[var(--violet)]/40 font-mono text-xs text-[var(--violet)] drop-shadow-[0_0_5px_rgba(139,92,246,0.3)] shadow-[0_0_15px_rgba(139,92,246,0.2)_inset]">
-            SEPOLIA TESTNET
+            {chainData?.chain?.name ? chainData.chain.name.toUpperCase() : loading ? "…" : "NO CHAIN"}
           </span>
           {/* Live / offline indicator */}
           {chainData && (
@@ -142,7 +140,7 @@ export default function BlockchainPage() {
           onClick={handleSync}
           disabled={syncing || loading}
           className={cn(
-            "flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/60 backdrop-blur-sm text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-bright)]/80 transition-all",
+            "flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border)]/60 bg-[var(--elevated)]/60 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-bright)]/80 transition-all",
             (syncing || loading) && "opacity-50 cursor-not-allowed"
           )}
         >
@@ -162,14 +160,14 @@ export default function BlockchainPage() {
           label="Current Block"
           value={loading ? "…" : chainData?.currentBlock ? `#${chainData.currentBlock.toLocaleString()}` : "—"}
         />
-        <div className="p-5 bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl shadow-[0_4px_16px_rgba(0,0,0,0.1)] hover:bg-[var(--surface)]/40 hover:border-[var(--border-bright)] transition-all duration-300">
+        <div className="p-5 bg-[var(--surface)]/70 border border-[var(--border)]/60 rounded-2xl shadow-[0_4px_16px_rgba(0,0,0,0.1)] hover:bg-[var(--surface)]/70 hover:border-[var(--border-bright)] transition-all duration-300">
           <span className="block font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)] mb-2">
             Contract Address
           </span>
           {loading ? (
             <span className="text-xs text-[var(--text-dim)] font-mono animate-pulse">Loading…</span>
           ) : chainData?.contractAddress ? (
-            <TxHash hash={chainData.contractAddress} />
+            <TxHash hash={chainData.contractAddress} explorerUrl={chainData.chain?.explorer ? `${chainData.chain.explorer}/address/${chainData.contractAddress}` : null} />
           ) : (
             <span className="text-xs text-[var(--amber)] font-mono">Not deployed</span>
           )}
@@ -184,14 +182,14 @@ export default function BlockchainPage() {
 
       {/* Mock mode warning */}
       {!loading && chainData && !chainData.active && (
-        <div className="mb-6 px-4 py-3 rounded-xl border border-[var(--amber)]/40 bg-[var(--amber)]/10 text-sm text-[var(--amber)] font-mono backdrop-blur-md shadow-[0_0_15px_rgba(251,191,36,0.15)]">
-          ⚠ Hardhat node not detected — showing mock tx hashes. Start Hardhat to enable real on-chain logging.
+        <div className="mb-6 px-4 py-3 rounded-xl border border-[var(--amber)]/40 bg-[var(--amber)]/10 text-sm text-[var(--amber)] font-mono shadow-[0_0_15px_rgba(251,191,36,0.15)]">
+          ⚠ The audit chain is not reachable from the server. New events are kept off-chain until it is, and no on-chain history can be shown.
         </div>
       )}
 
       {/* Error banner */}
       {chainData?.error && (
-        <div className="mb-6 px-4 py-3 rounded-xl border border-[var(--red)]/40 bg-[var(--red)]/10 text-sm text-[var(--red)] font-mono backdrop-blur-md shadow-[0_0_15px_rgba(244,63,94,0.15)]">
+        <div className="mb-6 px-4 py-3 rounded-xl border border-[var(--red)]/40 bg-[var(--red)]/10 text-sm text-[var(--red)] font-mono shadow-[0_0_15px_rgba(244,63,94,0.15)]">
           Error: {chainData.error}
         </div>
       )}
@@ -232,7 +230,7 @@ export default function BlockchainPage() {
       )}
 
       {/* Logs Table */}
-      <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
+      <div className="bg-[var(--surface)]/70 border border-[var(--border)]/60 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
         {loading ? (
           <div className="p-16 text-center">
             <RefreshCw className="w-8 h-8 text-[var(--accent)] animate-spin mx-auto mb-4 drop-shadow-[0_0_10px_rgba(0,255,255,0.5)]" />
@@ -270,7 +268,7 @@ export default function BlockchainPage() {
                         {log.blockNumber ? log.blockNumber.toLocaleString() : "—"}
                       </td>
                       <td className="px-5 py-4">
-                        <TxHash hash={log.txHash} />
+                        <TxHash hash={log.txHash} explorerUrl={/^0x[0-9a-fA-F]{64}$/.test(log.txHash) && chainData?.chain?.explorerTxBaseUrl ? `${chainData.chain.explorerTxBaseUrl}${log.txHash}` : null} />
                       </td>
                       <td className="px-5 py-4 font-mono text-sm text-[var(--text-primary)] font-medium">
                         {log.sessionId
@@ -296,7 +294,7 @@ export default function BlockchainPage() {
 
                     {/* Expanded row — full log details */}
                     {isExpanded && (
-                      <tr className="border-b border-[var(--border)]/60 bg-[var(--bg)]/70 backdrop-blur-md shadow-inner">
+                      <tr className="border-b border-[var(--border)]/60 bg-[var(--bg)]/70 shadow-inner">
                         <td colSpan={6} className="p-6">
                           <div className="grid grid-cols-2 gap-6">
                             {/* Left: structured fields */}
@@ -316,7 +314,7 @@ export default function BlockchainPage() {
                             </div>
 
                             {/* Right: data hash */}
-                            <div className="p-4 bg-[var(--surface)]/30 rounded-xl border border-[var(--border)]/60 backdrop-blur-sm shadow-[0_4px_16px_rgba(0,0,0,0.2)]">
+                            <div className="p-4 bg-[var(--surface)]/70 rounded-xl border border-[var(--border)]/60 shadow-[0_4px_16px_rgba(0,0,0,0.2)]">
                               <p className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)] mb-3 flex items-center gap-2">
                                 <Link2 className="w-3 h-3 text-[var(--violet)]" /> Data Hash (keccak256)
                               </p>
@@ -341,7 +339,9 @@ export default function BlockchainPage() {
 
       {/* Footer */}
       <p className="text-center font-mono text-[10px] text-[var(--text-dim)] mt-6 bg-[var(--elevated)]/60 inline-block px-4 py-2 rounded-full border border-[var(--border)] shadow-inner">
-        All session events are hashed with keccak256 and permanently recorded on-chain. Data cannot be altered.
+        {chainData?.active
+          ? "Session events are hashed with keccak256 and written to the audit contract; a written entry cannot be changed."
+          : "Not connected to the audit chain: events are not being written on-chain right now."}
       </p>
     </div>
   )

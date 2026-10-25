@@ -85,7 +85,7 @@ jobs:
       - name: Build Next.js (pre-compile so e2e uses next start, not next dev)
         run: npx next build
       - name: Run e2e tests
-        run: xvfb-run --auto-servernum node --test --test-timeout=700000 tests/e2e/session.e2e.mjs
+        run: xvfb-run --auto-servernum node --test --test-concurrency=1 --test-timeout=700000 tests/e2e/session.e2e.mjs tests/e2e/admin.e2e.mjs
       # Not blocking yet: on the 2-CPU runner the candidate page (full proctoring AI stack) can stall
       # long enough to drop its connection. Its failures print the candidate's camera and call state.
       - name: Run exam media server e2e test (non-blocking)

@@ -10,6 +10,7 @@ type QueueItem = {
   event?: string
   message: string
   penalty: number
+  evidenceUrl?: string | null
   createdAt?: string
   candidate: string | null
   reviewStatus: string
@@ -109,7 +110,15 @@ export default function ReviewQueuePage() {
                     {item.candidate || "unknown candidate"} · room {item.room} · {item.event || "alert"} · {when(item.createdAt)}
                   </p>
                 </div>
-                <span className="rounded bg-[var(--red)]/15 px-2 py-0.5 font-mono text-xs text-[var(--red)]">−{item.penalty} risk</span>
+                <span className="flex items-center gap-2">
+                  {item.evidenceUrl && (
+                    <a href={item.evidenceUrl.startsWith("http") ? item.evidenceUrl : `${getBackendUrl()}${item.evidenceUrl}`} target="_blank" rel="noreferrer"
+                      className="rounded border border-[var(--border)] px-2 py-0.5 font-mono text-xs text-[var(--accent)] hover:bg-[var(--accent)]/10">
+                      Evidence
+                    </a>
+                  )}
+                  <span className="rounded bg-[var(--red)]/15 px-2 py-0.5 font-mono text-xs text-[var(--red)]">+{item.penalty} risk</span>
+                </span>
               </div>
 
               {appealOpen && (

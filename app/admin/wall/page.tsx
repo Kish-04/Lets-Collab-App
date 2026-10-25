@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { io, Socket } from "socket.io-client"
+import { io } from "socket.io-client"
+import { useLiveSessions } from "@/components/admin/AdminData"
 import { LayoutGrid } from "lucide-react"
 import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 import { createViewer, isSfuDisabled, type RemoteProducer } from "@/lib/sfuClient"
@@ -28,29 +29,21 @@ function VideoTile({ tile }: { tile: Tile }) {
 // Every candidate camera of one supervised exam in a grid, received from the exam media server
 // (server/sfu.js): each candidate sends its camera once, however many proctors watch.
 export default function ExamWallPage() {
-  const [sessions, setSessions] = useState<LiveSession[]>([])
+  // Live exams come from the dashboard's shared connection
+  const liveSessions = useLiveSessions()
+  const sessions: LiveSession[] = (liveSessions || []).filter(session => session.mode === "supervised").map(session => ({
+    id: session.id, host: session.host, mode: session.mode, controllerCount: session.controllerCount,
+  }))
   const [roomId, setRoomId] = useState("")
   const [tiles, setTiles] = useState<Tile[]>([])
   const [status, setStatus] = useState("")
-  const socketRef = useRef<Socket | null>(null)
 
+  // The camera grid gets its own connection: the server closes a viewer's media transports when
+  // its socket disconnects, so leaving the exam (or the page) frees them at once
   useEffect(() => {
     const token = getStoredAuthToken()
-    if (!token) return
+    if (!token || !roomId) return
     const socket = io(getBackendUrl(), { auth: { token }, withCredentials: true })
-    socketRef.current = socket
-    socket.on("connect", () => socket.emit("get-sessions"))
-    socket.on("sessions-update", (list: any[]) => {
-      setSessions(list.filter(session => session.mode === "supervised").map(session => ({
-        id: session.id, host: session.host, mode: session.mode, controllerCount: session.controllerCount,
-      })))
-    })
-    return () => { socket.disconnect(); socketRef.current = null }
-  }, [])
-
-  useEffect(() => {
-    const socket = socketRef.current
-    if (!socket || !roomId) return
     let cancelled = false
     let viewer: Awaited<ReturnType<typeof createViewer>> | null = null
     const watching = new Set<string>()
@@ -79,6 +72,8 @@ export default function ExamWallPage() {
 
     ;(async () => {
       try {
+        if (!socket.connected) await new Promise<void>(resolve => socket.once("connect", () => resolve()))
+        if (cancelled) return
         viewer = await createViewer(socket, roomId)
         if (cancelled) return viewer.close()
         const producers = await viewer.list()
@@ -96,6 +91,7 @@ export default function ExamWallPage() {
       socket.off("sfu-new-producer", onNew)
       socket.off("sfu-producer-closed", onClosed)
       viewer?.close()
+      socket.disconnect()
     }
   }, [roomId])
 
@@ -109,7 +105,7 @@ export default function ExamWallPage() {
       </div>
 
       <div className="flex flex-wrap gap-2" role="group" aria-label="Live supervised exams">
-        {sessions.length === 0 && <p className="text-sm text-[var(--text-dim)]">No supervised exam is live.</p>}
+        {sessions.length === 0 && <p className="text-sm text-[var(--text-dim)]">{liveSessions === null ? "Loading live exams…" : "No supervised exam is live."}</p>}
         {sessions.map(session => (
           <button
             key={session.id}

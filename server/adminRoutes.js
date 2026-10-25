@@ -388,7 +388,31 @@ router.get('/reports', async (req, res) => {
       });
     }
 
-    const users = await User.find({}).select('-password -otp -otpExpires').sort({ sessionCount: -1 });
+    // One round trip for all three, plain objects, and only the fields the dashboard shows. Session
+    // logs carry their whole chat, event and evidence lists; the database counts them instead of
+    // sending every message to this server (that made the dashboard slow to switch pages).
+    const [users, alertDocs, sessionDocs] = await Promise.all([
+      User.find({})
+        .select('name email role sessionCount isVerified banned lastSeen updatedAt createdAt')
+        .sort({ sessionCount: -1 })
+        .lean(),
+      Alert.find({})
+        .select('room hostEmail type event message penalty createdAt evidenceUrl flagged falsePositive')
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .lean(),
+      SessionLog.aggregate([
+        { $sort: { endedAt: -1 } },
+        { $limit: 500 },
+        { $project: {
+          roomCode: 1, mode: 1, hostName: 1, hostEmail: 1, startedAt: 1, endedAt: 1, durationSeconds: 1,
+          participants: 1, riskScore: 1, alertCount: 1, latestTxHash: 1,
+          eventCount: { $size: { $ifNull: ['$events', []] } },
+          messageCount: { $size: { $ifNull: ['$messages', []] } },
+          evidenceCount: { $size: { $ifNull: ['$evidence', []] } },
+        } },
+      ]),
+    ]);
     const userActivity = users.map(user => ({
       name: user.name,
       email: user.email,
@@ -400,7 +424,6 @@ router.get('/reports', async (req, res) => {
       joinedAt: user.createdAt,
     }));
 
-    const alertDocs = await Alert.find({}).sort({ createdAt: -1 }).limit(500);
     const alerts = alertDocs.map(alert => ({
       _id: alert._id,
       room: alert.room,
@@ -415,7 +438,6 @@ router.get('/reports', async (req, res) => {
       falsePositive: Boolean(alert.falsePositive),
     }));
 
-    const sessionDocs = await SessionLog.find({}).sort({ endedAt: -1 }).limit(500);
     const sessionHistory = sessionDocs.map(session => ({
       roomCode: session.roomCode,
       mode: session.mode,
@@ -426,9 +448,9 @@ router.get('/reports', async (req, res) => {
       durationSeconds: session.durationSeconds || 0,
       participantCount: session.participants?.length || 0,
       participants: session.participants || [],
-      eventCount: session.events?.length || 0,
-      messageCount: session.messages?.length || 0,
-      evidenceCount: session.evidence?.length || 0,
+      eventCount: session.eventCount || 0,
+      messageCount: session.messageCount || 0,
+      evidenceCount: session.evidenceCount || 0,
       riskScore: session.riskScore || 0,
       alertCount: session.alertCount || 0,
       latestTxHash: session.latestTxHash || null,

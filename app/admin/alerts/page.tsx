@@ -1,11 +1,10 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { createPortal } from "react-dom"
-import { useRouter } from "next/navigation"
-import { io, Socket } from "socket.io-client"
+import { useAdminReports, useAdminSocket, useLiveSessions, useSocketEvent } from "@/components/admin/AdminData"
 import { Search, ShieldAlert, AlertTriangle, Download, CheckCircle, Flag, X } from "lucide-react"
-import { cn, getAuthHeaders, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
+import { cn, getAuthHeaders, getBackendUrl } from "@/lib/utils"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 
 type FilterType = "all" | "high" | "medium" | "low"
@@ -21,15 +20,19 @@ type Alert = {
   flagged: boolean
   falsePositive: boolean
   evidenceUrl?: string
+  // Arrived live and was not stored by the server (database offline): kept across report refreshes
+  liveOnly?: boolean
 }
 
-const roomRiskTotals = new Map<string, number>()
-
-function getRiskTotal(roomId: string, delta: number): number {
-  const prev = roomRiskTotals.get(roomId) || 0
-  const next = Math.min(100, prev + delta)
-  roomRiskTotals.set(roomId, next)
-  return next
+// Running risk per room, oldest alert first, capped at 100 (the list itself is newest first)
+function withRiskTotals(newestFirst: Alert[]): Alert[] {
+  const totals = new Map<string, number>()
+  const oldestFirst = [...newestFirst].reverse().map(alert => {
+    const total = Math.min(100, (totals.get(alert.roomId) || 0) + alert.penalty)
+    totals.set(alert.roomId, total)
+    return { ...alert, totalRisk: total }
+  })
+  return oldestFirst.reverse()
 }
 
 function friendlyType(raw: string): string {
@@ -69,11 +72,11 @@ function AlertDetailsModal({
   return createPortal(
     <>
       <style>{`@keyframes slideInUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
-      <div className="fixed inset-0 bg-[var(--bg)]/90 backdrop-blur-sm z-40" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-h-[85vh] bg-[var(--surface)]/90 backdrop-blur-3xl border border-[var(--border)]/60 shadow-[0_0_50px_rgba(0,0,0,0.5)] z-50 rounded-2xl overflow-y-auto"
+      <div className="fixed inset-0 bg-[var(--bg)]/90 z-40" onClick={onClose} />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-h-[85vh] bg-[var(--surface)]/90 border border-[var(--border)]/60 shadow-[0_0_50px_rgba(0,0,0,0.5)] z-50 rounded-2xl overflow-y-auto"
         style={{ animation: "slideInUp 0.3s ease-out" }}>
         
-        <div className="flex items-center justify-between p-6 border-b border-[var(--border)]/60 bg-[var(--elevated)]/60 sticky top-0 z-10 backdrop-blur-md">
+        <div className="flex items-center justify-between p-6 border-b border-[var(--border)]/60 bg-[var(--elevated)]/60 sticky top-0 z-10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-[var(--amber)]/20 border border-[var(--amber)]/30 flex items-center justify-center">
               <ShieldAlert className="w-5 h-5 text-[var(--amber)] drop-shadow-[0_0_5px_rgba(251,191,36,0.8)]" />
@@ -107,7 +110,7 @@ function AlertDetailsModal({
 
           <div className="rounded-xl overflow-hidden border border-[var(--border)]/60 bg-[var(--elevated)]/40">
              <div className="px-4 py-3 border-b border-[var(--border)]/60 bg-[var(--elevated)]/80 flex items-center justify-between">
-                <span className="text-xs font-mono text-[var(--text-dim)] uppercase tracking-wider">AI Evidence Graph</span>
+                <span className="text-xs font-mono text-[var(--text-dim)] uppercase tracking-wider">Evidence</span>
                 <span className="text-[10px] bg-[var(--accent)]/20 text-[var(--accent)] px-2 py-0.5 rounded border border-[var(--accent)]/30">RISK +{alert.penalty}</span>
              </div>
              <div className="p-6 flex flex-col items-center justify-center bg-[var(--bg)]/50 min-h-[160px] relative overflow-hidden">
@@ -120,15 +123,10 @@ function AlertDetailsModal({
                     onError={(e) => { e.currentTarget.style.display = 'none' }}
                   />
                 ) : (
-                  <>
-                    <div className="absolute bottom-0 left-0 w-full h-[60%] bg-gradient-to-t from-[var(--red)]/20 to-transparent pointer-events-none" />
-                    <svg className="w-full h-16 drop-shadow-[0_0_8px_rgba(244,63,94,0.6)]" viewBox="0 0 100 20" preserveAspectRatio="none">
-                      <path d="M0,20 Q10,20 20,18 T40,15 T50,5 T60,3 T80,10 T100,2" fill="none" stroke="var(--red)" strokeWidth="2" vectorEffect="non-scaling-stroke"/>
-                    </svg>
-                  </>
+                  <p className="text-sm text-[var(--text-dim)] text-center pt-6">No screenshot was captured for this alert.</p>
                 )}
-                <div className="absolute top-4 text-center bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">
-                  <p className="text-sm text-white mb-0">Anomaly detected precisely at {alert.time}</p>
+                <div className="absolute top-4 text-center bg-black/50 px-3 py-1 rounded-full">
+                  <p className="text-sm text-white mb-0">Detected at {alert.time}</p>
                 </div>
               </div>
            </div>
@@ -165,105 +163,86 @@ function AlertDetailsModal({
 }
 
 export default function AlertsPage() {
-  const router = useRouter()
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [filter, setFilter] = useState<FilterType>("all")
   const [search, setSearch] = useState("")
-  const [loaded, setLoaded] = useState(false)
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null)
   const [warningRoomId, setWarningRoomId] = useState<string | null>(null)
   const [warningMessage, setWarningMessage] = useState('')
-  const socketRef = useRef<Socket | null>(null)
+  const { socket } = useAdminSocket()
+  // Stored alerts come from the shared, cached report (components/admin/AdminData)
+  const { data: report } = useAdminReports()
+  const loaded = Boolean(report)
 
   useEffect(() => {
-    const token = getStoredAuthToken()
-    if (!token) router.push('/admin/login')
-  }, [router])
-
-  // ── Load historical alerts from MongoDB on mount ──────────────────────────
-  useEffect(() => {
-    const loadHistory = async () => {
-      try {
-        const res = await fetch(`${getBackendUrl()}/api/admin/reports`, {
-          credentials: 'include',
-          headers: getAuthHeaders(),
-        })
-        const data = await res.json()
-        if (data.success && data.alerts?.length) {
-          const historical: Alert[] = data.alerts.map((a: any) => {
-            const penalty = a.penalty || 0
-            const totalRisk = getRiskTotal(a.room || 'SYSTEM', penalty)
-            return {
-              _id: a._id,
-              time: formatTime(a.time),
-              roomId: a.room || 'SYSTEM',
-              eventType: friendlyType(a.event || a.type || 'Unknown'),
-              message: a.message || '',
-              penalty,
-              totalRisk,
-              flagged: Boolean(a.flagged),
-              falsePositive: Boolean(a.falsePositive),
-              evidenceUrl: a.evidenceUrl,
-            }
-          })
-          // alerts from API are newest-first already
-          setAlerts(historical.slice(0, 200))
-        }
-      } catch (e) {
-        console.error('Failed to load alert history', e)
-      } finally {
-        setLoaded(true)
-      }
-    }
-    loadHistory()
-  }, [])
-
-  // ── Live alerts via socket ────────────────────────────────────────────────
-  useEffect(() => {
-    const token = getStoredAuthToken()
-    if (!token) return
-    const socket = io(getBackendUrl(), { auth: { token }, withCredentials: true })
-    socketRef.current = socket
-
-    socket.on('system-alert', (payload: any) => {
-      const roomId = payload.room || 'SYSTEM'
-      const penalty = payload.penalty || 0
-      const totalRisk = getRiskTotal(roomId, penalty)
-      const entry: Alert = {
-        _id: payload._id || Math.random().toString(36).slice(2),
-        time: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        roomId,
-        eventType: friendlyType(payload.event || payload.type || 'Unknown'),
-        message: payload.message || '',
-        penalty,
-        totalRisk,
-        flagged: false,
-        falsePositive: false,
-        evidenceUrl: payload.evidenceUrl,
-      }
-      setAlerts(prev => [entry, ...prev].slice(0, 200))
+    if (!report) return
+    const stored: Alert[] = (report.alerts || []).map((a: any) => ({
+      _id: String(a._id),
+      time: formatTime(a.time),
+      roomId: a.room || 'SYSTEM',
+      eventType: friendlyType(a.event || a.type || 'Unknown'),
+      message: a.message || '',
+      penalty: a.penalty || 0,
+      totalRisk: 0,
+      flagged: Boolean(a.flagged),
+      falsePositive: Boolean(a.falsePositive),
+      evidenceUrl: a.evidenceUrl,
+    }))
+    setAlerts(prev => {
+      const storedIds = new Set(stored.map(a => a._id))
+      const unsaved = prev.filter(a => a.liveOnly && !storedIds.has(a._id))
+      return withRiskTotals([...unsaved, ...stored].slice(0, 200))
     })
+  }, [report])
 
-    return () => { socket.disconnect() }
-  }, [])
+  // Live alerts on the dashboard's shared connection
+  useSocketEvent('system-alert', (payload: any) => {
+    const entry: Alert = {
+      _id: payload._id ? String(payload._id) : `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      time: new Date().toLocaleTimeString('en-US', { hour12: false }),
+      roomId: payload.room || 'SYSTEM',
+      eventType: friendlyType(payload.event || payload.type || 'Unknown'),
+      message: payload.message || '',
+      penalty: payload.penalty || 0,
+      totalRisk: 0,
+      flagged: false,
+      falsePositive: false,
+      evidenceUrl: payload.evidenceUrl,
+      liveOnly: !payload._id,
+    }
+    setAlerts(prev => withRiskTotals([entry, ...prev.filter(a => a._id !== entry._id)].slice(0, 200)))
+  })
+
+  // Warn and Kill act on a live room; most alerts in the list belong to sessions that have ended
+  const liveRoomIds = new Set((useLiveSessions() || []).map((session: any) => session.id))
+  const [notice, setNotice] = useState('')
+  useSocketEvent('admin-action-complete', ({ message }: { message: string }) => setNotice(message))
+  useSocketEvent('admin-error', (message: string) => setNotice(message))
+
+  const requireLive = (roomId: string) => {
+    if (liveRoomIds.has(roomId)) return true
+    setNotice(`Room ${roomId} is no longer live, so there is nobody to warn or disconnect.`)
+    return false
+  }
 
   const handleWarnUser = (roomId: string) => {
+    if (!requireLive(roomId)) return
     setWarningRoomId(roomId)
     setWarningMessage('')
   }
 
   const submitWarning = async () => {
     if (!warningRoomId) return
-    if (socketRef.current) {
-      socketRef.current.emit('admin-warn-user', { roomId: warningRoomId, message: warningMessage })
-    }
+    socket?.emit('admin-warn-user', { roomId: warningRoomId, message: warningMessage })
+    setNotice(`Warning sent to everyone in room ${warningRoomId}.`)
     setWarningRoomId(null)
   }
 
   const handleKillSession = (roomId: string) => {
-    if (socketRef.current) {
-      socketRef.current.emit('kill-session', roomId)
-    }
+    if (!requireLive(roomId)) return
+    if (!window.confirm(`End room ${roomId} now? Everyone in it is disconnected.`)) return
+    socket?.emit('kill-session', roomId)
+    setNotice(`Room ${roomId} is being ended.`)
   }
 
   const updateAlertStatus = async (id: string, updates: { flagged?: boolean, falsePositive?: boolean }) => {
@@ -331,7 +310,10 @@ export default function AlertsPage() {
     name, value, color: pieColors[i % pieColors.length]
   }))
 
-  const topOffenders = Array.from(roomRiskTotals.entries())
+  // The list is newest first, so a room's first entry carries its latest running total
+  const latestRiskByRoom = new Map<string, number>()
+  for (const alert of alerts) if (!latestRiskByRoom.has(alert.roomId)) latestRiskByRoom.set(alert.roomId, alert.totalRisk)
+  const topOffenders = Array.from(latestRiskByRoom.entries())
     .map(([room, score]) => ({ room, score }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 5)
@@ -341,6 +323,12 @@ export default function AlertsPage() {
 
   return (
     <>
+      {notice && (
+        <div role="status" className="fixed bottom-6 right-6 z-[80] flex max-w-md items-center gap-3 rounded-xl border border-[var(--accent)]/30 bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)] shadow-xl">
+          <span>{notice}</span>
+          <button onClick={() => setNotice('')} aria-label="Dismiss" className="text-[var(--text-dim)] hover:text-[var(--text-primary)]"><X className="h-4 w-4" /></button>
+        </div>
+      )}
       <AlertDetailsModal 
         alert={selectedAlert} 
         onClose={() => setSelectedAlert(null)} 
@@ -352,7 +340,7 @@ export default function AlertsPage() {
 
       {warningRoomId && createPortal(
         <>
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]" onClick={() => setWarningRoomId(null)} />
+          <div className="fixed inset-0 bg-black/60 z-[60]" onClick={() => setWarningRoomId(null)} />
           <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl z-[70] overflow-hidden">
             <div className="p-4 border-b border-[var(--border)]/60 bg-[var(--elevated)] flex justify-between items-center">
               <h3 className="font-mono font-bold text-[var(--amber)] flex items-center gap-2">
@@ -390,7 +378,7 @@ export default function AlertsPage() {
       <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-140px)]">
         {/* Left — Alert Table */}
         <div className="flex-1 min-w-0 h-full">
-          <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl overflow-hidden flex flex-col h-full">
+          <div className="bg-[var(--surface)]/70 border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl overflow-hidden flex flex-col h-full">
             <div className="p-5 border-b border-[var(--border)]/60 flex flex-shrink-0 items-center gap-4 bg-[var(--elevated)]/60">
               <div className="flex gap-2">
                 {(["all", "high", "medium", "low"] as FilterType[]).map(f => (
@@ -417,7 +405,7 @@ export default function AlertsPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-dim)]" />
                 <input type="text" value={search} onChange={e => setSearch(e.target.value)}
                   placeholder="Search alerts…"
-                  className="w-64 pl-10 pr-4 py-2 bg-[var(--elevated)]/80 border border-[var(--border)]/60 rounded-xl text-sm text-[var(--text-primary)] placeholder:text-[var(--text-dim)] focus:border-[var(--accent)] outline-none backdrop-blur-sm transition-colors" />
+                  className="w-64 pl-10 pr-4 py-2 bg-[var(--elevated)]/80 border border-[var(--border)]/60 rounded-xl text-sm text-[var(--text-primary)] placeholder:text-[var(--text-dim)] focus:border-[var(--accent)] outline-none transition-colors" />
               </div>
             </div>
 
@@ -475,10 +463,10 @@ export default function AlertsPage() {
                         </td>
                         <td className="px-5 py-4">
                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                              <button onClick={() => handleWarnUser(alert.roomId)} className="px-2 py-1 bg-[var(--amber)]/20 text-[var(--amber)] border border-[var(--amber)]/30 rounded text-xs font-mono hover:bg-[var(--amber)] hover:text-black transition-colors">
+                              <button onClick={() => handleWarnUser(alert.roomId)} disabled={!liveRoomIds.has(alert.roomId)} title={liveRoomIds.has(alert.roomId) ? 'Warn everyone in this room' : 'This room has ended'} className="disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 bg-[var(--amber)]/20 text-[var(--amber)] border border-[var(--amber)]/30 rounded text-xs font-mono hover:bg-[var(--amber)] hover:text-black transition-colors">
                                 Warn
                               </button>
-                              <button onClick={() => handleKillSession(alert.roomId)} className="px-2 py-1 bg-[var(--red)]/20 text-[var(--red)] border border-[var(--red)]/30 rounded text-xs font-mono hover:bg-[var(--red)] hover:text-black transition-colors">
+                              <button onClick={() => handleKillSession(alert.roomId)} disabled={!liveRoomIds.has(alert.roomId)} title={liveRoomIds.has(alert.roomId) ? 'End this room now' : 'This room has ended'} className="disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 bg-[var(--red)]/20 text-[var(--red)] border border-[var(--red)]/30 rounded text-xs font-mono hover:bg-[var(--red)] hover:text-black transition-colors">
                                 Kill
                               </button>
                            </div>
@@ -494,7 +482,7 @@ export default function AlertsPage() {
 
         {/* Right — Charts */}
         <div className="w-full lg:w-[350px] shrink-0 space-y-6 overflow-y-auto pb-4 pr-2">
-          <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6 hover:border-[var(--border-bright)] transition-colors">
+          <div className="bg-[var(--surface)]/70 border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6 hover:border-[var(--border-bright)] transition-colors">
             {pieData.length === 0 ? (
               <div className="h-48 flex items-center justify-center text-[var(--text-dim)] font-mono text-sm">No data yet</div>
             ) : (
@@ -511,7 +499,7 @@ export default function AlertsPage() {
             )}
           </div>
 
-          <div className="bg-[var(--surface)]/30 backdrop-blur-xl border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6 hover:border-[var(--border-bright)] transition-colors">
+          <div className="bg-[var(--surface)]/70 border border-[var(--border)]/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6 hover:border-[var(--border-bright)] transition-colors">
             <h2 className="font-display font-bold text-lg text-[var(--text-primary)] mb-4">Highest Risk Rooms</h2>
             {topOffenders.length === 0 ? (
               <div className="text-center text-[var(--text-dim)] font-mono text-sm py-4">No data yet</div>

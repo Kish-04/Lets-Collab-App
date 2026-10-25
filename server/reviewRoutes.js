@@ -12,6 +12,7 @@ const express = require('express');
 const Alert = require('./alert');
 const mockStore = require('./mockStore');
 const { protectAuthenticated, protectAdmin } = require('./adminRoutes');
+const { signUploadUrl } = require('./uploadAccess');
 
 const router = express.Router();
 
@@ -106,7 +107,7 @@ router.get('/queue', protectAdmin, async (req, res) => {
     alerts.sort((a, b) => Number(hasOpenAppeal(b)) - Number(hasOpenAppeal(a)) || new Date(b.createdAt) - new Date(a.createdAt));
     res.json({
       success: true,
-      alerts: alerts.slice(0, 200).map(alert => ({ ...candidateView(alert), hostEmail: alert.hostEmail || null, candidate: alert.sourceEmail || null, evidenceUrl: alert.evidenceUrl || null })),
+      alerts: alerts.slice(0, 200).map(alert => ({ ...candidateView(alert), hostEmail: alert.hostEmail || null, candidate: alert.sourceEmail || null, evidenceUrl: signUploadUrl(alert.evidenceUrl) || null })),
     });
   } catch (err) {
     console.error('[reviews] queue:', err.message);

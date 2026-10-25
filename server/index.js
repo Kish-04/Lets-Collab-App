@@ -2057,11 +2057,10 @@ io.on('connection', (socket) => {
       evidenceUrl: isUploadPath(data.evidenceUrl) ? data.evidenceUrl : undefined,
       penalty,
     };
-    if (global.dbConnected) {
-      Alert.create(alertDoc).catch((err) => console.error('Alert save error:', err));
-    } else {
-      mockStore.addAlert(alertDoc);
-    }
+    // The admin dashboard needs the stored id to flag or dismiss the alert, so it is sent with it
+    const saved = global.dbConnected
+      ? Alert.create(alertDoc).catch((err) => { console.error('Alert save error:', err); return null; })
+      : Promise.resolve(mockStore.addAlert(alertDoc));
 
     anchorEvent(
       roomCode,
@@ -2070,7 +2069,8 @@ io.on('connection', (socket) => {
       room.hostEmail || '',
       participant.email || ''
     );
-    io.to('admins').emit('system-alert', {
+    saved.then((record) => io.to('admins').emit('system-alert', {
+      _id: record?._id ? String(record._id) : undefined,
       room: roomCode,
       participant: participant.name,
       type: alertDoc.type,
@@ -2078,7 +2078,7 @@ io.on('connection', (socket) => {
       message,
       evidenceUrl: signUploadUrl(alertDoc.evidenceUrl) || undefined,
       penalty,
-    });
+    }));
     emitRoomState(roomCode);
     broadcastSessions();
   };
