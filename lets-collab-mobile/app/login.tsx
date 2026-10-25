@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TextInput, StyleSheet, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Animated, Pressable, ImageBackground, Dimensions, Easing } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
-import { BACKEND_URL, storeAuthToken, storeEmail } from '../lib/api';
+import { BACKEND_URL, storeAuthToken, storeEmail, storeRole } from '../lib/api';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { AppLogo } from '../components/AppLogo';
@@ -82,7 +82,9 @@ export default function LoginScreen() {
 
       if (response.ok && data.token) {
         await storeAuthToken(data.token);
-        await storeEmail(data.user?.email || email.toLowerCase().trim());
+        await storeEmail(data.user?.email || data.email || email.toLowerCase().trim());
+        // Admin tabs are shown only to administrators; other accounts get the participant view
+        await storeRole((data.user?.role || data.role) === 'admin' ? 'admin' : 'user');
         
         // Satisfying transition out
         Animated.parallel([
@@ -100,7 +102,8 @@ export default function LoginScreen() {
           router.replace('/(tabs)');
         });
       } else {
-        Alert.alert("Login Failed", data.error || "Invalid credentials.");
+        // The server explains banned or unverified accounts in "message"
+        Alert.alert("Login Failed", data.message || data.error || "Invalid credentials.");
         Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
       }
     } catch (error) {

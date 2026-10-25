@@ -582,7 +582,7 @@ export default function LiveSessionScreen() {
       setStatusMessage('Connecting to session server...');
       const socket = io(BACKEND_URL, {
         auth: { token },
-        transports: ['websocket'],
+        // Default transports (polling, then WebSocket upgrade): if an upgrade is refused the session still works
         // A mobile network blip must not end an exam: retry for about half a minute before giving up
         reconnection: true,
         reconnectionAttempts: 8,

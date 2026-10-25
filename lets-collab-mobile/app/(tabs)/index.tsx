@@ -2,12 +2,12 @@
 import { StyleSheet, View, Text, ScrollView, RefreshControl, TouchableOpacity, Dimensions, Animated, Easing, ImageBackground, LogBox, TextInput } from 'react-native';
 
 LogBox.ignoreLogs(['Unknown event handler property `onPressIn`']);
-import { BlurView } from 'expo-blur';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ShieldAlert, Users, LogOut, Sun, Moon, Sparkles, Activity, MonitorPlay, LogIn } from 'lucide-react-native';
 import { BarChart, LineChart } from 'react-native-chart-kit';
-import { getAuthHeaders, removeAuthToken, BACKEND_URL } from '../../lib/api';
-import { router, Href, useFocusEffect } from 'expo-router';
+import { getAuthHeaders, getStoredRole, BACKEND_URL } from '../../lib/api';
+import { signOutAdmin, useAdminReports, useAdminSocket, useServerHealth } from '../../lib/adminData';
+import { router, Href } from 'expo-router';
 import { normalizeRoomCode } from '../../lib/liveSession';
 import { useTheme } from '../../context/ThemeContext';
 import { AppLogo } from '../../components/AppLogo';
@@ -27,15 +27,34 @@ const { width } = Dimensions.get('window');
 
 
 
+// The server's answer to a signed-in account that is not an administrator (server/adminRoutes.js protectAdmin)
+const NOT_ADMIN = /not authorized (as an admin|for this account)/i;
+
+/** "Oct 25, 14": the hour bucket label used by the web overview's alerts chart. */
+function hourLabel(hour: number) {
+  const d = new Date(hour);
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${String(d.getHours()).padStart(2, '0')}`;
+}
+
 export default function TabOneScreen() {
   const { colors, theme, toggleTheme } = useTheme();
-  const [data, setData] = useState<any>(null);
+  // Shared, cached report (lib/adminData): instant when coming back to this tab
+  const { data, error, refresh } = useAdminReports();
+  const { status: socketStatus } = useAdminSocket();
+  const { health, unreachable } = useServerHealth();
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(false);
   // Non-admin accounts (students, participants) use this tab only to join a session
-  const [participantOnly, setParticipantOnly] = useState(false);
+  const [storedRole, setStoredRole] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
   const isDark = theme === 'dark' || theme === 'glassmorphic';
+
+  useEffect(() => {
+    getStoredRole().then(setStoredRole).catch(() => setStoredRole(null));
+  }, []);
+
+  // Participant mode: the stored role says so, or the report was refused with the not-an-admin 403.
+  // Any other report error is shown as an error, not hidden behind the join box.
+  const participantOnly = storedRole === 'user' || (!data && !!error && NOT_ADMIN.test(error));
   
   const dynamicChartConfig = {
     backgroundGradientFrom: colors.surface,
@@ -73,62 +92,9 @@ export default function TabOneScreen() {
     ]).start();
   }, []);
 
-  const fetchAnalytics = async () => {
-    try {
-      const headers = await getAuthHeaders();
-      const noCacheUrl = `${BACKEND_URL}/api/admin/reports?_t=${Date.now()}`;
-      const response = await fetch(noCacheUrl, { 
-        headers: {
-          ...headers,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-        } 
-      });
-      
-      // 401: the token is missing or expired, so sign out. 403: a valid account that is not an
-      // admin; keep it signed in so it can join sessions from the box above.
-      if (response.status === 401) {
-        handleLogout();
-        return;
-      }
-      if (response.status === 403) {
-        setParticipantOnly(true);
-        setError(false);
-        return;
-      }
-      setParticipantOnly(false);
-
-      const text = await response.text();
-      let json = null;
-      try {
-         json = JSON.parse(text);
-      } catch {
-         json = null;
-      }
-      
-      if (response.ok && json && json.success) {
-        setData(json);
-        setError(false);
-      } else {
-        console.error("Backend error:", response.status, json);
-        setError(true);
-      }
-    } catch (e: any) {
-      console.error("Fetch exception:", e);
-      setError(true);
-    }
-  };
-
-  // Reload whenever the tab is focused so numbers reflect actions taken on other tabs
-  useFocusEffect(useCallback(() => {
-    fetchAnalytics();
-  }, [])); // eslint-disable-line react-hooks/exhaustive-deps
-
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchAnalytics();
-    setRefreshing(false);
+    try { await refresh(); } finally { setRefreshing(false); }
   };
 
   const handleJoinSession = () => {
@@ -143,30 +109,49 @@ export default function TabOneScreen() {
       Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
       Animated.timing(slideAnim, { toValue: -20, duration: 300, useNativeDriver: true })
     ]).start(async () => {
-      await removeAuthToken();
-      router.replace('/login');
+      // Clears the server's auth cookie; the stored token is removed either way
+      try {
+        await fetch(`${BACKEND_URL}/api/auth/logout`, { method: 'POST', headers: await getAuthHeaders() });
+      } catch { /* offline: signing out locally is enough */ }
+      await signOutAdmin();
     });
   };
 
-  const totalUsers = data?.userActivity?.length || 0;
-  const totalAlerts = data?.alerts?.length || 0;
-  
-  // High risk logic based on actual data
-  const highRiskCount = data?.alerts?.filter((a: any) => a.riskLevel === 'high' || a.type === 'UNAUTHORIZED_ACCESS').length || 0;
-  
-  const activityData = (data?.userActivity || []);
-  const activityLabels = activityData.length > 0 ? activityData.map((u: any) => u.name || "User") : ["No Data"];
+  const users: any[] = data?.userActivity || [];
+  const alerts: any[] = data?.alerts || [];
+  const totalUsers = users.length;
+  const openAlerts = alerts.filter((a: any) => !a.falsePositive).length;
+  const verifiedCount = users.filter((u: any) => u.isVerified).length;
+  // Open alerts raised in the last 24 hours decide the posture shown at the bottom
+  const recentOpenAlerts = alerts.filter((a: any) => !a.falsePositive && Date.now() - new Date(a.time).getTime() < 86400000).length;
+
+  // Rooms hosted per user: the 10 busiest hosts
+  const activityData = [...users]
+    .sort((a: any, b: any) => (b.sessionCount || 0) - (a.sessionCount || 0))
+    .slice(0, 10);
+  const activityLabels = activityData.length > 0 ? activityData.map((u: any) => u.name?.split(' ')[0] || "User") : ["No Data"];
   const activityValues = activityData.length > 0 ? activityData.map((u: any) => u.sessionCount || 0) : [0];
 
-  const alertAgg = (data?.alerts || []).reduce((acc: any, a: any) => {
-    const d = new Date(a.time || a.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const ev = acc.find((e: any) => e.time === d);
-    if (ev) ev.alerts += 1;
-    else acc.push({ time: d, alerts: 1 });
-    return acc;
-  }, []);
-  const alertLabels = alertAgg.length > 0 ? alertAgg.map((a: any) => a.time) : ["Now"];
-  const alertValues = alertAgg.length > 0 ? alertAgg.map((a: any) => a.alerts) : [0];
+  // Alerts per hour, oldest to newest, for the latest 15 hours that had any (the API lists newest first)
+  const alertsPerHour = new Map<number, number>();
+  for (const a of alerts) {
+    const time = new Date(a.time).getTime();
+    if (Number.isNaN(time)) continue;
+    const hour = Math.floor(time / 3600000) * 3600000;
+    alertsPerHour.set(hour, (alertsPerHour.get(hour) || 0) + 1);
+  }
+  const alertAgg = Array.from(alertsPerHour.entries()).sort(([a], [b]) => a - b).slice(-15);
+  const alertLabels = alertAgg.length > 0 ? alertAgg.map(([hour]) => hourLabel(hour)) : ["Now"];
+  const alertValues = alertAgg.length > 0 ? alertAgg.map(([, count]) => count) : [0];
+
+  // Same rules as the web dashboard's SystemStatus badge
+  const statusBadge = unreachable
+    ? { label: 'Server unreachable', color: colors.red }
+    : !health || socketStatus !== 'connected'
+      ? { label: 'Connecting…', color: colors.textDim }
+      : !health.dbConnected
+        ? { label: 'Database offline', color: colors.amber }
+        : { label: health.blockchainActive ? 'System Online' : 'Online · chain off', color: colors.emerald };
 
   const isGlass = theme === 'glassmorphic';
   
@@ -203,6 +188,20 @@ export default function TabOneScreen() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {!participantOnly && (
+            <View style={styles.statusRow}>
+              <View style={[styles.statusBadge, { borderColor: statusBadge.color + '55', backgroundColor: statusBadge.color + '18' }]}>
+                <View style={[styles.statusDot, { backgroundColor: statusBadge.color }]} />
+                <Text style={[styles.statusBadgeText, { color: statusBadge.color }]}>{statusBadge.label}</Text>
+              </View>
+              {data?.mock && (
+                <View style={[styles.statusBadge, { borderColor: colors.amber + '55', backgroundColor: colors.amber + '18' }]}>
+                  <Text style={[styles.statusBadgeText, { color: colors.amber }]}>MOCK DATA (database offline)</Text>
+                </View>
+              )}
+            </View>
+          )}
 
           <View style={[styles.joinCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <View style={styles.joinHeader}>
@@ -241,12 +240,21 @@ export default function TabOneScreen() {
             <View style={[styles.errorContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
               <Text style={[styles.errorText, { color: colors.textSecondary }]}>Enter the room code from your host or exam invite above to join a session. Analytics are only shown to administrators.</Text>
             </View>
-          ) : error ? (
+          ) : error && !data ? (
             <View style={[styles.errorContainer, { backgroundColor: isDark ? 'rgba(255, 59, 92, 0.1)' : 'rgba(255, 59, 92, 0.05)', borderColor: isDark ? 'rgba(255, 59, 92, 0.3)' : 'rgba(255, 59, 92, 0.2)' }]}>
-              <Text style={[styles.errorText, { color: colors.red }]}>Could not connect to backend analytics.</Text>
+              <Text style={[styles.errorText, { color: colors.red }]}>Could not load analytics: {error}</Text>
+            </View>
+          ) : !data ? (
+            <View style={[styles.errorContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <Text style={[styles.errorText, { color: colors.textDim }]}>Loading platform analytics…</Text>
             </View>
           ) : (
             <>
+              {error ? (
+                <View style={[styles.errorContainer, { marginBottom: 0, backgroundColor: isDark ? 'rgba(255, 59, 92, 0.1)' : 'rgba(255, 59, 92, 0.05)', borderColor: isDark ? 'rgba(255, 59, 92, 0.3)' : 'rgba(255, 59, 92, 0.2)' }]}>
+                  <Text style={[styles.errorText, { color: colors.red }]}>Showing the last report; refreshing failed: {error}</Text>
+                </View>
+              ) : null}
               <View style={styles.statsGrid}>
                 <Text style={[styles.chartTitle, { color: colors.textPrimary, marginBottom: 0, marginLeft: 4 }]}>System Activity History</Text>
                 <ActivityHeatmap sessions={data?.sessionHistory || []} />
@@ -271,8 +279,8 @@ export default function TabOneScreen() {
                       <ShieldAlert color={colors.amber} size={20} style={styles.glowAmber} />
                     </View>
                     <View>
-                      <Text style={[styles.cardLabel, { color: colors.textDim }]}>ACTIVE ALERTS</Text>
-                      <Text style={[styles.cardValue, { color: colors.textPrimary }]}>{totalAlerts}</Text>
+                      <Text style={[styles.cardLabel, { color: colors.textDim }]}>OPEN ALERTS</Text>
+                      <Text style={[styles.cardValue, { color: colors.textPrimary }]}>{openAlerts}</Text>
                     </View>
                   </View>
                 </View>
@@ -284,14 +292,14 @@ export default function TabOneScreen() {
                     </View>
                     <View>
                       <Text style={[styles.cardLabel, { color: colors.textDim }]}>VERIFIED</Text>
-                      <Text style={[styles.cardValue, { color: colors.textPrimary }]}>{totalUsers > 0 ? totalUsers - 1 : 0}</Text>
+                      <Text style={[styles.cardValue, { color: colors.textPrimary }]}>{verifiedCount}</Text>
                     </View>
                   </View>
                 </View>
               </View>
 
               <View style={[styles.chartContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-                <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>User Session Activity</Text>
+                <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>Rooms Hosted per User</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <BarChart
                     data={{
@@ -317,7 +325,7 @@ export default function TabOneScreen() {
               </View>
 
               <View style={[styles.chartContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-                <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>Anti-Cheat Alert Frequency</Text>
+                <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>Anti-Cheat Alerts per Hour</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <LineChart
                     data={{
@@ -345,27 +353,27 @@ export default function TabOneScreen() {
 
               <View style={[styles.fullCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                 <View style={styles.riskHeader}>
-                  <View style={[styles.riskDot, highRiskCount > 0 && styles.riskDotActive]} />
+                  <View style={[styles.riskDot, recentOpenAlerts > 0 && styles.riskDotActive]} />
                   <Text style={[styles.riskTitle, { color: colors.textPrimary }]}>Security Posture</Text>
                 </View>
                 
                 <View style={styles.riskBody}>
                   <View style={styles.riskScore}>
-                    <Text style={[styles.riskNumber, { color: highRiskCount > 0 ? colors.red : colors.emerald }]}>
-                      {highRiskCount > 0 ? 'HIGH' : 'LOW'}
+                    <Text style={[styles.riskNumber, { color: recentOpenAlerts > 0 ? colors.amber : colors.emerald }]}>
+                      {recentOpenAlerts > 0 ? 'REVIEW' : 'CLEAR'}
                     </Text>
-                    <Text style={[styles.riskSubtitle, { color: colors.textDim }]}>CURRENT RISK</Text>
+                    <Text style={[styles.riskSubtitle, { color: colors.textDim }]}>OPEN ALERTS, LAST 24 H</Text>
                   </View>
                   
                   <View style={styles.riskStats}>
                     <View style={styles.riskStatItem}>
-                      <Text style={[styles.riskStatValue, { color: colors.textPrimary }]}>{highRiskCount}</Text>
-                      <Text style={[styles.riskStatLabel, { color: colors.textSecondary }]}>Critical Events</Text>
+                      <Text style={[styles.riskStatValue, { color: colors.textPrimary }]}>{recentOpenAlerts}</Text>
+                      <Text style={[styles.riskStatLabel, { color: colors.textSecondary }]}>Alerts (24 h)</Text>
                     </View>
                     <View style={styles.riskDivider} />
                     <View style={styles.riskStatItem}>
-                      <Text style={[styles.riskStatValue, { color: colors.textPrimary }]}>{data?.activeSessions || 0}</Text>
-                      <Text style={[styles.riskStatLabel, { color: colors.textSecondary }]}>Active Nodes</Text>
+                      <Text style={[styles.riskStatValue, { color: colors.textPrimary }]}>{typeof data?.activeSessions === 'number' ? data.activeSessions : '—'}</Text>
+                      <Text style={[styles.riskStatLabel, { color: colors.textSecondary }]}>Online Users</Text>
                     </View>
                   </View>
                 </View>
@@ -423,6 +431,33 @@ const styles = StyleSheet.create({
   logoutText: {
     fontFamily: 'Inter_600SemiBold',
     fontSize: 12,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 16,
+    marginTop: -12,
+    marginBottom: 12,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusBadgeText: {
+    fontFamily: 'SpaceMono',
+    fontSize: 10,
+    letterSpacing: 0.5,
   },
   joinCard: {
     marginHorizontal: 16,

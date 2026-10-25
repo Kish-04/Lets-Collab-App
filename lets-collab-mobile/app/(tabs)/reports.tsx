@@ -1,15 +1,49 @@
-import React, { useCallback, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, ImageBackground, TouchableOpacity, Platform, Alert, Dimensions } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
-import { BACKEND_URL, getAuthHeaders } from '../../lib/api';
-import { ChevronDown, ChevronUp, Download, FileText, Code, Network, Sun, Moon, Users, Shield, RefreshCw } from 'lucide-react-native';
+import { useAdminReports } from '../../lib/adminData';
+import { FileText, Network, Sun, Moon, Users, Shield, RefreshCw, Activity } from 'lucide-react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
-import { AnimatedPressable } from '../../components/AnimatedPressable';
 import * as Print from 'expo-print';
 import { shareExport, toCsv, writeExportFile } from '../../lib/exportFile';
 
 const { width } = Dimensions.get('window');
+
+type ExportFormat = 'JSON' | 'CSV' | 'PDF';
+type Section = 'users' | 'alerts' | 'full';
+
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatDate(d: unknown) {
+  if (!d) return '—';
+  const date = new Date(d as string);
+  return Number.isNaN(date.getTime()) ? String(d) : date.toLocaleString();
+}
+
+/** A printable HTML page with one table per section (all values escaped). */
+function reportHtml(title: string, tables: { heading: string; headers: string[]; rows: unknown[][] }[]) {
+  return `<html><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title>
+    <style>
+      body { font-family: sans-serif; padding: 20px; }
+      h1 { color: #333; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 11px; }
+      th, td { border: 1px solid #ddd; padding: 6px; text-align: left; word-break: break-word; }
+      th { background-color: #f2f2f2; }
+    </style></head><body>
+    <h1>${escapeHtml(title)}</h1>
+    <p>Generated: ${escapeHtml(new Date().toLocaleString())}</p>
+    ${tables.map(t => `<h2>${escapeHtml(t.heading)}</h2>
+    <table><thead><tr>${t.headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+    <tbody>${t.rows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`).join('')}
+    </body></html>`;
+}
 
 const DataCard = ({ label, value, color, icon: Icon, isDark }: any) => (
   <View style={[styles.dataCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
@@ -25,88 +59,82 @@ const DataCard = ({ label, value, color, icon: Icon, isDark }: any) => (
 
 export default function ReportsScreen() {
   const { colors, theme, toggleTheme } = useTheme();
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  
+  // Shared, cached report (lib/adminData); the refresh button asks the server again
+  const { data, error, refresh } = useAdminReports();
+  const [regenerating, setRegenerating] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const loading = !data && !error;
+
   const [openUsers, setOpenUsers] = useState(false);
   const [openAlerts, setOpenAlerts] = useState(false);
   const [openFull, setOpenFull] = useState(false);
 
-  const fetchReports = async () => {
-    setLoading(true);
-    try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${BACKEND_URL}/api/admin/reports`, { headers });
-      const json = await res.json();
-      if (json.success) setData(json);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+  const regenerate = async () => {
+    if (regenerating) return;
+    setRegenerating(true);
+    try { await refresh(); } finally { setRegenerating(false); }
   };
 
-  // Reload whenever the tab is focused (also renews signed evidence links)
-  useFocusEffect(useCallback(() => {
-    fetchReports();
-  }, []));
+  const userActivity: any[] = data?.userActivity || [];
+  const alertsData: any[] = data?.alerts || [];
+  const totalSessions = data?.sessionHistory?.length ?? 0;
+  const totalPenalty = alertsData.reduce((acc: number, a: any) => acc + (Number(a.penalty) || 0), 0);
 
-  const handleExport = async (format: string) => {
+  const userHeaders = ['Name', 'Email', 'Role', 'Sessions', 'Verified', 'Blocked', 'Last Seen', 'Joined'];
+  const userRows = () => userActivity.map((u: any) => [u.name, u.email, u.role, u.sessionCount ?? 0, Boolean(u.isVerified), Boolean(u.banned), formatDate(u.lastSeen), formatDate(u.joinedAt)]);
+  const alertHeaders = ['Room', 'Host', 'Type', 'Event', 'Message', 'Penalty', 'False positive', 'Time'];
+  const alertRows = () => alertsData.map((a: any) => [a.room, a.hostEmail, a.type, a.event, a.message, a.penalty ?? 0, Boolean(a.falsePositive), formatDate(a.time)]);
+
+  // Users export users, alerts export alerts, the full report exports everything
+  const handleExport = async (section: Section, format: ExportFormat) => {
+    if (!data || exporting) return;
+    const key = `${section}-${format}`;
+    setExporting(key);
     try {
-      let fileUri = '';
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const base = section === 'users' ? 'user_activity' : section === 'alerts' ? 'alerts_log' : 'full_activity_report';
+      let fileUri = '';
 
-      if (format === 'PDF') {
-        const html = `
-          <html>
-            <head>
-              <style>
-                body { font-family: sans-serif; padding: 20px; }
-                h1 { color: #333; }
-                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f2f2f2; }
-              </style>
-            </head>
-            <body>
-              <h1>System Report</h1>
-              <p>Generated: ${new Date().toLocaleString()}</p>
-              <h2>Security Alerts</h2>
-              <table>
-                <tr><th>Time</th><th>User</th><th>Type</th><th>Risk</th></tr>
-                ${data.alerts.map((a: any) => `<tr><td>${a.time}</td><td>${a.hostEmail}</td><td>${a.type}</td><td>${a.penalty}</td></tr>`).join('')}
-              </table>
-            </body>
-          </html>
-        `;
-        const { uri } = await Print.printToFileAsync({ html });
-        fileUri = uri;
-      } else if (format === 'JSON') {
-        fileUri = writeExportFile(`report_${timestamp}.json`, JSON.stringify(data, null, 2));
+      if (format === 'JSON') {
+        const payload = section === 'users' ? userActivity : section === 'alerts' ? alertsData : data;
+        fileUri = writeExportFile(`${base}_${timestamp}.json`, JSON.stringify(payload, null, 2));
       } else if (format === 'CSV') {
-        const csv = toCsv(['Time', 'User', 'Type', 'Penalty'], data.alerts.map((a: any) => [a.time, a.hostEmail, a.type, a.penalty]));
-        fileUri = writeExportFile(`report_${timestamp}.csv`, csv);
+        let csv: string;
+        if (section === 'users') csv = toCsv(userHeaders, userRows());
+        else if (section === 'alerts') csv = toCsv(alertHeaders, alertRows());
+        else csv = `USERS\n${toCsv(userHeaders, userRows())}\n\nALERTS\n${toCsv(alertHeaders, alertRows())}`;
+        fileUri = writeExportFile(`${base}_${timestamp}.csv`, csv);
+      } else {
+        const tables: { heading: string; headers: string[]; rows: unknown[][] }[] = [];
+        if (section !== 'alerts') tables.push({ heading: `Users (${userActivity.length})`, headers: userHeaders, rows: userRows() });
+        if (section !== 'users') tables.push({ heading: `Anti-cheat alerts (${alertsData.length})`, headers: alertHeaders, rows: alertRows() });
+        const title = section === 'users' ? 'User Activity Report' : section === 'alerts' ? 'Anti-Cheat Alerts Log' : "Full Activity Report - Let's Collab!";
+        const { uri } = await Print.printToFileAsync({ html: reportHtml(data.mock ? `${title} (mock data)` : title, tables) });
+        fileUri = uri;
       }
 
       await shareExport(fileUri, format);
-    } catch (error) {
-      console.error(error);
-      Alert.alert("Export Failed", "Could not generate file.");
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert('Export Failed', err?.message || 'Could not generate file.');
+    } finally {
+      setExporting(null);
     }
   };
 
-  const isDark = theme === 'dark' || theme === 'glassmorphic';
+  const renderExportButtons = (section: Section) => (
+    <View style={styles.exportRowMini}>
+      {([['JSON', colors.accent], ['CSV', colors.emerald], ['PDF', colors.amber]] as const).map(([format, color]) => (
+        <TouchableOpacity key={format} disabled={!!exporting} onPress={() => void handleExport(section, format)} style={{ opacity: exporting && exporting !== `${section}-${format}` ? 0.5 : 1 }}>
+          {exporting === `${section}-${format}`
+            ? <ActivityIndicator size="small" color={color} style={{ paddingHorizontal: 8 }} />
+            : <Text style={[styles.exportMiniText, { color }]}>{format}</Text>}
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
 
-  const userActivity = data?.userActivity || [];
-  const alertsData = data?.alerts || [];
-  const totalSessions = userActivity.reduce((acc: number, u: any) => acc + (u.sessionCount || 0), 0);
-  const totalPenalty = alertsData.reduce((acc: number, a: any) => acc + (a.penalty || 0), 0);
-  
-  const formatDate = (d: string) => {
-    try {
-      return new Date(d).toLocaleString();
-    } catch { return d; }
-  };
+  const isDark = theme === 'dark' || theme === 'glassmorphic';
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -124,10 +152,15 @@ export default function ReportsScreen() {
           {data?.generatedAt && (
             <Text style={[styles.headerSubtitle, { color: colors.textDim }]}>Last generated: {formatDate(data.generatedAt)}</Text>
           )}
+          {data?.mock && (
+            <View style={[styles.mockBadge, { borderColor: colors.amber + '60', backgroundColor: colors.amber + '18' }]}>
+              <Text style={[styles.mockBadgeText, { color: colors.amber }]}>MOCK DATA (database offline)</Text>
+            </View>
+          )}
         </View>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <TouchableOpacity onPress={fetchReports} style={[styles.iconBtn, { borderColor: colors.accent, backgroundColor: colors.accent + '20' }]}>
-            <RefreshCw size={16} color={colors.accent} />
+          <TouchableOpacity onPress={() => void regenerate()} disabled={regenerating} accessibilityLabel="Regenerate reports" style={[styles.iconBtn, { borderColor: colors.accent, backgroundColor: colors.accent + '20' }]}>
+            {regenerating ? <ActivityIndicator size="small" color={colors.accent} /> : <RefreshCw size={16} color={colors.accent} />}
           </TouchableOpacity>
           <TouchableOpacity onPress={toggleTheme} style={[styles.iconBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             {isDark ? <Sun size={16} color={colors.textSecondary} /> : <Moon size={16} color={colors.textSecondary} />}
@@ -140,13 +173,18 @@ export default function ReportsScreen() {
           <ActivityIndicator size="large" color={colors.accent} style={{ marginTop: 50 }} />
         ) : !data ? (
           <View style={[styles.errorContainer, { backgroundColor: isDark ? 'rgba(255, 59, 92, 0.1)' : 'rgba(255, 59, 92, 0.05)', borderColor: isDark ? 'rgba(255, 59, 92, 0.3)' : 'rgba(255, 59, 92, 0.2)' }]}>
-            <Text style={[styles.errorText, { color: colors.red }]}>Failed to load reports. Is the server running?</Text>
+            <Text style={[styles.errorText, { color: colors.red }]}>Failed to load reports: {error || 'no data from the server.'}</Text>
           </View>
         ) : (
           <>
+            {error ? (
+              <View style={[styles.errorContainer, { backgroundColor: isDark ? 'rgba(255, 59, 92, 0.1)' : 'rgba(255, 59, 92, 0.05)', borderColor: isDark ? 'rgba(255, 59, 92, 0.3)' : 'rgba(255, 59, 92, 0.2)' }]}>
+                <Text style={[styles.errorText, { color: colors.red }]}>Showing the last report; regenerating failed: {error}</Text>
+              </View>
+            ) : null}
             <View style={styles.dataCardsGrid}>
               <DataCard label="Total Users" value={userActivity.length} color={colors.textPrimary} icon={Users} isDark={isDark} />
-              <DataCard label="Total Sessions" value={totalSessions} color={colors.accent} icon={ActivityIndicator} isDark={isDark} />
+              <DataCard label="Total Sessions" value={totalSessions} color={colors.accent} icon={Activity} isDark={isDark} />
               <DataCard label="Total Alerts" value={alertsData.length} color={colors.amber} icon={Shield} isDark={isDark} />
               <DataCard label="Total Penalty" value={totalPenalty} color={colors.red} icon={Network} isDark={isDark} />
             </View>
@@ -165,11 +203,7 @@ export default function ReportsScreen() {
                     </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <View style={styles.exportRowMini}>
-                      <TouchableOpacity onPress={() => handleExport('JSON')}><Text style={[styles.exportMiniText, { color: colors.accent }]}>JSON</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleExport('CSV')}><Text style={[styles.exportMiniText, { color: colors.emerald }]}>CSV</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleExport('PDF')}><Text style={[styles.exportMiniText, { color: colors.amber }]}>PDF</Text></TouchableOpacity>
-                    </View>
+                    {renderExportButtons('users')}
                     <TouchableOpacity onPress={() => setOpenUsers(!openUsers)} style={[styles.previewToggleBtn, { backgroundColor: colors.bg, borderColor: colors.border }]}>
                       <Text style={[styles.previewToggleText, { color: colors.textSecondary }]}>{openUsers ? '▲ Hide preview' : '▼ Preview data'}</Text>
                     </TouchableOpacity>
@@ -193,7 +227,7 @@ export default function ReportsScreen() {
                             <Text style={[styles.td, { color: colors.textPrimary, width: 120 }]} numberOfLines={1}>{u.name}</Text>
                             <Text style={[styles.td, { color: colors.textDim, width: 160 }]} numberOfLines={1}>{u.email}</Text>
                             <View style={{ width: 80, justifyContent: 'center' }}>
-                              <Text style={[styles.roleBadge, { color: u.role === 'admin' ? colors.violet : colors.textDim, backgroundColor: u.role === 'admin' ? colors.violet + '20' : 'transparent', borderColor: u.role === 'admin' ? colors.violet + '40' : colors.border }]}>{u.role.toUpperCase()}</Text>
+                              <Text style={[styles.roleBadge, { color: u.role === 'admin' ? colors.violet : colors.textDim, backgroundColor: u.role === 'admin' ? colors.violet + '20' : 'transparent', borderColor: u.role === 'admin' ? colors.violet + '40' : colors.border }]}>{(u.role || 'user').toUpperCase()}</Text>
                             </View>
                             <Text style={[styles.td, { color: colors.accent, width: 80, fontWeight: 'bold' }]}>{u.sessionCount}</Text>
                             <View style={{ width: 100, justifyContent: 'center' }}>
@@ -223,11 +257,7 @@ export default function ReportsScreen() {
                     </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <View style={styles.exportRowMini}>
-                      <TouchableOpacity onPress={() => handleExport('JSON')}><Text style={[styles.exportMiniText, { color: colors.accent }]}>JSON</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleExport('CSV')}><Text style={[styles.exportMiniText, { color: colors.emerald }]}>CSV</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleExport('PDF')}><Text style={[styles.exportMiniText, { color: colors.amber }]}>PDF</Text></TouchableOpacity>
-                    </View>
+                    {renderExportButtons('alerts')}
                     <TouchableOpacity onPress={() => setOpenAlerts(!openAlerts)} style={[styles.previewToggleBtn, { backgroundColor: colors.bg, borderColor: colors.border }]}>
                       <Text style={[styles.previewToggleText, { color: colors.textSecondary }]}>{openAlerts ? '▲ Hide preview' : '▼ Preview data'}</Text>
                     </TouchableOpacity>
@@ -249,14 +279,14 @@ export default function ReportsScreen() {
                         </View>
                         {alertsData.slice(0, 10).map((a: any, i: number) => (
                           <View key={i} style={[styles.tableRow, { borderBottomColor: colors.border }]}>
-                            <Text style={[styles.td, { color: colors.accent, width: 80 }]} numberOfLines={1}>{a.roomId ? (a.roomId.length >= 8 ? `${a.roomId.slice(0, 4)}·${a.roomId.slice(4, 8)}` : a.roomId) : 'SYS'}</Text>
+                            <Text style={[styles.td, { color: colors.accent, width: 80 }]} numberOfLines={1}>{a.room ? (a.room.length >= 8 ? `${a.room.slice(0, 4)}·${a.room.slice(4, 8)}` : a.room) : 'SYS'}</Text>
                             <Text style={[styles.td, { color: colors.textPrimary, width: 140 }]} numberOfLines={1}>{a.hostEmail || 'Unknown'}</Text>
                             <View style={{ width: 120, justifyContent: 'center' }}>
-                              <Text style={[styles.roleBadge, { color: colors.amber, backgroundColor: colors.amber + '20', borderColor: colors.amber + '40' }]} numberOfLines={1}>{a.eventType || a.type || 'Violation'}</Text>
+                              <Text style={[styles.roleBadge, { color: colors.amber, backgroundColor: colors.amber + '20', borderColor: colors.amber + '40' }]} numberOfLines={1}>{a.type || 'Violation'}</Text>
                             </View>
                             <Text style={[styles.td, { color: colors.textSecondary, width: 200 }]} numberOfLines={1}>{a.message}</Text>
                             <Text style={[styles.td, { color: colors.red, width: 60, fontWeight: 'bold' }]}>+{a.penalty || 0}</Text>
-                            <Text style={[styles.td, { color: colors.textDim, width: 140 }]} numberOfLines={1}>{formatDate(a.time || a.timestamp)}</Text>
+                            <Text style={[styles.td, { color: colors.textDim, width: 140 }]} numberOfLines={1}>{formatDate(a.time)}</Text>
                           </View>
                         ))}
                         </View>
@@ -281,11 +311,7 @@ export default function ReportsScreen() {
                     </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <View style={styles.exportRowMini}>
-                      <TouchableOpacity onPress={() => handleExport('JSON')}><Text style={[styles.exportMiniText, { color: colors.accent }]}>JSON</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleExport('CSV')}><Text style={[styles.exportMiniText, { color: colors.emerald }]}>CSV</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleExport('PDF')}><Text style={[styles.exportMiniText, { color: colors.amber }]}>PDF</Text></TouchableOpacity>
-                    </View>
+                    {renderExportButtons('full')}
                     <TouchableOpacity onPress={() => setOpenFull(!openFull)} style={[styles.previewToggleBtn, { backgroundColor: colors.bg, borderColor: colors.border }]}>
                       <Text style={[styles.previewToggleText, { color: colors.textSecondary }]}>{openFull ? '▲ Hide preview' : '▼ Preview data'}</Text>
                     </TouchableOpacity>
@@ -366,5 +392,7 @@ const styles = StyleSheet.create({
   miniMetricValue: { fontSize: 18, fontFamily: 'Inter_700Bold' },
   
   errorContainer: { padding: 20, borderRadius: 12, borderWidth: 1 },
+  mockBadge: { alignSelf: 'flex-start', marginTop: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
+  mockBadgeText: { fontSize: 9, fontFamily: 'SpaceMono', fontWeight: 'bold', letterSpacing: 0.5 },
   errorText: { textAlign: 'center', fontFamily: 'SpaceMono', fontSize: 12, fontWeight: 'bold' }
 });

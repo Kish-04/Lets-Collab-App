@@ -38,11 +38,29 @@ export async function removeAuthToken() {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('ircp_token');
       localStorage.removeItem('ircp_email');
+      localStorage.removeItem('ircp_role');
     }
   } else {
     await SecureStore.deleteItemAsync('ircp_token');
     await SecureStore.deleteItemAsync('ircp_email');
+    await SecureStore.deleteItemAsync('ircp_role');
   }
+}
+
+/** The signed-in account's role ('admin' or 'user'), stored at login; decides which tabs are shown. */
+export async function storeRole(role: string) {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined') localStorage.setItem('ircp_role', role);
+  } else {
+    await SecureStore.setItemAsync('ircp_role', role);
+  }
+}
+
+export async function getStoredRole(): Promise<string | null> {
+  if (Platform.OS === 'web') {
+    return typeof window !== 'undefined' ? localStorage.getItem('ircp_role') : null;
+  }
+  return await SecureStore.getItemAsync('ircp_role');
 }
 
 export async function getStoredEmail() {
