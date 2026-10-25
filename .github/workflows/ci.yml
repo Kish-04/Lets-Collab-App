@@ -76,6 +76,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm ci
         working-directory: server
+      # The exam media server is not a regular server dependency (see server/.env.example)
+      - name: Install mediasoup for the exam media server test
+        run: npm install --no-save mediasoup@3.28.0
+        working-directory: server
       - name: Install Chrome for Puppeteer
         run: npx puppeteer browsers install chrome
       - name: Build Next.js (pre-compile so e2e uses next start, not next dev)

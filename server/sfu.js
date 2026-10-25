@@ -22,7 +22,14 @@ const producersByRoom = new Map(); // roomCode -> Map<producerId, { producer, so
 
 function getWorker() {
   if (!workerPromise) {
-    const mediasoup = require('mediasoup');
+    let mediasoup;
+    try {
+      mediasoup = require('mediasoup');
+    } catch (err) {
+      // Not a regular dependency: its install compiles a large C++ worker where no prebuilt binary
+      // fits, which runs hosts like Render out of memory. Only the media server machine needs it.
+      throw new Error('media server unavailable: mediasoup is not installed (run "npm install --no-save mediasoup@3.28.0" in server/)');
+    }
     workerPromise = mediasoup.createWorker({
       logLevel: 'warn',
       rtcMinPort: Number(process.env.SFU_RTC_MIN_PORT || 40000),
