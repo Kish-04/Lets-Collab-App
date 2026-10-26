@@ -86,7 +86,13 @@ export const permissionLevels = [
     { id: "full" as const, label: "Full Control", icon: Zap },
 ]
 
-export const quickChatEmojis = ['👍', '👎', '🙏', '✅', '❌', '🔥', '😂', '🎉', '💡', '🤔', '🚀', '❤️', '👀', '✨']
+// One-tap reactions above the chat input; the full picker is components/ircp/session/chat/EmojiPicker
+export const quickChatEmojis = ['👍', '❤️', '😂', '🎉', '🔥', '👀', '✅', '🙏', '💡', '🚀']
+// The server keeps at most this many characters of a plain-text message (server/index.js chat-message)
+export const chatMessageMaxLength = 1000
+// Prefixes the page gives its device-only lines (pushLocalChatLine), so the chat can style them
+export const petChatPrefix = '🐶 [Pet AI]:'
+export const warningChatPrefix = '⚠️ [System Warning]:'
 
 export const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
 // Secure aggregation with differential privacy (DP-FedAvg): every update is clipped to L2 norm 1 and

@@ -149,11 +149,11 @@ test('host and participant run a live session through the UI', { timeout: 600000
   // End-to-end encrypted chat, both directions, through the real chat UI
   const sendChat = async (page, text) => {
     await page.bringToFront() // background tabs are throttled on slow CI runners
-    const chatInput = 'input[placeholder="Message everyone"]'
+    const chatInput = '[aria-label="Chat message"]'
     // DOM click, not a coordinate click: a toast or panel overlapping the header must not swallow it
     if (!(await page.$(chatInput))) await page.$eval('[aria-label="Toggle Session Chat"]', button => button.click())
     await page.waitForSelector(chatInput, { visible: true, timeout: 30000 })
-    await page.waitForFunction(() => document.body.innerText.includes('E2E ') && !document.body.innerText.includes('E2E pending'), { timeout: 120000 })
+    await page.waitForFunction(() => Boolean(document.querySelector('[aria-label^="End-to-end encrypted. Host key"]')), { timeout: 120000 })
       .catch(async err => {
         const state = await page.evaluate(() => ({
           socketId: window._socket?.id,
@@ -161,12 +161,12 @@ test('host and participant run a live session through the UI', { timeout: 600000
           room: window._roomCode?.current,
           secure: window.isSecureContext,
           subtle: Boolean(window.crypto?.subtle),
-          chatBadge: Array.from(document.querySelectorAll('span')).map(s => s.innerText).filter(t => t.startsWith('E2E')),
+          chatBadge: Array.from(document.querySelectorAll('[aria-label*="encrypt"]')).map(el => el.getAttribute('aria-label')),
         }))
         console.log('[sendChat] E2E key never arrived:', JSON.stringify(state))
         throw err
       })
-    await page.type('input[placeholder="Message everyone"]', text)
+    await page.type('[aria-label="Chat message"]', text)
     await page.keyboard.press('Enter')
   }
   await sendChat(host, 'hello from the host')
