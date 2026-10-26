@@ -22,16 +22,20 @@ contextBridge.exposeInMainWorld('api', {
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels
-    const validChannels = ['execute-input', 'set-remote-input-lock', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'set-pet-enabled', 'set-ignore-mouse-events'];
+    const validChannels = ['execute-input', 'set-remote-input-lock', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'set-pet-enabled', 'set-ignore-mouse-events', 'enable-kiosk-mode'];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
     }
   },
   on: (channel, func) => {
-    const validChannels = ['system-event', 'pet-sync-state', 'panic-revoke-control'];
+    const validChannels = ['system-event', 'pet-sync-state', 'panic-revoke-control', 'anticheat-alert'];
     if (validChannels.includes(channel)) {
-      // Deliberately strip event as it includes `sender` 
-      ipcRenderer.on(channel, (event, ...args) => func(...args));
+      // Deliberately strip event as it includes `sender`
+      const listener = (event, ...args) => func(...args);
+      ipcRenderer.on(channel, listener);
+      // Callers can stop listening (e.g. when a supervised exam ends)
+      return () => ipcRenderer.removeListener(channel, listener);
     }
+    return () => {};
   }
 });

@@ -729,3 +729,29 @@ test('violation evidence must be an image or video from a member of the room', a
   assert.equal(ok.status, 200)
   assert.match((await ok.json()).url, /^\/uploads\/evidence\/\d+-[0-9a-f-]{36}\.png$/)
 })
+
+test('the host is told which candidate a malpractice alert is about, with per-candidate counts', async () => {
+  const { host, controllers: [first, second], roomCode } = await supervisedRoom(2)
+  const aboutSecond = once(host, 'candidate-malpractice', alert => alert.controllerId === second.id)
+  second.emit('system-alert', { room: roomCode, type: 'anticheat_violation', event: 'LOOKING_AWAY', label: 'Looking away from the screen', severity: 'medium', message: 'Head turned', penalty: 8 })
+  const alert = await aboutSecond
+  assert.equal(alert.name, 'Cand1')
+  assert.equal(alert.type, 'LOOKING_AWAY')
+  assert.equal(alert.label, 'Looking away from the screen')
+  assert.equal(alert.severity, 'medium')
+  assert.equal(alert.count, 1)
+  assert.equal(alert.candidateRisk, 8)
+
+  const again = once(host, 'candidate-malpractice', a => a.controllerId === second.id && a.count === 2)
+  second.emit('system-alert', { room: roomCode, type: 'anticheat_violation', event: 'LOOKING_AWAY', message: 'Head turned', penalty: 12 })
+  assert.equal((await again).candidateRisk, 20)
+
+  // The first candidate's alert carries its own name, and candidates never receive these reports
+  const leaked = noEvent(first, 'candidate-malpractice', 800)
+  const aboutFirst = once(host, 'candidate-malpractice', a => a.controllerId === first.id)
+  first.emit('system-alert', { room: roomCode, type: 'anticheat_violation', event: 'PHONE_DETECTED', message: 'Phone on camera', penalty: 25 })
+  const firstAlert = await aboutFirst
+  assert.equal(firstAlert.name, 'Cand0')
+  assert.equal(firstAlert.label, 'Phone on camera') // falls back to the message
+  await leaked
+})

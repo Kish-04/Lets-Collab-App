@@ -474,30 +474,53 @@ ipcMain.on('toggle-fullscreen', (event) => {
   if (win) win.setFullScreen(!win.isFullScreen());
 });
 
-ipcMain.on('enable-kiosk-mode', (event, enable) => {
+// Remote-control, remote-desktop and screen-recording programs looked for during a supervised exam
+const EXAM_BANNED_PROCESSES = [
+  'teamviewer', 'anydesk', 'rustdesk', 'remoting_host', 'parsecd', 'parsec', 'vncserver', 'winvnc', 'tvnserver',
+  'ultravnc', 'splashtop', 'ammyy', 'supremo', 'zohoassist', 'logmein', 'screenconnect', 'obs64', 'obs', 'discord',
+];
+
+// The exam page asks for the process scan with { scan: true } (kiosk stays as it is); the original
+// boolean form still turns kiosk mode and the scan on or off together.
+ipcMain.on('enable-kiosk-mode', (event, options) => {
   if (!isTrustedIpcSender(event, 'enable-kiosk-mode')) return;
+  const settings = typeof options === 'boolean' ? { kiosk: options, scan: options } : (options || {});
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (win) {
-    win.setKiosk(enable);
-    win.setAlwaysOnTop(enable, 'screen-saver');
+  if (win && typeof settings.kiosk === 'boolean') {
+    win.setKiosk(settings.kiosk);
+    win.setAlwaysOnTop(settings.kiosk, 'screen-saver');
   }
-  if (enable) {
-    const exec = require('child_process').exec;
-    const badProcesses = ['obs64.exe', 'TeamViewer.exe', 'AnyDesk.exe', 'Discord.exe'];
-    processScanInterval = setInterval(() => {
-      exec('tasklist', (err, stdout) => {
-        if (!err && stdout) {
-          badProcesses.forEach(proc => {
-            if (stdout.toLowerCase().includes(proc.toLowerCase())) {
-              event.sender.send('anticheat-alert', { type: 'BANNED_PROCESS', message: `Banned process running: ${proc}`, penalty: 30 });
-            }
-          });
-        }
+  if (typeof settings.scan !== 'boolean') return;
+  if (processScanInterval) clearInterval(processScanInterval);
+  processScanInterval = null;
+  if (!settings.scan) return;
+
+  const sender = event.sender;
+  const reported = new Set();
+  const alert = (key, payload) => {
+    if (reported.has(key) || sender.isDestroyed()) return;
+    reported.add(key);
+    sender.send('anticheat-alert', payload);
+  };
+  const scan = () => {
+    // A Windows Remote Desktop session runs the whole exam on another computer's screen
+    if (process.platform === 'win32' && /^rdp-/i.test(process.env.SESSIONNAME || '')) {
+      alert('rdp', { type: 'REMOTE_DESKTOP', message: 'The exam is running inside a Remote Desktop (RDP) session', penalty: 30 });
+    }
+    const command = process.platform === 'win32' ? 'tasklist /fo csv /nh' : 'ps -A -o comm=';
+    require('child_process').exec(command, { windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      if (err || !stdout) return;
+      const names = new Set(stdout.split(/\r?\n/).map(line => {
+        const raw = process.platform === 'win32' ? (line.split('","')[0] || '').replace(/^"/, '') : line.trim().split('/').pop();
+        return String(raw || '').toLowerCase().replace(/\.exe$/, '');
+      }).filter(Boolean));
+      EXAM_BANNED_PROCESSES.forEach(proc => {
+        if (names.has(proc)) alert(proc, { type: 'BANNED_PROCESS', message: `Remote-control or recording program running: ${proc}`, penalty: 30 });
       });
-    }, 10000);
-  } else {
-    if (processScanInterval) clearInterval(processScanInterval);
-  }
+    });
+  };
+  scan();
+  processScanInterval = setInterval(scan, 10000);
 });
 
 ipcMain.on('set-clipboard-guard', (event, locked) => {

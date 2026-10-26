@@ -10,6 +10,7 @@ import { Volume2, VolumeX } from 'lucide-react'
 import { RobotScene } from './RobotScene'
 import { useRobotStore, EmotionState } from './StateMachine'
 import { useInactivitySleep, useDOMObserver } from './Interaction'
+import { suppressAudioProctoringFor } from '@/lib/proctoringPolicy'
 
 // Invisible hit-target sphere
 function InteractionCatcher({
@@ -173,11 +174,20 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     }
   }, [hovered, chatOpen, detailsOpen, isStandalone])
 
+  // Messages pushed by the page are proctoring warnings (to a candidate) or malpractice reports (to the
+  // host): show them in an alert bubble, shake the robot for attention and play the warning sound
+  const [alertKey, setAlertKey] = useState(0)
   useEffect(() => {
     if (petMessage) {
       setChatOpen(false); // Force speech bubble outside chat
       setAiResponse(petMessage);
       setEmotion('Warning');
+      setAlertKey(k => k + 1);
+      animate(rotate, [0, -10, 10, -7, 7, -3, 0], { duration: 0.7, ease: 'easeInOut' });
+      // The floating desktop pet stays silent while its window is hidden (the main window is showing)
+      if (isStandalone && typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      // The robot's beeps must not be heard by the exam microphone as "talking"
+      suppressAudioProctoringFor(900 + petMessage.replace(/[^a-zA-Z0-9]/g, '').length * 40);
       import('./Sounds').then(m => {
         m.playWarningTone();
         m.speakText(petMessage);
@@ -185,7 +195,8 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
     } else {
       setAiResponse(null);
     }
-  }, [petMessage, setEmotion]);
+  }, [petMessage, setEmotion, rotate, isStandalone]);
+  const isAlert = Boolean(petMessage) && aiResponse === petMessage
 
   const handleClick = useCallback(() => {
     import('./Sounds').then(m => m.playHoverBeep())
@@ -385,14 +396,23 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         {/* AI Speech Bubble */}
         {aiResponse && !chatOpen && (
           <motion.div
+            key={isAlert ? `alert-${alertKey}` : 'reply'}
+            role={isAlert ? 'alert' : undefined}
             initial={{ opacity: 0, scale: 0.8, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            animate={isAlert ? { opacity: 1, scale: 1, y: 0, x: [0, -8, 8, -6, 6, -3, 0] } : { opacity: 1, scale: 1, y: 0 }}
+            transition={isAlert ? { x: { duration: 0.6, ease: 'easeInOut' } } : undefined}
             exit={{ opacity: 0, scale: 0.8, y: 10 }}
-            className={isStandalone
+            className={(isStandalone
               ? "absolute bottom-8 right-4 w-64 z-[160] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-neutral-100 p-3 rounded-2xl shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
               : "fixed bottom-[340px] right-24 z-[160] max-w-[250px] max-h-48 overflow-hidden overflow-y-auto bg-neutral-900 border border-neutral-700 text-neutral-100 p-3 rounded-2xl rounded-br-sm shadow-2xl text-sm whitespace-pre-wrap break-words text-left"
-            }
+            ) + (isAlert ? " !border-red-500 !border-2 shadow-[0_0_24px_rgba(239,68,68,0.55)]" : "")}
           >
+            {isAlert && (
+              <span className="mb-1 flex items-center gap-1 pr-6 text-[11px] font-bold uppercase tracking-wider text-red-400">
+                <span className="inline-block h-2 w-2 animate-ping rounded-full bg-red-500" aria-hidden="true" />
+                Proctoring alert
+              </span>
+            )}
             <button
               onClick={closeChat}
               aria-label="Dismiss AI Pet message"

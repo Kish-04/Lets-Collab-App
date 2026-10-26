@@ -1,5 +1,6 @@
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import type * as cocoSsd from "@tensorflow-models/coco-ssd";
+import { SustainedSignal, proctoringRule, audioProctoringSuppressed, type ProctoringSeverity } from "./proctoringPolicy";
 
 // Robust suppression of Next.js Turbopack dev overlay for AI Wasm errors
 if (typeof window !== "undefined") {
@@ -15,9 +16,10 @@ if (typeof window !== "undefined") {
 }
 
 export type AntiCheatEvent = {
-  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY" | "SYSTEM" | "BLINK_ANOMALY" | "FORBIDDEN_OBJECT";
+  type: "NO_FACE" | "MULTIPLE_FACES" | "LOOKING_AWAY" | "PHONE_DETECTED" | "VOICE_DETECTED" | "TAB_SWITCHED" | "TALKING_DETECTED" | "STRESS_DETECTED" | "EMOTION_ANOMALY" | "SYSTEM" | "BLINK_ANOMALY" | "FORBIDDEN_OBJECT" | "FACE_OUT_OF_FRAME";
   message: string;
   scorePenalty: number;
+  severity?: ProctoringSeverity;
 };
 
 export type InitStatus = "idle" | "loading" | "ready" | "error";
@@ -31,12 +33,35 @@ export interface AntiCheatConfig {
 }
 
 const DEFAULT_CONFIG: AntiCheatConfig = {
-  eyeTrackingThreshold: 0.80,
+  eyeTrackingThreshold: 0.60,
   emotionSensitivity: 0.65,
   // Normalised 0-1 level of the speech band (see speechBandLevel), the same scale calibrate() writes
   audioVolumeThreshold: 0.05,
-  headPoseMargin: 0.50,
+  headPoseMargin: 0.30,
   baselineBlinkRate: 15
+};
+
+// Supervised-mode strictness. The host's calibration can make these stricter, never laxer.
+const STRICT = {
+  /** Nose offset from the eye midpoint, in eye widths; ~0.30 is a head turn of roughly 35 degrees */
+  MAX_HEAD_POSE_MARGIN: 0.32,
+  MIN_HEAD_POSE_MARGIN: 0.20,
+  /** Horizontal gaze (average of the two eyes' eyeLookIn/Out blendshapes) */
+  MAX_GAZE_THRESHOLD: 0.60,
+  /** Face analysis rate (ms between frames) and object detection rate */
+  FACE_INTERVAL_MS: 100,
+  OBJECT_INTERVAL_MS: 700,
+  /** COCO-SSD per-class minimum confidence. Phones are small, so they get the lowest bar. */
+  OBJECT_MIN_SCORE: { 'cell phone': 0.45, 'book': 0.55, 'laptop': 0.60, 'tv': 0.60, 'person': 0.60 } as Record<string, number>,
+  /** A face narrower than this fraction of the frame is too far away to proctor */
+  MIN_FACE_WIDTH: 0.12,
+};
+
+const OBJECT_TEXT: Record<string, string> = {
+  'cell phone': 'Phone detected on camera',
+  'book': 'Book or notes detected on camera',
+  'laptop': 'Second laptop/device detected on camera',
+  'tv': 'Second screen detected on camera',
 };
 
 export class AntiCheatEngine {
@@ -46,41 +71,42 @@ export class AntiCheatEngine {
   private eventCallback: ((event: AntiCheatEvent) => void) | null = null;
   private statusCallback: ((status: InitStatus, message: string) => void) | null = null;
   private lastEventTimes: Record<string, number> = {};
-  private frameCount: number = 0;
-  private lastTimestamp: number = 0;
-  private lastPredictions: any[] | null = null;
   private audioContext: AudioContext | null = null;
   private audioAnalyser: AnalyserNode | null = null;
-  private speechRecognition: any = null;
-  // True only between the recogniser's onstart and its onerror/onend: an errored or stopped
-  // recogniser must not silence the loud-noise check
-  private speechRecognitionActive: boolean = false;
-  private missingFaceFrames: number = 0;
-  
+
   private isProcessingFace: boolean = false;
   private isProcessingObject: boolean = false;
+  private lastFaceAt = 0;
+  private lastObjectAt = 0;
+  private lastAudioAt = 0;
+
+  // Sustained-detection windows: one bad frame never raises an alarm
+  private signals = {
+    noFace: new SustainedSignal(3000, 0.85),
+    multipleFaces: new SustainedSignal(2000, 0.6),
+    headPose: new SustainedSignal(2000, 0.8),
+    gaze: new SustainedSignal(2500, 0.8),
+    outOfFrame: new SustainedSignal(5000, 0.8, 15000),
+    // Objects are sampled ~1.4 times a second: 2 of ~4 samples within 3 s
+    phone: new SustainedSignal(3000, 0.5, 8000, 2),
+    book: new SustainedSignal(3000, 0.5, 8000, 2),
+    screen: new SustainedSignal(3000, 0.6, 10000, 2),
+    person: new SustainedSignal(3000, 0.6, 10000, 2),
+    // Speech-band energy sampled every 100 ms: talking is 60% of 1.5 s above the calibrated level
+    talking: new SustainedSignal(1500, 0.6, 6000, 8),
+  };
 
   private lastKeyDownTime = 0;
   private keyDwellTimes: number[] = [];
-  private keyFlightTimes: number[] = [];
   private baselineDwellTime = 0;
-  private baselineFlightTime = 0;
 
   public initStatus: InitStatus = "idle";
-  private config: AntiCheatConfig = DEFAULT_CONFIG;
-  private blinkTimestamps: number[] = [];
-  private isBlinking: boolean = false;
-  private audioSpikeCount: number = 0;
-  private continuousAudioStartTime: number = 0;
-  private blinkBuckets: number[] = [];
-  private currentBucketBlinks: number = 0;
-  private lastBucketTime: number = 0;
-  private sessionStartTime: number = 0;
+  private config: AntiCheatConfig = { ...DEFAULT_CONFIG };
 
   public setConfig(newConfig: Partial<AntiCheatConfig>) {
     this.config = { ...this.config, ...newConfig };
   }
-  
+
   public getConfig() {
     return this.config;
   }
@@ -106,6 +132,9 @@ export class AntiCheatEngine {
         outputFaceBlendshapes: true,
         runningMode: "VIDEO",
         numFaces: 3,
+        // Stricter than the 0.5 default so a face half out of frame or a face on a poster still counts
+        minFaceDetectionConfidence: 0.4,
+        minFacePresenceConfidence: 0.4,
       });
 
       this.objectModel = await cocoSsd.load({ base: "lite_mobilenet_v2" });
@@ -142,13 +171,17 @@ export class AntiCheatEngine {
     this.statusCallback?.(status, message);
   }
 
+  private headPoseMargin() {
+    return Math.min(STRICT.MAX_HEAD_POSE_MARGIN, Math.max(STRICT.MIN_HEAD_POSE_MARGIN, this.config.headPoseMargin));
+  }
+
   async calibrate(videoElement: HTMLVideoElement, audioStream?: MediaStream): Promise<void> {
     if (this.initStatus !== "ready") return;
     this.setStatus("loading", "Calibrating Environment...");
 
     let tempAudioCtx: AudioContext | null = null;
     let tempAnalyser: AnalyserNode | null = null;
-    
+
     if (audioStream && audioStream.getAudioTracks().length > 0 && audioStream.getAudioTracks()[0].enabled) {
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -160,9 +193,10 @@ export class AntiCheatEngine {
       } catch (err) {}
     }
 
-    let volumeSamples: number[] = [];
-    let poseVariances: number[] = [];
-    const TOTAL_SAMPLES = 20;
+    const volumeSamples: number[] = [];
+    const poseVariances: number[] = [];
+    // 3 s of samples: enough for a stable ambient-noise and resting head-pose baseline
+    const TOTAL_SAMPLES = 30;
     let samplesCollected = 0;
 
     return new Promise((resolve) => {
@@ -188,13 +222,16 @@ export class AntiCheatEngine {
         if (samplesCollected >= TOTAL_SAMPLES) {
           clearInterval(sampleInterval);
           if (volumeSamples.length > 0) {
-            const avgNoise = volumeSamples.reduce((a, b) => a + b, 0) / volumeSamples.length;
-            // Same margins as before (floor 20, noise + 15 on the 0-255 byte scale), expressed on 0-1
-            this.config.audioVolumeThreshold = Math.max(20 / 255, avgNoise + 15 / 255);
+            // Median, so one cough during calibration does not raise the bar for the whole exam
+            const sorted = [...volumeSamples].sort((a, b) => a - b);
+            const ambient = sorted[Math.floor(sorted.length / 2)];
+            // Speech must clear the room noise by 12 (0-255 byte scale), and never sit under 16
+            this.config.audioVolumeThreshold = Math.max(16 / 255, ambient + 12 / 255);
           }
           if (poseVariances.length > 5) {
             const avgVar = poseVariances.reduce((a,b)=>a+b,0)/poseVariances.length;
-            this.config.headPoseMargin = Math.max(0.35, avgVar + 0.2);
+            // Resting offset (camera not centred) plus a margin, clamped to the strict range
+            this.config.headPoseMargin = Math.min(STRICT.MAX_HEAD_POSE_MARGIN, Math.max(STRICT.MIN_HEAD_POSE_MARGIN, avgVar + 0.15));
           }
           if (tempAudioCtx) tempAudioCtx.close().catch(() => {});
           this.setStatus("ready", "Proctoring Ready ✓");
@@ -207,8 +244,10 @@ export class AntiCheatEngine {
   async start(videoElement: HTMLVideoElement, canvasElement?: HTMLCanvasElement, audioStream?: MediaStream) {
     if (this.isRunning) return;
     this.isRunning = true;
-    this.sessionStartTime = performance.now();
 
+    // Talking is detected on this device from the speech band of the microphone. The browser's
+    // SpeechRecognition (which streams audio to a cloud service and is missing in Electron/Firefox)
+    // is no longer used; on-device speech/whisper/conversation classification runs in useAudioProctoring.
     if (audioStream && audioStream.getAudioTracks().length > 0) {
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -216,37 +255,9 @@ export class AntiCheatEngine {
         const source = this.audioContext.createMediaStreamSource(audioStream);
         this.audioAnalyser = this.audioContext.createAnalyser();
         this.audioAnalyser.fftSize = 256;
+        // Smooth over ~100 ms so short clicks (typing) do not look like speech
+        this.audioAnalyser.smoothingTimeConstant = 0.6;
         source.connect(this.audioAnalyser);
-      } catch (err) {}
-
-      try {
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (SpeechRecognition) {
-          this.speechRecognition = new SpeechRecognition();
-          this.speechRecognition.continuous = true;
-          this.speechRecognition.interimResults = true;
-          this.speechRecognition.onresult = (event: any) => {
-            let finalTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    finalTranscript += event.results[i][0].transcript.toLowerCase();
-                }
-            }
-            if (finalTranscript.length > 0) {
-                const forbiddenWords = ['answer', 'help', 'cheat', 'what is', 'tell me', 'search'];
-                const found = forbiddenWords.some(w => finalTranscript.includes(w));
-                if (found) {
-                    this.emitEvent("VOICE_DETECTED" as any, `Suspicious speech detected: "${finalTranscript.trim()}"`, 10);
-                } else {
-                    this.emitEvent("TALKING_DETECTED", "Human voice / talking detected", 2);
-                }
-            }
-          };
-          this.speechRecognition.onstart = () => { this.speechRecognitionActive = true; };
-          this.speechRecognition.onerror = () => { this.speechRecognitionActive = false; };
-          this.speechRecognition.onend = () => { this.speechRecognitionActive = false; };
-          this.speechRecognition.start();
-        }
       } catch (err) {}
     }
 
@@ -254,81 +265,63 @@ export class AntiCheatEngine {
 
     const processFrame = async () => {
       if (!this.isRunning) return;
+      const now = performance.now();
+      const wallNow = Date.now();
+
+      if (this.audioAnalyser && this.audioContext && now - this.lastAudioAt >= 100) {
+        this.lastAudioAt = now;
+        if (this.audioContext.state === 'suspended') {
+            this.audioContext.resume().catch(() => {});
+        }
+        // Average volume of just the speech frequencies, so random noise spikes do not count
+        const level = this.speechBandLevel(this.audioAnalyser);
+        const loud = level > this.config.audioVolumeThreshold && !audioProctoringSuppressed(wallNow);
+        if (this.signals.talking.update(loud, wallNow)) {
+          this.emitEvent("VOICE_DETECTED", "Talking detected (sustained voice-level sound on the microphone)");
+        }
+      }
+
       if (videoElement.readyState >= 2 && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
         if (ctx && canvasElement) {
           if (canvasElement.width !== videoElement.videoWidth) {
               canvasElement.width = videoElement.videoWidth;
               canvasElement.height = videoElement.videoHeight;
           }
-          ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         }
 
-        if (this.audioAnalyser && this.audioContext) {
-          if (this.audioContext.state === 'suspended') {
-              this.audioContext.resume().catch(() => {});
-          }
-          // Use average volume of just the speech frequencies to prevent random noise spikes from triggering it
-          const normalizedVolume = this.speechBandLevel(this.audioAnalyser);
-          
-          if (normalizedVolume > this.config.audioVolumeThreshold) {
-              // Speech recognition reports talking itself, but only while it is actually listening
-              if (!this.speechRecognitionActive) {
-                  this.emitEvent("VOICE_DETECTED" as any, "Loud noise detected (potential talking)", 5);
-              }
-          }
-        }
-
-        if (this.objectModel && !this.isProcessingObject) {
+        if (this.objectModel && !this.isProcessingObject && now - this.lastObjectAt >= STRICT.OBJECT_INTERVAL_MS) {
           this.isProcessingObject = true;
-          this.objectModel.detect(videoElement).then(predictions => {
-              const forbidden = predictions.filter(p => p.class === "cell phone" || p.class === "book" || p.class === "laptop");
-              if (forbidden.length > 0) {
-                  this.emitEvent("FORBIDDEN_OBJECT", `Forbidden object (${forbidden[0].class}) detected`, 15);
+          this.lastObjectAt = now;
+          this.objectModel.detect(videoElement, 10, 0.3).then(predictions => {
+              const seen = (cls: string) => predictions.find(p => p.class === cls && p.score >= (STRICT.OBJECT_MIN_SCORE[cls] ?? 0.6));
+              const t = Date.now();
+              const phone = seen('cell phone');
+              const book = seen('book');
+              const screen = seen('laptop') || seen('tv');
+              const people = predictions.filter(p => p.class === 'person' && p.score >= STRICT.OBJECT_MIN_SCORE.person).length;
+              if (this.signals.phone.update(!!phone, t) && phone) {
+                  this.emitEvent("FORBIDDEN_OBJECT", `${OBJECT_TEXT['cell phone']} (${Math.round(phone.score * 100)}% confidence)`, undefined, 'object:phone');
+              }
+              if (this.signals.book.update(!!book, t) && book) {
+                  this.emitEvent("FORBIDDEN_OBJECT", `${OBJECT_TEXT.book} (${Math.round(book.score * 100)}% confidence)`, undefined, 'object:book');
+              }
+              if (this.signals.screen.update(!!screen, t) && screen) {
+                  this.emitEvent("FORBIDDEN_OBJECT", `${OBJECT_TEXT[screen.class] || 'Second screen detected'} (${Math.round(screen.score * 100)}% confidence)`, undefined, 'object:screen');
+              }
+              // A second person can be in frame without showing their face (behind or beside the candidate)
+              if (this.signals.person.update(people >= 2, t)) {
+                  this.emitEvent("MULTIPLE_FACES", `${people} people detected in the camera view`);
               }
           }).catch(() => {}).finally(() => {
-              setTimeout(() => { this.isProcessingObject = false; }, 800);
+              this.isProcessingObject = false;
           });
         }
 
-        if (this.faceLandmarker && !this.isProcessingFace) {
+        if (this.faceLandmarker && !this.isProcessingFace && now - this.lastFaceAt >= STRICT.FACE_INTERVAL_MS) {
+          this.lastFaceAt = now;
           try {
             this.isProcessingFace = true;
-            const result = this.faceLandmarker.detectForVideo(videoElement, performance.now());
-            if (result.faceLandmarks.length === 0) {
-              this.missingFaceFrames++;
-              if (this.missingFaceFrames > 30) {
-                  this.emitEvent("NO_FACE", "Please face the camera", 10);
-                  this.missingFaceFrames = 0;
-              }
-            } else {
-              this.missingFaceFrames = 0;
-              if (result.faceLandmarks.length > 1) {
-                  this.emitEvent("MULTIPLE_FACES", "Multiple people detected in frame", 15);
-              }
-              const marks = result.faceLandmarks[0];
-              const eyeW = Math.abs(marks[263].x - marks[33].x);
-              if (Math.abs(marks[1].x - (marks[33].x + marks[263].x)/2) / eyeW > this.config.headPoseMargin) {
-                  this.emitEvent("LOOKING_AWAY", "Direct gaze lost", 5);
-              }
-              
-              if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
-                  const blendshapes = result.faceBlendshapes[0].categories;
-                  let isDartingEyes = false;
-                  for (const shape of blendshapes) {
-                      if (shape.categoryName.startsWith('eyeLook') && shape.score > this.config.eyeTrackingThreshold) {
-                          isDartingEyes = true;
-                      }
-                  }
-                  if (isDartingEyes) {
-                      this.emitEvent("LOOKING_AWAY", "Suspicious precise eye movement (Iris darting) detected", 8);
-                  }
-              }
-              if (ctx && canvasElement) {
-                  ctx.strokeStyle = "rgba(0, 255, 127, 0.7)";
-                  ctx.lineWidth = 2;
-                  ctx.strokeRect(marks[1].x * canvasElement.width - 50, marks[1].y * canvasElement.height - 50, 100, 100);
-              }
-            }
+            this.analyseFaces(this.faceLandmarker.detectForVideo(videoElement, now), wallNow, ctx || null, canvasElement);
           } catch (e) {} finally {
             this.isProcessingFace = false;
           }
@@ -339,12 +332,73 @@ export class AntiCheatEngine {
     requestAnimationFrame(processFrame);
   }
 
+  private analyseFaces(result: ReturnType<FaceLandmarker['detectForVideo']>, now: number, ctx: CanvasRenderingContext2D | null, canvasElement?: HTMLCanvasElement) {
+    const faces = result.faceLandmarks || [];
+    if (this.signals.noFace.update(faces.length === 0, now)) {
+      this.emitEvent("NO_FACE", "No face visible on camera for 3 seconds");
+    }
+    if (this.signals.multipleFaces.update(faces.length > 1, now)) {
+      this.emitEvent("MULTIPLE_FACES", `${faces.length} faces detected in the camera view`);
+    }
+    if (ctx && canvasElement) ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    if (faces.length === 0) {
+      // Pose and gaze cannot be judged without a face; start their windows afresh when it returns
+      this.signals.headPose.update(false, now);
+      this.signals.gaze.update(false, now);
+      return;
+    }
+
+    const marks = faces[0];
+    let minX = 1, maxX = 0, minY = 1, maxY = 0;
+    for (const m of marks) {
+      if (m.x < minX) minX = m.x;
+      if (m.x > maxX) maxX = m.x;
+      if (m.y < minY) minY = m.y;
+      if (m.y > maxY) maxY = m.y;
+    }
+    const tooFar = maxX - minX < STRICT.MIN_FACE_WIDTH;
+    const clipped = minX < 0.005 || maxX > 0.995 || minY < 0.005 || maxY > 0.995;
+    if (this.signals.outOfFrame.update(tooFar || clipped, now)) {
+      this.emitEvent("FACE_OUT_OF_FRAME", tooFar ? "Face too far from the camera" : "Face partly out of the camera frame");
+    }
+
+    const eyeW = Math.abs(marks[263].x - marks[33].x) || 1e-6;
+    const poseOffset = Math.abs(marks[1].x - (marks[33].x + marks[263].x) / 2) / eyeW;
+    if (this.signals.headPose.update(poseOffset > this.headPoseMargin(), now)) {
+      this.emitEvent("LOOKING_AWAY", "Head turned away from the screen for 2 seconds");
+    }
+
+    const shapes = result.faceBlendshapes?.[0]?.categories;
+    if (shapes && shapes.length > 0) {
+      const score = (name: string) => shapes.find(s => s.categoryName === name)?.score ?? 0;
+      const blinking = (score('eyeBlinkLeft') + score('eyeBlinkRight')) / 2 > 0.5;
+      // Both eyes turned the same way (left eye out + right eye in, or the reverse). Looking down at the
+      // keyboard is allowed, so only sideways and upward gaze count.
+      const sideways = Math.max(
+        (score('eyeLookOutLeft') + score('eyeLookInRight')) / 2,
+        (score('eyeLookInLeft') + score('eyeLookOutRight')) / 2,
+      );
+      const up = (score('eyeLookUpLeft') + score('eyeLookUpRight')) / 2;
+      const threshold = Math.min(STRICT.MAX_GAZE_THRESHOLD, this.config.eyeTrackingThreshold);
+      const away = !blinking && (sideways > threshold || up > threshold + 0.1);
+      if (this.signals.gaze.update(away, now)) {
+        this.emitEvent("LOOKING_AWAY", "Eyes off the screen (sideways gaze) for over 2 seconds");
+      }
+    }
+
+    if (ctx && canvasElement) {
+      ctx.strokeStyle = "rgba(0, 255, 127, 0.7)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(minX * canvasElement.width, minY * canvasElement.height, (maxX - minX) * canvasElement.width, (maxY - minY) * canvasElement.height);
+    }
+  }
+
   stop() {
     this.isRunning = false;
     if (this.audioContext) this.audioContext.close().catch(() => {});
-    this.speechRecognition?.stop();
-    this.speechRecognition = null;
-    this.speechRecognitionActive = false;
+    this.audioContext = null;
+    this.audioAnalyser = null;
+    Object.values(this.signals).forEach(signal => signal.reset());
   }
 
   public handleKeyEvent(type: 'keydown' | 'keyup', key: string) {
@@ -364,11 +418,13 @@ export class AntiCheatEngine {
       }
   }
 
-  private emitEvent(type: AntiCheatEvent["type"], message: string, scorePenalty: number) {
+  /** Penalty and severity default to the shared proctoring policy for the event's kind */
+  private emitEvent(type: AntiCheatEvent["type"], message: string, scorePenalty?: number, throttleKey: string = type) {
     const now = Date.now();
-    if (!this.lastEventTimes[type] || now - this.lastEventTimes[type] > 5000) {
-      this.lastEventTimes[type] = now;
-      this.eventCallback?.({ type, message, scorePenalty });
+    if (!this.lastEventTimes[throttleKey] || now - this.lastEventTimes[throttleKey] > 5000) {
+      this.lastEventTimes[throttleKey] = now;
+      const rule = proctoringRule(type);
+      this.eventCallback?.({ type, message, scorePenalty: scorePenalty ?? rule.penalty, severity: rule.severity });
     }
   }
 }
