@@ -2,7 +2,7 @@
   "expo": {
     "name": "Let's Collab Admin",
     "slug": "lets-collab-mobile",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "letscollabmobile",
@@ -15,7 +15,7 @@
       }
     },
     "android": {
-      "versionCode": 3,
+      "versionCode": 4,
       "package": "com.kishankarthiks.letscollabadmin",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
