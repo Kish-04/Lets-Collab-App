@@ -194,7 +194,8 @@ async function sendScores(linkKey, scores) {
         scoreGiven: score.given,
         scoreMaximum: score.maximum,
         activityProgress: 'Completed',
-        gradingProgress: 'FullyGraded',
+        // Code answers wait for the host's review: the LMS shows the grade as not final yet
+        gradingProgress: score.pending ? 'PendingManual' : 'FullyGraded',
         timestamp: new Date().toISOString(),
       }),
     });

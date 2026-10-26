@@ -33,33 +33,38 @@ function executionEnabled() {
     return process.env.NODE_ENV !== 'production';
 }
 
-const refuse = (status: number, message: string) => NextResponse.json({ run: { output: '', stderr: message } }, { status });
+// disabled: true tells the exam UI that running code is switched off here (not an error in the code)
+const refuse = (status: number, message: string, disabled = false) => NextResponse.json({ run: { output: '', stderr: message }, disabled }, { status });
+
+const LANGUAGES = new Set(['html', 'python', 'javascript', 'typescript', 'c', 'cpp', 'rust', 'go', 'java']);
 
 export async function POST(req: Request) {
     try {
-        if (!executionEnabled()) return refuse(403, 'Code execution is disabled on this server.');
+        if (!executionEnabled()) return refuse(403, 'Code execution is not enabled on this server.', true);
         if (!await isSignedIn(req)) return refuse(401, 'Sign in to run code.');
 
         const body = await req.json();
-        const { language, files } = body;
+        const { language, files } = body || {};
+        if (typeof language !== 'string' || !LANGUAGES.has(language)) return refuse(400, 'Unsupported language.');
 
-        if (!files || files.length === 0) {
+        if (!Array.isArray(files) || files.length === 0) {
             return NextResponse.json({ run: { output: 'No files provided', stderr: '' } });
         }
 
-        const code = files[0].content;
+        const code = files[0]?.content;
         if (typeof code !== 'string') return refuse(400, 'Code must be text.');
         if (Buffer.byteLength(code) > MAX_CODE_BYTES) return refuse(413, 'Code is too large to run.');
+        // The browser renders HTML itself: nothing to run (and no temp folder to leave behind)
+        if (language === 'html') {
+            return NextResponse.json({ run: { output: 'HTML is rendered by the browser; there is nothing to run on the server.', stderr: '' } });
+        }
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'execute-'));
-        
+
         let output = '';
         let stderr = '';
         
         try {
-            if (language === 'html') {
-                return NextResponse.json({ run: { output: 'HTML execution is handled natively by the browser. You can safely send this boilerplate to the controller.', stderr: '' } });
-            }
-            else if (language === 'python') {
+            if (language === 'python') {
                 const filePath = path.join(tempDir, 'script.py');
                 await fs.writeFile(filePath, code);
                 const { stdout, stderr: err } = await execAsync(`python "${filePath}"`, { timeout: 5000 });
@@ -67,7 +72,11 @@ export async function POST(req: Request) {
                 stderr = err;
             } else if (language === 'javascript' || language === 'typescript') {
                 const filePath = path.join(tempDir, 'script.js');
-                await fs.writeFile(filePath, code);
+                // Node cannot run type annotations: TypeScript is transpiled first (no type check)
+                const source = language === 'typescript'
+                    ? (await import('typescript')).transpileModule(code, { compilerOptions: { target: 99, module: 1 } }).outputText
+                    : code;
+                await fs.writeFile(filePath, source);
                 const { stdout, stderr: err } = await execAsync(`node "${filePath}"`, { timeout: 5000 });
                 output = stdout;
                 stderr = err;
@@ -106,7 +115,7 @@ export async function POST(req: Request) {
                 return NextResponse.json({ run: { output: `Local execution for ${language} is not configured on this machine.`, stderr: '' } });
             }
         } catch (execError: any) {
-            stderr = execError.message || execError.stderr || 'Execution Error';
+            stderr = execError.stderr || execError.message || 'Execution Error';
             output = execError.stdout || '';
             
             // Clean up common "command not found" errors for user-friendliness
@@ -123,6 +132,6 @@ export async function POST(req: Request) {
 
         return NextResponse.json({ run: { output: output + (stderr ? '\n[STDERR]:\n' + stderr : ''), stderr } });
     } catch (error: any) {
-        return NextResponse.json({ run: { output: '', stderr: error.message } }, { status: 500 });
+        return NextResponse.json({ run: { output: '', stderr: error?.message || 'Execution failed' } }, { status: 500 });
     }
 }
