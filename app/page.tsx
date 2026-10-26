@@ -1,8 +1,8 @@
 "use client"
 
 import React, { useEffect, useRef, useState } from 'react'
-import { motion, useScroll, useTransform, AnimatePresence, useSpring, useVelocity, useAnimationFrame, useMotionValueEvent } from 'framer-motion'
-import { Download, MonitorPlay, ShieldCheck, ChevronRight, Zap, Globe, Layers, Command, Lock, Cpu, Network, Sparkles, ServerOff, Infinity as InfinityIcon, ArrowRight, Play, Maximize2, MousePointer2, User, Gamepad2, Copy, PenTool, Video, Check } from 'lucide-react'
+import { motion, useScroll, useTransform, AnimatePresence, useSpring, useMotionValueEvent } from 'framer-motion'
+import { Download, MonitorPlay, ShieldCheck, Zap, Layers, Lock, Cpu, Network, Sparkles, Infinity as InfinityIcon, ArrowRight, MousePointer2, Check } from 'lucide-react'
 import { AppLogo } from '@/components/ircp/shared'
 import { MagneticButton, TiltCard, VelocityMarquee, TextReveal } from '@/components/landing/Animations'
 import { FeatureOrbit } from '@/components/landing/FeatureOrbit'
@@ -193,7 +193,7 @@ export default function LandingPage() {
         {/* Header */}
         {/* Background Velocity Marquee */}
         <div className="absolute top-[30vh] left-0 right-0 pointer-events-none z-0">
-          <VelocityMarquee baseVelocity={-2}>NO LIMITS NO SERVERS NO LATENCY</VelocityMarquee>
+          <VelocityMarquee baseVelocity={-2}>PEER TO PEER · END TO END ENCRYPTED · LOW LATENCY</VelocityMarquee>
         </div>
 
         {/* Hero Section */}
@@ -250,7 +250,7 @@ export default function LandingPage() {
               transition={{ duration: 1.5, delay: 1 }}
               className="text-lg md:text-2xl text-zinc-400 max-w-3xl mb-16 font-light leading-relaxed"
             >
-              Break free from centralized cloud servers. A hyper-fast, cryptographically secure remote desktop protocol built entirely on raw WebRTC data channels.
+              Screen, voice and control travel peer-to-peer over encrypted WebRTC. A lightweight coordination server handles sign-in, rooms and signalling, and an optional media server relays exam cameras when a class is too big for direct links.
             </motion.p>
 
             <motion.div 
@@ -375,7 +375,7 @@ export default function LandingPage() {
                     transition={{ delay: 3.5, type: "spring", bounce: 0.5 }}
                     className="absolute bottom-10 right-10 px-4 py-2 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/30 backdrop-blur-md shadow-[0_0_20px_rgba(0,212,255,0.2)] text-[var(--accent)] text-xs font-bold flex items-center gap-2 z-50"
                   >
-                    <Zap className="w-4 h-4" /> Zero-Server P2P
+                    <Zap className="w-4 h-4" /> Peer-to-Peer Media
                   </motion.div>
                 </ShowcaseShaderMask>
               </div>
@@ -417,7 +417,7 @@ export default function LandingPage() {
                     { feature: "Server-Enforced Granular Access Tiers", collab: true, competitor: false },
                     { feature: "Blockchain-Verified Session Audit Trail", collab: true, competitor: false },
                     { feature: "Federated On-Device AI Monitoring", collab: true, competitor: false },
-                    { feature: "Zero-Server P2P Unlimited File Sharing", collab: true, competitor: false },
+                    { feature: "Peer-to-Peer File Transfer (No Upload Server)", collab: true, competitor: false },
                     { feature: "AI Virtual Avatars & Composited Recording", collab: true, competitor: false },
                     { feature: "Open-Source, Self-Hosted & Transparent", collab: true, competitor: false },
                   ].map((row, i) => (
@@ -484,32 +484,24 @@ export default function LandingPage() {
             style={{ x: xShowcase }}
             className="flex gap-12 px-12 w-[300vw] relative z-10"
           >
-            {[
-              { title: "Dashboard", desc: "Your command center for sessions." },
-              { title: "Session", desc: "Crystal clear remote view." },
-              { title: "Settings", desc: "Total control over permissions." },
-              { title: "History", desc: "Audit logs of all connections." },
-              { title: "Federated", desc: "Connect local AI models." }
-            ].map((item, i) => (
-              <div 
-                key={i} 
-                className="w-[80vw] md:w-[50vw] shrink-0 aspect-[16/9] rounded-[3rem] bg-zinc-900/50 backdrop-blur-xl border border-[var(--border)]/60 overflow-hidden relative group"
+            {showcaseScreens.map(({ title, desc, Preview }) => (
+              <div
+                key={title}
+                className="w-[80vw] md:w-[50vw] shrink-0 aspect-[16/9] rounded-[2rem] md:rounded-[3rem] bg-zinc-900/50 backdrop-blur-xl border border-[var(--border)]/60 overflow-hidden relative group"
                 onMouseEnter={() => setIsHovering(true)}
                 onMouseLeave={() => setIsHovering(false)}
               >
                 <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center opacity-20" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent z-10" />
-                
-                {/* Fake Image Placeholder */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-32 h-32 rounded-full border border-[var(--border)] flex items-center justify-center">
-                    <AppLogo size="large" />
-                  </div>
+
+                {/* Code-built miniature of the screen */}
+                <div className="absolute inset-3 md:inset-6 transition-transform duration-700 ease-out group-hover:scale-[1.02]">
+                  <Preview />
                 </div>
 
-                <div className="absolute bottom-16 left-16 z-20 translate-y-10 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-700 ease-out">
-                  <h3 className="text-5xl font-black text-[var(--text-primary)] mb-4">{item.title}</h3>
-                  <p className="text-2xl text-zinc-400 font-light">{item.desc}</p>
+                <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black via-black/70 to-transparent z-10 pointer-events-none" />
+                <div className="absolute bottom-5 left-6 md:bottom-12 md:left-12 z-20 transition-transform duration-700 ease-out group-hover:-translate-y-2">
+                  <h3 className="text-2xl md:text-5xl font-black text-[var(--text-primary)] mb-1 md:mb-3">{title}</h3>
+                  <p className="text-sm md:text-2xl text-zinc-400 font-light">{desc}</p>
                 </div>
               </div>
             ))}
@@ -534,11 +526,11 @@ export default function LandingPage() {
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent z-10" />
                 <div className="absolute inset-0 animate-pulse bg-zinc-900/50" />
                 
-                {/* Fallback Avatar UI */}
-                <div className={`absolute z-0 inset-0 flex flex-col items-center justify-center opacity-50 transition-opacity duration-500 ${imageError ? 'opacity-100' : ''}`}>
-                  <User className="w-32 h-32 text-zinc-700 mb-6" />
-                  <span className="text-zinc-500 font-bold uppercase tracking-widest text-xs mb-2">Image Missing</span>
-                  <p className="text-zinc-600 text-sm text-center">Save your photo as<br/><code className="text-[var(--accent)] font-mono">public/kishan.jpg</code></p>
+                {/* Monogram shown if the portrait cannot load */}
+                <div className={`absolute z-0 inset-0 flex items-center justify-center transition-opacity duration-500 ${imageError ? 'opacity-100' : 'opacity-0'}`} aria-hidden={!imageError}>
+                  <div className="w-40 h-40 rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--violet)] flex items-center justify-center text-7xl font-black text-white shadow-[0_0_60px_var(--accent-glow)]">
+                    K
+                  </div>
                 </div>
 
                 {/* Place the image here - using object-cover */}
@@ -734,23 +726,252 @@ export default function LandingPage() {
   )
 }
 
-function BentoCard({ icon, title, description, colSpan = "col-span-1", gradient }: { icon: React.ReactNode, title: string, description: string, colSpan?: string, gradient: string }) {
+/* ---------- Immersive Interface: stylised miniatures of the real screens ---------- */
+
+// The window every miniature sits in: title bar with traffic lights and the screen's route
+function MiniWindow({ route, children, accent = "var(--accent)" }: { route: string, children: React.ReactNode, accent?: string }) {
   return (
-    <div className={`relative p-12 rounded-[3rem] bg-[var(--bg)] border border-[var(--border)]/60 overflow-hidden ${colSpan} h-full`}>
-      <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-700`} />
-      
-      <div className="relative z-10 flex flex-col h-full justify-between gap-12">
-        <div className="w-20 h-20 rounded-[2rem] bg-zinc-900 border border-[var(--border)]/60 flex items-center justify-center text-[var(--text-primary)] shadow-2xl">
-          {React.cloneElement(icon as React.ReactElement<any>, { className: "w-10 h-10" })}
-        </div>
-        <div>
-          <h3 className="text-3xl font-black text-[var(--text-primary)] mb-4">{title}</h3>
-          <p className="text-zinc-400 font-light text-xl leading-relaxed">{description}</p>
-        </div>
+    <div className="h-full w-full rounded-xl md:rounded-2xl border border-[var(--border-bright)] bg-[var(--bg)] shadow-2xl overflow-hidden flex flex-col">
+      <div className="h-5 md:h-7 shrink-0 flex items-center gap-1 md:gap-1.5 px-2 md:px-3 border-b border-[var(--border)] bg-[var(--surface)]">
+        <span className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-[#ff5f56]" />
+        <span className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-[#ffbd2e]" />
+        <span className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-[#27c93f]" />
+        <span className="mx-auto px-2 md:px-3 rounded bg-[var(--bg)] border border-[var(--border)] text-[6px] md:text-[9px] font-mono text-zinc-500 leading-3 md:leading-4">
+          lets-collab<span style={{ color: accent }}>{route}</span>
+        </span>
       </div>
+      <div className="relative flex-1 min-h-0 p-1.5 md:p-3">{children}</div>
     </div>
   )
 }
+
+function MiniBar({ w, className = "" }: { w: string, className?: string }) {
+  return <div className={`h-1 md:h-1.5 rounded-full bg-zinc-700/70 ${className}`} style={{ width: w }} />
+}
+
+function DashboardPreview() {
+  const cards = [
+    { label: "Collaborate", color: "var(--accent)", icon: Network },
+    { label: "Supervised exam", color: "var(--amber)", icon: ShieldCheck },
+    { label: "Admin console", color: "var(--violet)", icon: Layers },
+  ]
+  return (
+    <MiniWindow route="/app">
+      <div className="h-full grid grid-cols-[1.1fr_1fr] gap-2 md:gap-4">
+        <div className="flex flex-col justify-center gap-1.5 md:gap-3 pl-1 md:pl-2">
+          <span className="inline-flex w-fit items-center gap-1 rounded-full border border-[var(--emerald)]/30 bg-[var(--emerald)]/10 px-1.5 md:px-2 py-px text-[5px] md:text-[8px] font-bold uppercase tracking-widest text-[var(--emerald)]">
+            <span className="w-1 h-1 rounded-full bg-[var(--emerald)] animate-pulse" /> Protocol online
+          </span>
+          <div className="font-black leading-[0.95] text-[10px] md:text-2xl text-[var(--text-primary)]">
+            Control your<br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-[var(--accent)] to-[var(--violet)]">Workspace.</span>
+          </div>
+          <MiniBar w="80%" />
+          <MiniBar w="60%" />
+          <div className="mt-1 flex gap-1 md:gap-2">
+            <span className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-1.5 md:px-2 py-px text-[5px] md:text-[8px] font-mono text-zinc-400">3 active nodes</span>
+            <span className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-1.5 md:px-2 py-px text-[5px] md:text-[8px] font-mono text-zinc-400">24ms</span>
+          </div>
+        </div>
+        <div className="flex flex-col justify-center gap-1 md:gap-2">
+          {cards.map(({ label, color, icon: Icon }) => (
+            <div key={label} className="flex items-center gap-1.5 md:gap-2.5 rounded-md md:rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 md:p-2" style={{ borderLeft: `2px solid ${color}` }}>
+              <div className="rounded md:rounded-md border border-[var(--border)] bg-[var(--bg)] p-0.5 md:p-1" style={{ color }}><Icon className="w-2 h-2 md:w-3.5 md:h-3.5" /></div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[6px] md:text-[10px] font-bold text-[var(--text-primary)] truncate">{label}</div>
+                <MiniBar w="70%" className="mt-0.5 md:mt-1 !h-0.5 md:!h-1" />
+              </div>
+              <ArrowRight className="w-2 h-2 md:w-3 md:h-3 text-zinc-500" />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="absolute bottom-1.5 md:bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 md:gap-2 rounded-full border border-[var(--accent)]/40 bg-[var(--surface)] px-2 md:px-3 py-0.5 md:py-1 shadow-[0_0_14px_var(--accent-glow)]">
+        <span className="text-[5px] md:text-[8px] font-bold uppercase tracking-widest text-zinc-500">Join room</span>
+        <span className="font-mono text-[6px] md:text-[10px] font-black tracking-widest text-[var(--text-primary)]">CF8WB8Y7</span>
+        <span className="w-2.5 h-2.5 md:w-4 md:h-4 rounded-full bg-[var(--accent)] flex items-center justify-center"><ArrowRight className="w-1.5 h-1.5 md:w-2.5 md:h-2.5 text-black" /></span>
+      </div>
+    </MiniWindow>
+  )
+}
+
+function SessionPreview() {
+  return (
+    <MiniWindow route="/session?room=CF8WB8Y7">
+      <div className="h-full grid grid-cols-[1fr_auto] gap-1.5 md:gap-3">
+        {/* Shared remote screen */}
+        <div className="relative rounded-md md:rounded-lg border border-[var(--border)] bg-gradient-to-br from-zinc-900 to-[var(--surface)] overflow-hidden">
+          <div className="absolute left-0 right-0 top-0 h-2.5 md:h-4 bg-zinc-800/80 flex items-center gap-1 px-1.5">
+            <MiniBar w="18%" className="!bg-zinc-600" /><MiniBar w="10%" className="!bg-zinc-700" />
+          </div>
+          <div className="absolute left-[8%] top-[22%] w-[48%] h-[58%] rounded border border-zinc-700/60 bg-zinc-950/70 p-1 md:p-2 space-y-0.5 md:space-y-1 font-mono">
+            {["#7dd3fc", "#c4b5fd", "#86efac", "#7dd3fc", "#fcd34d", "#c4b5fd"].map((c, i) => (
+              <div key={i} className="h-0.5 md:h-1 rounded-full" style={{ width: `${40 + ((i * 23) % 50)}%`, background: c, opacity: 0.6 }} />
+            ))}
+          </div>
+          <div className="absolute right-[8%] top-[28%] w-[28%] h-[40%] rounded border border-[var(--accent)]/30 bg-[var(--accent)]/5" />
+          <motion.div
+            animate={{ x: [0, 28, 10, 0], y: [0, 10, -6, 0] }}
+            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+            className="absolute left-[42%] top-[46%] flex items-center gap-0.5"
+          >
+            <MousePointer2 className="w-2.5 h-2.5 md:w-4 md:h-4 text-[var(--accent)]" fill="currentColor" />
+            <span className="rounded-full bg-[var(--accent)] px-1 md:px-1.5 text-[5px] md:text-[8px] font-bold text-black">Bob</span>
+          </motion.div>
+          <span className="absolute left-1 md:left-2 bottom-1 md:bottom-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-1.5 py-px text-[5px] md:text-[8px] font-bold text-[var(--emerald)]">
+            <span className="w-1 h-1 rounded-full bg-[var(--emerald)] animate-pulse" /> Full control
+          </span>
+        </div>
+        {/* Participants + chat */}
+        <div className="w-[26%] min-w-[54px] md:min-w-[120px] flex flex-col gap-1 md:gap-2">
+          {[{ n: "AK", h: 190 }, { n: "BS", h: 275 }].map(p => (
+            <div key={p.n} className="aspect-video rounded-md border border-[var(--border)] bg-zinc-900 flex items-center justify-center relative">
+              <span className="w-3.5 h-3.5 md:w-6 md:h-6 rounded-full flex items-center justify-center text-[5px] md:text-[8px] font-black text-white" style={{ background: `hsl(${p.h} 70% 50%)` }}>{p.n}</span>
+              <span className="absolute right-0.5 bottom-0.5 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full bg-[var(--emerald)]" />
+            </div>
+          ))}
+          <div className="flex-1 rounded-md border border-[var(--border)] bg-[var(--surface)] p-1 md:p-1.5 flex flex-col justify-end gap-0.5 md:gap-1">
+            <div className="self-start rounded-md md:rounded-lg rounded-bl-sm bg-[var(--elevated)] px-1 md:px-1.5 py-px text-[5px] md:text-[8px] text-zinc-300">Can you see it?</div>
+            <div className="self-end rounded-md md:rounded-lg rounded-br-sm bg-[var(--accent)] px-1 md:px-1.5 py-px text-[5px] md:text-[8px] text-black font-emoji">Crystal clear 👍</div>
+            <div className="flex items-center gap-0.5 text-[4px] md:text-[7px] font-bold text-[var(--emerald)]"><Lock className="w-1.5 h-1.5 md:w-2 md:h-2" /> E2E</div>
+          </div>
+        </div>
+      </div>
+    </MiniWindow>
+  )
+}
+
+function ExamPreview() {
+  return (
+    <MiniWindow route="/session?mode=supervised" accent="var(--amber)">
+      <div className="h-full grid grid-cols-[1fr_1.1fr] gap-1.5 md:gap-3">
+        <div className="relative rounded-md md:rounded-lg border border-[var(--border)] bg-gradient-to-b from-zinc-800 to-zinc-950 overflow-hidden">
+          {/* Candidate camera with face tracking box */}
+          <div className="absolute left-1/2 top-[54%] -translate-x-1/2 -translate-y-1/2 w-[46%] aspect-[3/4] rounded-t-full bg-zinc-700/70" />
+          <div className="absolute left-1/2 top-[30%] -translate-x-1/2 w-[30%] aspect-square rounded-full bg-zinc-600/80" />
+          <motion.div
+            animate={{ opacity: [0.6, 1, 0.6] }}
+            transition={{ duration: 2, repeat: Infinity }}
+            className="absolute left-1/2 top-[24%] -translate-x-1/2 w-[40%] aspect-square rounded-md border border-[var(--emerald)]"
+          >
+            <span className="absolute -top-2 md:-top-3 left-0 bg-[var(--emerald)] px-0.5 text-[4px] md:text-[7px] font-bold text-black">face 0.98</span>
+          </motion.div>
+          <span className="absolute left-1 top-1 inline-flex items-center gap-0.5 rounded bg-[var(--red)] px-1 text-[5px] md:text-[8px] font-bold text-white">
+            <span className="w-1 h-1 rounded-full bg-white animate-pulse" /> REC
+          </span>
+        </div>
+        <div className="flex flex-col gap-1 md:gap-2">
+          <div className="rounded-md md:rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 md:p-2">
+            <div className="flex items-center justify-between text-[5px] md:text-[9px] font-bold text-zinc-400 uppercase tracking-wider">
+              <span>Integrity score</span><span className="text-[var(--emerald)]">92</span>
+            </div>
+            <div className="mt-0.5 md:mt-1 h-1 md:h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+              <motion.div initial={{ width: 0 }} whileInView={{ width: "92%" }} transition={{ duration: 1.4 }} className="h-full rounded-full bg-gradient-to-r from-[var(--emerald)] to-[var(--accent)]" />
+            </div>
+          </div>
+          {[
+            { t: "Gaze steady", c: "var(--emerald)" },
+            { t: "Looked away 4s", c: "var(--amber)" },
+            { t: "Tab switch blocked", c: "var(--red)" },
+          ].map(item => (
+            <div key={item.t} className="flex items-center gap-1 md:gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-1 md:px-2 py-0.5 md:py-1">
+              <span className="w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shrink-0" style={{ background: item.c }} />
+              <span className="text-[5px] md:text-[9px] text-zinc-300 truncate">{item.t}</span>
+            </div>
+          ))}
+          <div className="mt-auto flex items-center gap-1 rounded-md border border-[var(--violet)]/30 bg-[var(--violet)]/10 px-1 md:px-2 py-0.5 md:py-1 text-[5px] md:text-[8px] text-[var(--violet)]">
+            <Cpu className="w-1.5 h-1.5 md:w-2.5 md:h-2.5" /> On-device AI, nothing uploaded
+          </div>
+        </div>
+      </div>
+    </MiniWindow>
+  )
+}
+
+function AdminWallPreview() {
+  const tiles = [
+    { n: "Asha", risk: 8 }, { n: "Ravi", risk: 64 }, { n: "Meera", risk: 12 },
+    { n: "Arjun", risk: 31 }, { n: "Nila", risk: 5 }, { n: "Dev", risk: 82 },
+  ]
+  const tone = (risk: number) => risk >= 60 ? "var(--red)" : risk >= 30 ? "var(--amber)" : "var(--emerald)"
+  return (
+    <MiniWindow route="/admin/wall" accent="var(--violet)">
+      <div className="h-full flex flex-col gap-1 md:gap-2">
+        <div className="flex items-center gap-1 md:gap-2">
+          <span className="text-[6px] md:text-[10px] font-black text-[var(--text-primary)]">Exam wall</span>
+          <span className="rounded-full bg-[var(--emerald)]/15 px-1 md:px-1.5 text-[5px] md:text-[8px] font-bold text-[var(--emerald)]">6 live</span>
+          <span className="ml-auto rounded-full bg-[var(--red)]/15 px-1 md:px-1.5 text-[5px] md:text-[8px] font-bold text-[var(--red)]">2 flagged</span>
+        </div>
+        <div className="flex-1 grid grid-cols-3 grid-rows-2 gap-1 md:gap-2">
+          {tiles.map(tile => (
+            <div key={tile.n} className="relative rounded-md border bg-gradient-to-b from-zinc-800 to-zinc-950 overflow-hidden" style={{ borderColor: tone(tile.risk) }}>
+              <div className="absolute left-1/2 top-[30%] -translate-x-1/2 w-[26%] aspect-square rounded-full bg-zinc-600/80" />
+              <div className="absolute left-1/2 top-[58%] -translate-x-1/2 w-[48%] h-[50%] rounded-t-full bg-zinc-700/70" />
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/70 px-1 py-px">
+                <span className="text-[5px] md:text-[8px] font-bold text-zinc-200">{tile.n}</span>
+                <span className="text-[5px] md:text-[8px] font-mono font-bold" style={{ color: tone(tile.risk) }}>{tile.risk}</span>
+              </div>
+              {tile.risk >= 60 && (
+                <motion.span animate={{ opacity: [0, 1, 0] }} transition={{ duration: 1.6, repeat: Infinity }} className="absolute inset-0 ring-1 md:ring-2 ring-inset ring-[var(--red)]" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </MiniWindow>
+  )
+}
+
+function FederatedPreview() {
+  const nodes = [
+    { x: 16, y: 26 }, { x: 84, y: 24 }, { x: 12, y: 74 }, { x: 88, y: 76 }, { x: 50, y: 90 },
+  ]
+  return (
+    <MiniWindow route="/admin/alerts" accent="var(--emerald)">
+      <div className="relative h-full">
+        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
+          {nodes.map((node, i) => (
+            <motion.line
+              key={i}
+              x1={node.x} y1={node.y} x2={50} y2={46}
+              stroke="var(--accent)" strokeWidth={0.5} strokeDasharray="2 2"
+              animate={{ strokeDashoffset: [0, -8] }}
+              transition={{ duration: 1.2, repeat: Infinity, ease: "linear", delay: i * 0.15 }}
+              opacity={0.6}
+            />
+          ))}
+        </svg>
+        {nodes.map((node, i) => (
+          <div key={i} className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5" style={{ left: `${node.x}%`, top: `${node.y}%` }}>
+            <div className="w-4 h-4 md:w-7 md:h-7 rounded-md md:rounded-lg border border-[var(--border-bright)] bg-[var(--surface)] flex items-center justify-center">
+              <MonitorPlay className="w-2 h-2 md:w-3.5 md:h-3.5 text-zinc-400" />
+            </div>
+            <span className="rounded bg-[var(--bg)] px-0.5 text-[4px] md:text-[7px] font-mono text-[var(--emerald)]">Δw ε=0.4</span>
+          </div>
+        ))}
+        <motion.div
+          animate={{ scale: [1, 1.06, 1] }}
+          transition={{ duration: 2.4, repeat: Infinity }}
+          className="absolute left-1/2 top-[46%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 md:gap-1 rounded-lg md:rounded-xl border border-[var(--accent)]/50 bg-[var(--surface)] px-1.5 md:px-3 py-1 md:py-2 shadow-[0_0_24px_var(--accent-glow)]"
+        >
+          <Sparkles className="w-2.5 h-2.5 md:w-4 md:h-4 text-[var(--accent)]" />
+          <span className="text-[5px] md:text-[9px] font-black text-[var(--text-primary)] whitespace-nowrap">Secure aggregation</span>
+          <span className="text-[4px] md:text-[7px] font-mono text-zinc-400 whitespace-nowrap">round 12 · 5 devices · DP noise</span>
+        </motion.div>
+        <div className="absolute left-0 top-0 flex items-center gap-1 rounded-full border border-[var(--emerald)]/30 bg-[var(--emerald)]/10 px-1.5 md:px-2 py-px text-[5px] md:text-[8px] font-bold text-[var(--emerald)]">
+          <ShieldCheck className="w-1.5 h-1.5 md:w-2.5 md:h-2.5" /> Raw video never leaves the device
+        </div>
+      </div>
+    </MiniWindow>
+  )
+}
+
+const showcaseScreens = [
+  { title: "Dashboard", desc: "Pick a role, join a room by code.", Preview: DashboardPreview },
+  { title: "Live Session", desc: "Shared screen, granted control, encrypted chat.", Preview: SessionPreview },
+  { title: "Exam Monitor", desc: "On-device proctoring with a live integrity score.", Preview: ExamPreview },
+  { title: "Admin Wall", desc: "Every candidate camera, flagged by risk.", Preview: AdminWallPreview },
+  { title: "Federated AI", desc: "Models improve without sharing raw data.", Preview: FederatedPreview },
+]
 
 function DownloadCard({ os, status, link, active, icon }: { os: string, status: string, link?: string, active: boolean, icon: React.ReactNode }) {
   return (

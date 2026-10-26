@@ -108,7 +108,7 @@ const { validPermissions, MAX_FEDERATED_WEIGHTS, appearanceKeys, makeId, normali
 const { isClipboardShortcut, isInputAllowed } = require('./inputPolicy');
 const { CHAIN_ALWAYS, CHAIN_NOISY, CHAIN_NOISY_INTERVAL_MS, CHAIN_ROOM_WINDOW_MS, CHAIN_ROOM_MAX, CHAIN_GLOBAL_MAX_PER_MIN, chainGlobalWrites, chainWriteAllowed, ROOM_CREATE_WINDOW_MS, ROOM_CREATE_MAX, roomCreations, roomCreationAllowed, ROLE_SWAP_TTL_MS, rememberRoleSwap, takeRoleSwap } = require('./limits');
 const { SOCKET_RATE_PER_SEC, SOCKET_BURST, SOCKET_EVENT_COST, SOCKET_UNMETERED, socketEventAllowed, guardSocketListener } = require('./socketGuard');
-const { EXAM_TYPES, clampText, sanitizeExamQuestion, publicExamQuestion, sanitizeExamAnswer, normalizeExamText, gradeExamAnswer, examArchive, examQuestionsFor, examSummary, examScores, moveExamAnswers } = require('./exam');
+const { EXAM_GRACE_MS, sanitizeExamQuestion, publicExamQuestion, recordExamDraft, submitExamAnswer, closeExamQuestion, finalizeOpenExam, gradeExamManually, examArchive, examQuestionsFor, examStateFor, examSummary, examScores, moveExamAnswers } = require('./exam');
 
 app.get('/api/sessions/recent', protectAuthenticated, async (req, res) => {
   try {
@@ -331,6 +331,29 @@ function pushEvent(roomCode, type, message) {
   if (room.events.length > 140) room.events.shift();
   // The host's activity panel shows the room log live; candidates never receive it
   if (room.hostSocketId) io.to(room.hostSocketId).emit('room-event', event);
+}
+
+// The host's pet robot names the candidate in every malpractice report ('candidate-malpractice').
+// Each candidate keeps its own risk total and per-kind counts next to the room's shared risk score.
+function notifyHostOfMalpractice(room, participant, { type, label, message, penalty, severity } = {}) {
+  if (!room || !participant || !room.hostSocketId || participant.role === 'host' || participant.role === 'admin') return;
+  const kind = String(type || 'PROCTORING_ALERT').slice(0, 40);
+  const text = String(message || 'Activity detected').slice(0, 300);
+  participant.riskScore = clampNumber((participant.riskScore || 0) + (Number(penalty) || 0), 0, 0, 100);
+  participant.malpracticeCounts = participant.malpracticeCounts || {};
+  participant.malpracticeCounts[kind] = (participant.malpracticeCounts[kind] || 0) + 1;
+  io.to(room.hostSocketId).emit('candidate-malpractice', {
+    controllerId: participant.id,
+    name: participant.name || 'Candidate',
+    type: kind,
+    label: (typeof label === 'string' && label.trim() ? label : text).slice(0, 120),
+    message: text,
+    severity: ['low', 'medium', 'high', 'critical'].includes(severity) ? severity : undefined,
+    penalty,
+    candidateRisk: participant.riskScore,
+    totalRisk: room.riskScore,
+    count: participant.malpracticeCounts[kind],
+  });
 }
 
 function createFederatedState() {
@@ -702,6 +725,8 @@ function serializeSessions() {
     // Counts only: this goes to every admin on every chat message and quality update, and the full
     // exam held voice prompts and recorded answers (megabytes each); archives keep the details
     exam: examSummary(room),
+    // Admin-only: silent exam monitoring starts/stops (never part of the host-visible events)
+    monitorLog: (room.monitorLog || []).slice(-50),
   }));
 }
 
@@ -715,6 +740,7 @@ function signSessionEvidence(session) {
 function broadcastSessions() {
   io.to('admins').emit('sessions-update', serializeSessions());
   io.emit('sessions-count', { active: rooms.size });
+  syncExamMonitors();
 }
 
 // Canonical digest of the chat transcript and evidence, recomputable from an archived SessionLog
@@ -794,6 +820,7 @@ async function reportFaceCheck(roomCode, user, result) {
   if (result.status === 'mismatch') {
     const penalty = applyRiskPenalty(room, 30, 0);
     room.alertCount += 1;
+    notifyHostOfMalpractice(room, participant, { type: 'IDENTITY_MISMATCH', label: 'Face does not match enrolled Face ID', message: text, penalty, severity: 'critical' });
     const alertRecord = {
       room: roomCode,
       hostEmail: room.hostEmail || undefined,
@@ -812,6 +839,51 @@ async function reportFaceCheck(roomCode, user, result) {
   }
   broadcastSessions();
   return true;
+}
+
+// ── Exam wiring (rules live in exam.js) ──────────────────────────────────────────
+function emitExamAnswerToHost(room, questionId, controllerId, answer) {
+  if (!room.hostSocketId) return;
+  io.to(room.hostSocketId).emit('host-live-answer-update', {
+    questionId,
+    controllerId,
+    controllerName: room.controllers.get(controllerId)?.name || answer?.controllerName || 'Unknown',
+    answer,
+  });
+}
+
+// Answers finalised by closing a question: graded ones tell their candidate, all reach the host
+function notifyExamFinalised(room, questionId, finalised = []) {
+  finalised.forEach(([controllerId, entry]) => {
+    if (typeof entry.correct === 'boolean') io.to(controllerId).emit('exam-answer-result', { questionId, correct: entry.correct });
+    emitExamAnswerToHost(room, questionId, controllerId, entry);
+  });
+}
+
+function closeExamQuestionAndNotify(roomCode, questionId, reason) {
+  const room = rooms.get(roomCode);
+  if (!room || room.mode !== 'supervised') return;
+  const finalised = closeExamQuestion(room, questionId);
+  if (!finalised) return; // unknown or already closed
+  notifyExamFinalised(room, questionId, finalised);
+  room.controllers.forEach((_, controllerId) => io.to(controllerId).emit('exam-question-closed', { questionId, reason }));
+  pushEvent(roomCode, 'exam', reason === 'time' ? 'Exam question closed: time is up' : 'Exam question closed by the host');
+  emitRoomState(roomCode);
+}
+
+// Enforced on the server: the question closes at its deadline whatever the candidates' clocks say
+function scheduleExamDeadline(roomCode, question) {
+  if (!question.deadline) return;
+  const delay = Math.max(0, question.deadline + EXAM_GRACE_MS - Date.now());
+  setTimeout(() => closeExamQuestionAndNotify(roomCode, question.id, 'time'), delay).unref();
+}
+
+// Rebuilds a host's or candidate's exam view after a reload or reconnect
+function sendExamState(socket) {
+  const room = rooms.get(socket.roomCode);
+  if (!room || room.mode !== 'supervised') return;
+  if (socket.id !== room.hostSocketId && !room.controllers.has(socket.id)) return;
+  socket.emit('exam-state', examStateFor(room, socket));
 }
 
 function sendLtiGrades(room) {
@@ -838,9 +910,14 @@ async function closeRoomAfterHostLeft(roomId) {
   broadcastSessions();
 }
 
+// Anchors only administrators may know about (silent exam monitoring): recorded and written
+// on-chain like any other, but never announced to the room (no room event, no room chain-log)
+const ADMIN_PRIVATE_ANCHORS = new Set(['ADMIN_MONITOR']);
+
 function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = '') {
   const room = rooms.get(code);
   if (!room) return;
+  const adminPrivate = ADMIN_PRIVATE_ANCHORS.has(eventType);
 
   // Keyed hash so emails on the public chain cannot be recovered by dictionary lookup
   const hashedHost = hashIdentity(hostEmail);
@@ -861,7 +938,7 @@ function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = ''
     // The hash is known at submission; whether it was mined comes later
     onStatus: (status) => {
       anchor.txStatus = status;
-      if (status === 'failed') pushEvent(code, 'chain', `Audit anchor ${eventType} could not be written on-chain`);
+      if (status === 'failed' && !adminPrivate) pushEvent(code, 'chain', `Audit anchor ${eventType} could not be written on-chain`);
     },
   })
     .then((txHash) => {
@@ -869,12 +946,14 @@ function anchorEvent(code, eventType, data, hostEmail = '', controllerEmail = ''
       const liveRoom = rooms.get(code);
       if (!liveRoom || !txHash) return;
       liveRoom.latestTxHash = txHash;
-      pushEvent(code, 'chain', `Audit anchored: ${String(txHash).slice(0, 18)}...`);
-      io.to(code).emit('chain-log', {
-        type: eventType.toLowerCase(),
-        hash: txHash,
-        timestamp: nowTime(),
-      });
+      if (!adminPrivate) {
+        pushEvent(code, 'chain', `Audit anchored: ${String(txHash).slice(0, 18)}...`);
+        io.to(code).emit('chain-log', {
+          type: eventType.toLowerCase(),
+          hash: txHash,
+          timestamp: nowTime(),
+        });
+      }
       io.to('admins').emit('chain-log', {
         roomId: code,
         type: eventType.toLowerCase(),
@@ -979,6 +1058,7 @@ async function archiveSession(roomCode, reason) {
   if (!room || room.archived) return;
   room.archived = true;
   anchorEvent(roomCode, 'SESSION_ARCHIVED', { reason, ...transcriptDigest(room) }, room.hostEmail || '');
+  finalizeOpenExam(room); // drafts of questions still open count as the final answers
   if (room.ltiLink) sendLtiGrades(room);
   void sfu.closeRoom(roomCode); // camera streams of this exam end with it
   clearFederatedRound(room);
@@ -1067,20 +1147,104 @@ function grantObservation(roomCode, observerId) {
   broadcastSessions();
 }
 
-// Admin viewing a controller's camera. The admin socket remembers which controller it asked for,
-// and every relayed offer/answer/candidate is checked against that pairing.
+// Admin viewing controllers' cameras. Each admin socket remembers every controller it asked for
+// (several at once while monitoring an exam), and every relayed offer/answer/candidate is checked
+// against those pairings.
+function controllerFeeds(adminSocket) {
+  if (!adminSocket.observingControllers) adminSocket.observingControllers = new Map();
+  return adminSocket.observingControllers;
+}
+
 function adminObservesController(adminId, controllerId) {
   const adminSocket = io.sockets.sockets.get(adminId);
-  const target = adminSocket?.observingController;
-  if (!target || target.controllerId !== controllerId) return false;
+  const target = adminSocket?.observingControllers?.get(controllerId);
+  if (!target) return false;
   return Boolean(rooms.get(target.roomId)?.controllers.has(controllerId));
 }
 
-function endControllerObservation(adminSocket) {
-  const target = adminSocket.observingController;
-  if (!target) return;
-  adminSocket.observingController = null;
-  io.to(target.controllerId).emit('controller-observation-ended', { adminId: adminSocket.id });
+// Silent exam monitoring is never shown to the host or the candidates. It is still accountable:
+// every start/stop goes to the signed audit trail and to an admin-only log on the room.
+function recordAdminMonitor(roomCode, adminSocket, action, candidate = null) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  const admin = adminSocket.adminEmail || 'administrator';
+  if (!room.monitorLog) room.monitorLog = [];
+  room.monitorLog.push({ time: nowTime(), action, admin, candidate: candidate?.name || null });
+  if (room.monitorLog.length > 100) room.monitorLog.shift();
+  anchorEvent(roomCode, 'ADMIN_MONITOR', {
+    action,
+    admin,
+    candidate: candidate?.email || candidate?.name || null,
+  }, room.hostEmail || '', candidate?.email || '');
+}
+
+// Ends one feed (targetId) or every feed of this admin socket
+function endControllerObservation(adminSocket, targetId = null) {
+  const feeds = adminSocket.observingControllers;
+  if (!feeds || feeds.size === 0) return;
+  const targets = targetId ? [feeds.get(targetId)].filter(Boolean) : Array.from(feeds.values());
+  targets.forEach((target) => {
+    feeds.delete(target.controllerId);
+    io.to(target.controllerId).emit('controller-observation-ended', { adminId: adminSocket.id });
+    if (target.silent) {
+      const room = rooms.get(target.roomId);
+      recordAdminMonitor(target.roomId, adminSocket, 'feed-stopped', room?.controllers.get(target.controllerId) || target.candidate);
+    }
+  });
+}
+
+// Silent exam monitor subscriptions: room code -> admin socket ids
+const examMonitors = new Map();
+
+function monitorRoster(room) {
+  return Array.from(room.controllers.values()).map(p => ({ id: p.id, name: p.name, email: p.email || null }));
+}
+
+const rosterSignature = candidates => candidates.map(c => `${c.id}:${c.name}`).join('|');
+
+function stopExamMonitor(adminSocket, roomCode) {
+  const watchers = examMonitors.get(roomCode);
+  if (!watchers?.has(adminSocket.id)) return false;
+  watchers.delete(adminSocket.id);
+  if (watchers.size === 0) examMonitors.delete(roomCode);
+  adminSocket.monitorRosterSignatures?.delete(roomCode);
+  Array.from(controllerFeeds(adminSocket).values())
+    .filter(target => target.roomId === roomCode)
+    .forEach(target => endControllerObservation(adminSocket, target.controllerId));
+  recordAdminMonitor(roomCode, adminSocket, 'monitor-stopped');
+  return true;
+}
+
+// Called from broadcastSessions (which follows every join, leave, removal and role swap): pushes a
+// fresh roster to each monitoring admin whose room's candidates changed, and ends feeds whose
+// candidate left. A room that closed sends an empty roster with ended: true.
+function syncExamMonitors() {
+  examMonitors.forEach((watchers, roomCode) => {
+    const room = rooms.get(roomCode);
+    watchers.forEach((adminId) => {
+      const adminSocket = io.sockets.sockets.get(adminId);
+      if (!adminSocket) { watchers.delete(adminId); return; }
+      if (!room) {
+        adminSocket.emit('monitor-roster', { roomId: roomCode, candidates: [], ended: true });
+        Array.from(controllerFeeds(adminSocket).values())
+          .filter(target => target.roomId === roomCode)
+          .forEach(target => controllerFeeds(adminSocket).delete(target.controllerId));
+        adminSocket.monitorRosterSignatures?.delete(roomCode);
+        watchers.delete(adminId);
+        return;
+      }
+      Array.from(controllerFeeds(adminSocket).values())
+        .filter(target => target.roomId === roomCode && !room.controllers.has(target.controllerId))
+        .forEach(target => endControllerObservation(adminSocket, target.controllerId));
+      const candidates = monitorRoster(room);
+      const signature = rosterSignature(candidates);
+      if (!adminSocket.monitorRosterSignatures) adminSocket.monitorRosterSignatures = new Map();
+      if (adminSocket.monitorRosterSignatures.get(roomCode) === signature) return;
+      adminSocket.monitorRosterSignatures.set(roomCode, signature);
+      adminSocket.emit('monitor-roster', { roomId: roomCode, candidates });
+    });
+    if (watchers.size === 0) examMonitors.delete(roomCode);
+  });
 }
 
 io.on('connection', (socket) => {
@@ -1089,8 +1253,42 @@ io.on('connection', (socket) => {
 });
 
 io.on('connection', (socket) => {
-  socket.on('request-controller-observation', async ({ roomId, targetId } = {}) => {
-    if (!await isAdminSocket(socket)) return;
+  const rememberAdmin = async () => {
+    if (!await isAdminSocket(socket)) return false;
+    if (!socket.adminEmail) socket.adminEmail = (await authenticatedUser(socket))?.email || 'administrator';
+    return true;
+  };
+
+  // Silent exam monitor (supervised rooms only): returns the candidates and keeps this admin
+  // subscribed to roster changes. Nothing is shown to the host or the candidates.
+  socket.on('monitor-exam', async ({ roomId } = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!await rememberAdmin()) return reply({ ok: false, error: 'Administrator access required.' });
+    const roomCode = normalizeRoomCode(roomId);
+    const room = rooms.get(roomCode);
+    if (!room) return reply({ ok: false, error: 'That session is no longer live.' });
+    if (room.mode !== 'supervised') return reply({ ok: false, error: 'Silent monitoring is only available in supervised exams.' });
+    if (!examMonitors.has(roomCode)) examMonitors.set(roomCode, new Set());
+    const watchers = examMonitors.get(roomCode);
+    const fresh = !watchers.has(socket.id);
+    watchers.add(socket.id);
+    const candidates = monitorRoster(room);
+    if (!socket.monitorRosterSignatures) socket.monitorRosterSignatures = new Map();
+    socket.monitorRosterSignatures.set(roomCode, rosterSignature(candidates));
+    reply({ ok: true, roomId: roomCode, candidates });
+    if (typeof ack !== 'function') socket.emit('monitor-roster', { roomId: roomCode, candidates });
+    if (fresh) {
+      recordAdminMonitor(roomCode, socket, 'monitor-started');
+      broadcastSessions(); // admins only: the admin-only monitor log changed
+    }
+  });
+
+  socket.on('stop-monitor-exam', ({ roomId } = {}) => {
+    if (stopExamMonitor(socket, normalizeRoomCode(roomId))) broadcastSessions();
+  });
+
+  socket.on('request-controller-observation', async ({ roomId, targetId, silent } = {}) => {
+    if (!await rememberAdmin()) return;
     const roomCode = normalizeRoomCode(roomId);
     const room = rooms.get(roomCode);
     if (!room || !room.controllers.has(targetId)) {
@@ -1102,18 +1300,74 @@ io.on('connection', (socket) => {
       socket.emit('admin-error', 'Participant camera observation is only available in supervised rooms.');
       return;
     }
+    const candidate = room.controllers.get(targetId);
+    if (silent === true) {
+      // Several feeds at once; asking again for the same candidate restarts that feed
+      const previous = controllerFeeds(socket).get(targetId);
+      if (previous) {
+        controllerFeeds(socket).delete(targetId);
+        io.to(targetId).emit('controller-observation-ended', { adminId: socket.id });
+      }
+      controllerFeeds(socket).set(targetId, {
+        roomId: roomCode, controllerId: targetId, silent: true, candidate: { name: candidate.name, email: candidate.email },
+      });
+      if (!previous?.silent) recordAdminMonitor(roomCode, socket, 'feed-started', candidate);
+      io.to(targetId).emit('controller-observation-requested', { adminId: socket.id, silent: true });
+      return;
+    }
+    // Announced single-feed observation (unchanged): switching candidates ends the previous feed
     endControllerObservation(socket);
-    socket.observingController = { roomId: roomCode, controllerId: targetId };
-    pushEvent(roomCode, 'permission', `Administrator is viewing ${room.controllers.get(targetId).name}'s camera`);
+    controllerFeeds(socket).set(targetId, { roomId: roomCode, controllerId: targetId, silent: false });
+    pushEvent(roomCode, 'permission', `Administrator is viewing ${candidate.name}'s camera`);
     io.to(targetId).emit('controller-observation-requested', { adminId: socket.id });
     emitRoomState(roomCode);
   });
 
-  socket.on('end-controller-observation', () => endControllerObservation(socket));
+  // With targetId ends that one feed; without it ends every feed of this admin
+  socket.on('end-controller-observation', ({ targetId } = {}) => {
+    endControllerObservation(socket, typeof targetId === 'string' ? targetId : null);
+  });
 
-  socket.on('controller-observation-offer', ({ adminId, offer } = {}) => {
+  // Admin message into a live room. Visible on purpose: it reveals the administrator's presence.
+  // The room chat is end-to-end encrypted and an administrator holds no room key, so this is a
+  // separate plaintext event that clients show prominently (also kept in the room transcript).
+  socket.on('admin-room-chat', async ({ roomId, text } = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!await rememberAdmin()) return reply({ ok: false, error: 'Administrator access required.' });
+    const roomCode = normalizeRoomCode(roomId);
+    const room = rooms.get(roomCode);
+    const body = typeof text === 'string' ? text.trim().slice(0, 1000) : '';
+    if (!room) return reply({ ok: false, error: 'That session is no longer live.' });
+    if (!body) return reply({ ok: false, error: 'Message is empty.' });
+    const message = {
+      id: makeId('msg'),
+      time: nowTime(),
+      senderId: socket.id,
+      senderName: 'Administrator',
+      role: 'admin',
+      text: body,
+    };
+    room.messages.push(message);
+    if (room.messages.length > 150) room.messages.shift();
+    pushEvent(roomCode, 'chat', `Administrator: ${body.slice(0, 80)}`);
+    anchorEvent(roomCode, 'ADMIN_MESSAGE', { admin: socket.adminEmail, length: body.length }, room.hostEmail || '');
+    io.to(roomCode).emit('admin-message', {
+      id: message.id, roomId: roomCode, text: body, time: message.time, senderName: 'Administrator',
+    });
+    broadcastSessions();
+    reply({ ok: true, id: message.id });
+  });
+
+  socket.on('controller-observation-offer', ({ adminId, offer, streams } = {}) => {
     if (!adminObservesController(adminId, socket.id)) return;
-    io.to(adminId).emit('observer-offer', { offer, hostId: socket.id, targetType: 'controller' });
+    // Optional hint from a web candidate: which remote stream id is the camera and which the screen
+    const hint = streams && typeof streams === 'object'
+      ? {
+        camera: typeof streams.camera === 'string' ? streams.camera : undefined,
+        screen: typeof streams.screen === 'string' ? streams.screen : undefined,
+      }
+      : undefined;
+    io.to(adminId).emit('observer-offer', { offer, hostId: socket.id, targetType: 'controller', ...(hint ? { streams: hint } : {}) });
   });
 
   socket.on('controller-observation-ice-candidate', ({ adminId, candidate } = {}) => {
@@ -1123,10 +1377,21 @@ io.on('connection', (socket) => {
 
   socket.on('controller-observation-unavailable', ({ adminId, reason } = {}) => {
     if (!adminObservesController(adminId, socket.id)) return;
+    const target = io.sockets.sockets.get(adminId)?.observingControllers?.get(socket.id);
+    if (target?.silent) {
+      io.to(adminId).emit('monitor-feed-unavailable', {
+        candidateId: socket.id, reason: reason || 'The candidate has no camera stream to share.',
+      });
+      return;
+    }
     io.to(adminId).emit('admin-error', reason || 'The participant has no camera stream to share.');
   });
 
-  socket.on('disconnect', () => endControllerObservation(socket));
+  socket.on('disconnect', () => {
+    const watched = Array.from(examMonitors.keys()).filter(roomCode => stopExamMonitor(socket, roomCode));
+    endControllerObservation(socket);
+    if (watched.length) broadcastSessions();
+  });
 });
 
 
@@ -1171,6 +1436,7 @@ function activateController(roomCode, controllerId, permission = 'view', options
   pushEvent(roomCode, 'join', `${participant.name} approved as controller (${participant.permission})`);
   socket.emit('join-approved', { roomCode, permission: participant.permission, clipboardAllowed: participant.clipboardAllowed });
   socket.emit('session-state', roomState(roomCode, room, socket));
+  sendExamState(socket); // a returning candidate gets its drafts and results back
   io.to(room.hostSocketId).emit('controller-joined', { controllerId, controller: participantPayload(participant) });
   io.to(roomCode).emit('user-joined', controllerId, 'controller', participantPayload(participant));
   anchorEvent(roomCode, 'USER_JOINED', { role: 'controller', email: participant.email, permission: participant.permission }, room.hostEmail, participant.email);
@@ -2008,6 +2274,7 @@ io.on('connection', (socket) => {
     const penalty = applyRiskPenalty(room, payload.penalty, 0);
     room.alertCount += 1;
     pushEvent(roomId, payload.type === 'anticheat_violation' ? 'anticheat' : 'system', `${participantName}: ${payload.message || 'Activity detected'}`);
+    notifyHostOfMalpractice(room, participant, { type: payload.event, label: payload.label, message: payload.message, penalty, severity: payload.severity });
     const alertRecord = {
       room: roomId,
       hostEmail: room.hostEmail || undefined,
@@ -2068,6 +2335,7 @@ io.on('connection', (socket) => {
     room.alertCount += 1;
 
     pushEvent(roomCode, 'anticheat', `[AI PROCTORING ALERT] ${participant.name}: ${message}`);
+    notifyHostOfMalpractice(room, participant, { type: data.event || data.reason, label: data.label, message, penalty, severity: data.severity });
 
     const alertDoc = {
       room: roomCode,
@@ -2132,6 +2400,9 @@ io.on('connection', (socket) => {
   });
 
   // --- Exam Content ---
+  // Rules (server/exam.js): one final answer per candidate and question; a question with a time limit
+  // closes on the server at its deadline (plus a short grace) and the last saved draft is submitted;
+  // text and multiple-choice answers are graded here against the key, code waits for the host's review.
   socket.on('host-push-question', (payload = {}) => {
     const roomId = normalizeRoomCode(payload.roomId || socket.roomCode);
     const room = rooms.get(roomId);
@@ -2143,69 +2414,66 @@ io.on('connection', (socket) => {
     room.controllers.forEach((controller, controllerId) => {
       io.to(controllerId).emit('new-exam-question', publicExamQuestion(question));
     });
-    pushEvent(roomId, 'exam', `New ${question.type} question pushed to controllers`);
+    scheduleExamDeadline(roomId, question);
+    pushEvent(roomId, 'exam', `New ${question.type} question pushed to controllers${question.timeLimitSec ? ` (${question.timeLimitSec}s limit)` : ''}`);
     emitRoomState(roomId);
   });
 
-  socket.on('controller-draft-answer', ({ questionId, answer, roomId }) => {
+  // The host ends a question early: open drafts become final answers
+  socket.on('host-close-question', ({ roomId, questionId } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || room.mode !== 'supervised' || socket.id !== room.hostSocketId) return;
+    closeExamQuestionAndNotify(roomCode, questionId, 'host');
+  });
+
+  // The host marks a submitted answer right or wrong (code answers, or overriding the key)
+  socket.on('host-grade-answer', ({ roomId, questionId, controllerId, correct } = {}) => {
+    const roomCode = normalizeRoomCode(roomId || socket.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room || room.mode !== 'supervised' || socket.id !== room.hostSocketId) return;
+    const entry = gradeExamManually(room, questionId, controllerId, correct);
+    if (!entry) return;
+    io.to(controllerId).emit('exam-answer-result', { questionId, correct: entry.correct });
+    emitExamAnswerToHost(room, questionId, controllerId, entry);
+  });
+
+  socket.on('controller-draft-answer', ({ questionId, answer, roomId } = {}) => {
     const normalizedRoomId = normalizeRoomCode(roomId || socket.roomCode);
     const room = rooms.get(normalizedRoomId);
     if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
     // Only a candidate of this room may write drafts into its exam
     if (!room.controllers.has(socket.id)) return;
-    if (!room.exam.questions.some(q => q.id === questionId)) return;
-
-    if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
-    if (room.exam.answers[questionId][socket.id]?.isFinal) return;
 
     // Drafts arrive on every keystroke: a recording is only sent when it changes. No audio field
     // keeps the stored recording; audio: null removes it.
-    const previous = room.exam.answers[questionId][socket.id];
-    const audioChanged = Object.prototype.hasOwnProperty.call(answer || {}, 'audio');
-    const draft = sanitizeExamAnswer(answer);
-    room.exam.answers[questionId][socket.id] = {
-      ...draft,
-      audio: audioChanged ? draft.audio : previous?.audio,
-      isFinal: false,
-      timestamp: Date.now()
-    };
-
-    const { audio, ...withoutAudio } = room.exam.answers[questionId][socket.id];
-    io.to(room.hostSocketId).emit('host-live-answer-update', {
-      questionId,
-      controllerId: socket.id,
-      controllerName: room.controllers.get(socket.id)?.name || 'Unknown',
-      answer: audioChanged ? { ...withoutAudio, audio: audio || null } : withoutAudio,
-    });
+    const saved = recordExamDraft(room, questionId, socket.id, answer, room.controllers.get(socket.id));
+    if (!saved.ok) return;
+    const { audio, ...withoutAudio } = saved.entry;
+    emitExamAnswerToHost(room, questionId, socket.id, saved.audioChanged ? { ...withoutAudio, audio: audio || null } : withoutAudio);
   });
 
   socket.on('controller-submit-answer', ({ questionId, answer } = {}) => {
     const roomId = socket.roomCode;
     const room = rooms.get(roomId);
     if (!room || room.mode !== 'supervised' || socket.role !== 'controller') return;
-    const question = room.exam.questions.find(q => q.id === questionId);
-    if (!question) return;
+    if (!room.controllers.has(socket.id)) return;
 
-    if (!room.exam.answers[questionId]) room.exam.answers[questionId] = {};
-    if (room.exam.answers[questionId][socket.id]?.isFinal) return;
-
-    const finalAnswer = sanitizeExamAnswer(answer);
-    const correct = gradeExamAnswer(question, finalAnswer);
-    room.exam.answers[questionId][socket.id] = {
-      ...finalAnswer,
-      isFinal: true,
-      correct,
-      email: room.controllers.get(socket.id)?.email || undefined,
-      timestamp: Date.now()
-    };
-    if (correct !== null) socket.emit('exam-answer-result', { questionId, correct });
-
-    io.to(room.hostSocketId).emit('host-live-answer-update', {
-      questionId,
-      controllerId: socket.id,
-      controllerName: room.controllers.get(socket.id)?.name || 'Unknown',
-      answer: room.exam.answers[questionId][socket.id]
-    });
+    const result = submitExamAnswer(room, questionId, socket.id, answer, room.controllers.get(socket.id));
+    if (!result.ok) {
+      if (result.reason === 'closed') {
+        // Too late: the last saved draft (if any) was submitted instead
+        notifyExamFinalised(room, questionId, result.finalised);
+        socket.emit('exam-submit-rejected', { questionId, reason: 'Time is up for this question: your last saved draft was submitted instead.' });
+        if (result.finalised.length > 0) emitRoomState(roomId);
+      } else if (result.reason === 'final') {
+        socket.emit('exam-submit-rejected', { questionId, reason: 'This answer was already submitted and cannot be changed.' });
+      }
+      return;
+    }
+    const { entry } = result;
+    if (typeof entry.correct === 'boolean') socket.emit('exam-answer-result', { questionId, correct: entry.correct });
+    emitExamAnswerToHost(room, questionId, socket.id, entry);
   });
 
   // The host calibrates the anti-cheat engines that run on the candidates' devices
@@ -2324,6 +2592,7 @@ io.on('connection', (socket) => {
     pushEvent(roomCode, 'system', 'Host reconnected');
     socket.emit('room-created', { roomCode });
     emitRoomState(roomCode); // new host id: the E2E roster changes, so chat keys are re-shared
+    sendExamState(socket); // the exam dashboard gets its questions and live answers back
     // Rebuild the call with every controller that is still here
     room.controllers.forEach((_, controllerId) => socket.emit('controller-joined', { controllerId }));
     io.to(roomCode).emit('host-resumed');

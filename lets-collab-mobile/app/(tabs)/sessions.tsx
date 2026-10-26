@@ -3,11 +3,12 @@ import { View, Text, StyleSheet, FlatList, ActivityIndicator, ImageBackground, T
 import { useTheme } from '../../context/ThemeContext';
 import { BACKEND_URL } from '../../lib/api';
 import { useAdminSocket, useLiveSessions, useSocketEvent } from '../../lib/adminData';
-import { X, Activity, Bolt, Sun, Moon, Brain, AlertTriangle, Eye, ShieldOff, UserMinus, Ban, Film, Search, WifiOff, Link2, Trash2, Square, Camera } from 'lucide-react-native';
+import { X, Activity, Bolt, Sun, Moon, Brain, AlertTriangle, Eye, ShieldOff, UserMinus, Ban, Film, Search, WifiOff, Link2, Trash2, Square, Camera, EyeOff } from 'lucide-react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { AnimatedPressable } from '../../components/AnimatedPressable';
 import { AuditIntegrity } from '../../components/AuditIntegrity';
 import { ObserverView } from '../../components/ObserverView';
+import { ExamMonitor } from '../../components/monitor/ExamMonitor';
 
 // Evidence and recording URLs from the server are signed, short-lived /uploads paths
 const uploadUri = (url?: string) => (url ? (url.startsWith('http') ? url : `${BACKEND_URL}${url}`) : null);
@@ -26,7 +27,7 @@ function formatDuration(seconds: number) {
 const shortHash = (hash: string) => (hash.length > 18 ? `${hash.slice(0, 10)}...${hash.slice(-6)}` : hash);
 
 type Notice = { text: string; tone: 'info' | 'error' };
-type Observation = { roomId: string; targetId?: string };
+type Observation = { roomId: string; targetId?: string; label?: string };
 
 export default function SessionsScreen() {
   const { colors, theme, toggleTheme } = useTheme();
@@ -38,6 +39,7 @@ export default function SessionsScreen() {
   // Derived from the live list, so the drawer stays fresh and closes when the room ends
   const selectedSession = sessions.find(session => session.id === selectedId) || null;
   const [observation, setObservation] = useState<Observation | null>(null);
+  const [monitorRoom, setMonitorRoom] = useState<string | null>(null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [warnRoom, setWarnRoom] = useState<string | null>(null);
@@ -370,13 +372,34 @@ export default function SessionsScreen() {
                       ? 'This session enforces visible observation. Both host and controllers are notified when you begin monitoring.'
                       : 'This is a collaboration room. Observation requires host approval.'}
                   </Text>
+                  {selectedSession.mode === 'supervised' && (
+                    <>
+                      <AnimatedPressable
+                        hapticFeedback="light"
+                        onPress={() => setMonitorRoom(selectedSession.id)}
+                        accessibilityLabel="Monitor exam silently"
+                        style={[styles.actionBtnPrimary, { backgroundColor: colors.accent + '15', borderColor: colors.accent + '55' }]}
+                      >
+                        <EyeOff size={14} color={colors.accent} style={{ marginRight: 8 }} />
+                        <Text style={[styles.actionBtnPrimaryText, { color: colors.accent }]}>MONITOR EXAM (SILENT)</Text>
+                      </AnimatedPressable>
+                      <Text style={[styles.infoText, { color: colors.textDim, marginTop: 0, fontSize: 12 }]}>
+                        Every candidate camera in one grid. Candidates are not notified unless you message the room.
+                      </Text>
+                    </>
+                  )}
                   <AnimatedPressable
                     hapticFeedback="light"
-                    onPress={() => setObservation({ roomId: selectedSession.id })}
+                    onPress={() => setObservation({
+                      roomId: selectedSession.id,
+                      label: selectedSession.mode === 'supervised' ? 'EXAMINER SCREEN' : undefined,
+                    })}
                     style={[styles.actionBtnPrimary, { backgroundColor: colors.accent + '15', borderColor: colors.accent + '55' }]}
                   >
                     <Eye size={14} color={colors.accent} style={{ marginRight: 8 }} />
-                    <Text style={[styles.actionBtnPrimaryText, { color: colors.accent }]}>VIEW HOST SCREEN</Text>
+                    <Text style={[styles.actionBtnPrimaryText, { color: colors.accent }]}>
+                      {selectedSession.mode === 'supervised' ? 'VIEW EXAMINER SCREEN' : 'VIEW HOST SCREEN'}
+                    </Text>
                   </AnimatedPressable>
                   {/*
                     "Join as Administrator" (the web's /session?room=...&role=admin) is intentionally not offered here:
@@ -591,7 +614,9 @@ export default function SessionsScreen() {
           </KeyboardAvoidingView>
         </Modal>
 
-        <ObserverView roomId={observation?.roomId ?? null} targetId={observation?.targetId ?? null} onClose={() => setObservation(null)} />
+        <ObserverView roomId={observation?.roomId ?? null} targetId={observation?.targetId ?? null} label={observation?.label} onClose={() => setObservation(null)} />
+
+        <ExamMonitor roomId={monitorRoom} onClose={() => setMonitorRoom(null)} />
 
         <Modal visible={!!viewerUri} animationType="fade" transparent={true} onRequestClose={() => setViewerUri(null)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }}>

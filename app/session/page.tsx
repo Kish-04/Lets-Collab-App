@@ -25,10 +25,10 @@ import {
 } from "@/components/ircp/shared"
 import { PermissionRequestModal } from "@/components/ircp/permission-modal"
 
-import { VoiceChanger, VoiceFilter } from "@/lib/VoiceChanger"
+import { VoiceChanger, VoiceFilter, VOICE_FILTER_OPTIONS } from "@/lib/VoiceChanger"
 import { VirtualAvatar, AvatarStyle } from "@/lib/VirtualAvatar"
-import { Avatar3D, isAvatar3DStyle } from "@/lib/Avatar3D"
-import { VirtualBackground, BackgroundStyle } from "@/lib/VirtualBackground"
+import { Avatar3D, isAvatar3DStyle, AVATAR_3D_OPTIONS } from "@/lib/Avatar3D"
+import { VirtualBackground, BackgroundStyle, BACKGROUND_OPTIONS } from "@/lib/VirtualBackground"
 import { CRDT_CHANNEL } from "@/lib/CrdtSync"
 import { dataChannelManager } from "@/lib/DataChannelManager"
 import { FileTransfer } from "@/components/ircp/FileTransfer"
@@ -45,11 +45,16 @@ const StandaloneCanvas = dynamic<{ peerId?: string; isHost: boolean; sessionMode
 
 import { ExamHostDashboard, ExamQuestion } from '@/components/ircp/exam/ExamHostDashboard'
 import { ExamControllerOverlay } from '@/components/ircp/exam/ExamControllerOverlay'
+import { mergeExamQuestions, withLocalDeadline } from '@/lib/examClient'
 
 import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
 import { useFaceProctoring } from "@/hooks/useFaceProctoring"
 import { useObjectProctoring } from "@/hooks/useObjectProctoring"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
+import { useEnvironmentProctoring } from "@/hooks/useEnvironmentProctoring"
+import { useFaceReverify } from "@/hooks/useFaceReverify"
+import { ProctoringEscalator, proctoringKind, proctoringRule } from "@/lib/proctoringPolicy"
+import { petWarn, usePetWarnings, warnCandidate } from "@/lib/proctoringPet"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken, getAuthHeaders } from "@/lib/utils"
 import { describeFaceSteadily, FACE_ERROR_TEXT } from "@/lib/faceMatch"
 import { publishTracks, isSfuDisabled } from "@/lib/sfuClient"
@@ -87,7 +92,7 @@ import { useModalDialog } from "@/hooks/useModalDialog"
 import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
 import { ClipboardSync, CLIPBOARD_CHANNEL } from "@/components/ircp/ClipboardSync"
 import { AiCalibrationDialog, CalibratingOverlay, ConfirmDialog, SharePickerDialog } from "@/components/ircp/session/SessionDialogs"
-import { ChatPanel } from "@/components/ircp/session/ChatPanel"
+import { ChatPanel, useChatUnread } from "@/components/ircp/session/ChatPanel"
 import { E2EChatSession, RosterMember, WrappedKeyring, isE2EMessage } from "@/lib/E2EChat"
 import {
     APPEARANCE_CHANGE_EVENT, APPEARANCE_LOCK_EVENT, AppearanceConfig,
@@ -207,7 +212,8 @@ function SessionContent() {
     const [showExamDashboard, setShowExamDashboard] = useState(true)
     const [petState, setPetState] = useState<'Idle' | 'Thinking' | 'Warning'>('Idle')
     const [petMessage, setPetMessage] = useState<string>('')
-    const petTimerRef = useRef<NodeJS.Timeout | null>(null)
+    // Proctoring warnings and malpractice reports are queued on the pet one at a time (petWarn)
+    usePetWarnings(setPetState, setPetMessage)
     const [remoteCameraStreams, setRemoteCameraStreams] = useState<Record<string, MediaStream>>({})
     const [evidence, setEvidence] = useState<EvidenceItem[]>([])
     const [packetLoss, setPacketLoss] = useState<number | null>(null)
@@ -274,6 +280,7 @@ function SessionContent() {
     const [isCanvasMode, setIsCanvasMode] = useState(false)
     const [messages, setMessages] = useState<any[]>([])
     const [systemWarning, setSystemWarning] = useState<string | null>(null)
+    const [adminNotice, setAdminNotice] = useState<string | null>(null)
 
     const captureScreenshotEvidence = async (video: HTMLVideoElement | null, label: string): Promise<string | undefined> => {
         if (!video || video.videoWidth === 0 || video.videoHeight === 0) return undefined;
@@ -353,6 +360,7 @@ function SessionContent() {
     }>>(new Map())
     const hiddenBgVideoRef = useRef<HTMLVideoElement | null>(null)
     const chatScrollRef = useRef<HTMLDivElement>(null)
+    const chatUnread = useChatUnread(chatMessages, chatOpen, socketRef.current?.id)
 
     // ── Apply Voice and Avatar Effects ────────────────────────────────────────
     useEffect(() => {
@@ -511,7 +519,20 @@ function SessionContent() {
     useEffect(() => () => {
         avatar3DRef.current?.dispose();
         avatar3DRef.current = null;
+        virtualAvatarRef.current?.dispose();
+        virtualAvatarRef.current = null;
+        virtualBackgroundRef.current?.dispose();
+        virtualBackgroundRef.current = null;
     }, []);
+
+    // Avatars, backgrounds and voice changes are collaboration-only: if the room turns out to be (or
+    // becomes) a supervised exam, drop any effect picked earlier so the real camera and mic are sent
+    useEffect(() => {
+        if (sessionMode !== 'supervised') return;
+        setVoiceFilter('none');
+        setAvatarStyle('none');
+        setBackgroundStyle('none');
+    }, [sessionMode]);
     const [aiConfig, setAiConfig] = useState({
         eyeTrackingThreshold: 0.80,
         emotionSensitivity: 0.65,
@@ -692,11 +713,14 @@ function SessionContent() {
         return { penalty: Math.max(1, Math.round(basePenalty * (0.5 + confidence))), confidence }
     }, [])
 
-    const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6]) => {
+    // meta: the proctoring kind (event), its short host-facing label and severity (lib/proctoringPolicy)
+    const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6], meta: { event?: string; label?: string; severity?: string } = {}) => {
         socketRef.current?.emit('system-alert', {
             room: roomCodeRef.current,
             type: 'anticheat_violation',
-            event: 'PROCTORING_ALERT',
+            event: meta.event || 'PROCTORING_ALERT',
+            label: meta.label,
+            severity: meta.severity,
             message: reason,
             penalty,
             // Lets an admin's false-positive verdict come back as a training label for this device
@@ -933,8 +957,11 @@ function SessionContent() {
         engine.onEvent((ev: AntiCheatEvent) => {
             if (!firstProctoringReport(ev.type)) return // already reported by another detector
             const features = federatedFeaturesForEvent(ev.type)
-            const { penalty, confidence } = federatedPenalty(features, ev.scorePenalty)
-            addLog('anticheat', `${ev.type}: ${ev.message} (+${penalty}${confidence === null ? '' : `, FL confidence ${confidence.toFixed(2)}`})`)
+            // Repeats of the same violation escalate (penalty and severity), see lib/proctoringPolicy
+            const escalation = proctoringEscalatorRef.current.record(ev.type, ev.scorePenalty)
+            const { penalty, confidence } = federatedPenalty(features, escalation.penalty)
+            warnCandidate(ev.type, escalation.count)
+            addLog('anticheat', `${ev.type}: ${ev.message} (+${penalty}, ${escalation.severity}${escalation.count > 1 ? `, x${escalation.count}` : ''}${confidence === null ? '' : `, FL confidence ${confidence.toFixed(2)}`})`)
             recordFederatedSample(features, ev.scorePenalty > 0 ? 1 : 0)
             setRiskScore(s => Math.min(100, s + penalty))
             setGaugeGlow(true)
@@ -942,6 +969,7 @@ function SessionContent() {
             captureScreenshotEvidence(localCamRef.current, ev.message).then(url => {
                 socketRef.current?.emit('system-alert', {
                     type: 'anticheat_violation', event: ev.type,
+                    label: proctoringRule(ev.type).label, severity: escalation.severity,
                     message: ev.message, penalty, room: roomCode,
                     evidenceUrl: url,
                     features: features.map(clamp01),
@@ -1392,7 +1420,8 @@ function SessionContent() {
             }))
             if (typeof state.riskScore === 'number') setRoomRisk(state.riskScore)
             if (state.aiConfig && currentRoleRef.current === 'controller') setAiConfig(prev => ({ ...prev, ...state.aiConfig }))
-            setExamQuestions(state.examQuestions || [])
+            // Room state leaves voice prompts out and gives time left: merge, keeping what we already have
+            setExamQuestions(prev => mergeExamQuestions(prev, state.examQuestions || []))
         })
         socket.on('join-approved', ({ permission: approvedPermission, clipboardAllowed: approvedClipboard }: any) => {
             setPermission(approvedPermission)
@@ -1517,6 +1546,14 @@ function SessionContent() {
         socket.on('room-event', (event: { time: string; type: string; message: string }) => {
             setRoomEvents(prev => [...prev, { ...event, time: roomTimeToIso(event.time) }].slice(-200))
         })
+        // Host: the pet reports each candidate's malpractice by name ("Asha: Looking away from the screen").
+        // The queue shows bursts one at a time and drops repeats of the same candidate + kind for 20 s.
+        socket.on('candidate-malpractice', (alert: { controllerId?: string; name?: string; type?: string; label?: string; message?: string; count?: number }) => {
+            if (currentRoleRef.current !== 'host' || !alert) return
+            const what = alert.label || proctoringRule(alert.type || '').label
+            const repeat = alert.count && alert.count > 1 ? ` (x${alert.count})` : ''
+            petWarn(`${alert.name || 'Candidate'}: ${what}${repeat}`, `${alert.controllerId || alert.name}:${proctoringKind(alert.type || what)}`)
+        })
         socket.on('chat-message', (message: ChatMessage) => {
             setChatMessages(prev => [...prev, message].slice(-100))
         })
@@ -1548,25 +1585,37 @@ function SessionContent() {
             const audio = new Audio('/alert.mp3') // Try to play an alert sound if it exists
             audio.play().catch(() => {})
         })
+        // Plaintext message from an administrator (room chat is end-to-end encrypted; admins hold no key)
+        socket.on('admin-message', ({ id, text, time }: { id: string; text: string; time: string }) => {
+            if (!text) return
+            setAdminNotice(text)
+            setChatMessages(prev => prev.some(m => m.id === id) ? prev : [...prev, {
+                id, time, senderId: 'admin', senderName: 'Administrator', role: 'admin', text,
+            } as ChatMessage].slice(-100))
+        })
         socket.on('controller-observation-ended', ({ adminId }: { adminId: string }) => {
             observerPcRefs.current.get(adminId)?.close()
             observerPcRefs.current.delete(adminId)
         })
-        socket.on('controller-observation-requested', async ({ adminId }: { adminId: string }) => {
+        socket.on('controller-observation-requested', async ({ adminId, silent }: { adminId: string; silent?: boolean }) => {
             try {
                 if (currentRoleRef.current !== 'controller') return
                 const stream = activeLocalStreamRef.current || localStreamRef.current
-                if (!stream) {
+                // Silent exam monitor: the screen being shared goes along with the camera
+                const screen = silent ? screenStreamRef.current : null
+                const liveScreen = screen && screen.getVideoTracks().some(t => t.readyState === 'live') ? screen : null
+                if (!stream && !liveScreen) {
                     socketRef.current?.emit('controller-observation-unavailable', { adminId, reason: 'The participant has no camera stream to share.' })
                     return
                 }
                 observerPcRefs.current.get(adminId)?.close()
-                addLog('system', 'An administrator is viewing your camera (supervised session)')
-                
+                if (!silent) addLog('system', 'An administrator is viewing your camera (supervised session)')
+
                 const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
                 observerPcRefs.current.set(adminId, pc)
-                stream.getTracks().forEach(t => pc.addTrack(t, stream))
-                
+                stream?.getTracks().forEach(t => pc.addTrack(t, stream))
+                liveScreen?.getVideoTracks().forEach(t => pc.addTrack(t, liveScreen))
+
                 pc.onicecandidate = e => {
                     if (e.candidate) {
                         socketRef.current?.emit('controller-observation-ice-candidate', { adminId, candidate: e.candidate })
@@ -1575,7 +1624,11 @@ function SessionContent() {
                 
                 const offer = await pc.createOffer()
                 await pc.setLocalDescription(offer)
-                socketRef.current?.emit('controller-observation-offer', { adminId, offer })
+                socketRef.current?.emit('controller-observation-offer', {
+                    adminId,
+                    offer,
+                    ...(silent ? { streams: { camera: stream?.id, screen: liveScreen?.id } } : {}),
+                })
             } catch (err) {
                 console.error("Failed to establish controller observation", err)
             }
@@ -1764,7 +1817,21 @@ function SessionContent() {
             }
         });
         socket.on('new-exam-question', (question: ExamQuestion) => {
-            setExamQuestions(prev => prev.some(q => q.id === question.id) ? prev : [...prev, question]);
+            setExamQuestions(prev => prev.some(q => q.id === question.id) ? prev : [...prev, withLocalDeadline(question)]);
+        });
+        // Sent on join, reconnect and host resume: the exam view is rebuilt from the server's copy
+        socket.on('exam-state', (exam: any) => {
+            if (!exam || !Array.isArray(exam.questions)) return
+            setExamQuestions(prev => mergeExamQuestions(prev, exam.questions))
+            if (exam.role === 'host') setExamLiveAnswers(exam.answers || {})
+            else setExamResults(exam.results || {})
+        });
+        socket.on('exam-question-closed', ({ questionId, reason }: { questionId: string; reason?: string }) => {
+            setExamQuestions(prev => prev.map(q => q.id === questionId ? { ...q, closed: true } : q))
+            addLog('system', reason === 'time' ? 'Time is up for an exam question: your last saved answer was submitted' : 'The host closed an exam question: your last saved answer was submitted')
+        });
+        socket.on('exam-submit-rejected', ({ reason }: { questionId: string; reason?: string }) => {
+            addLog('system', reason || 'Your answer could not be submitted')
         });
         socket.on('exam-answer-result', ({ questionId, correct }: { questionId: string; correct: boolean }) => {
             setExamResults(prev => ({ ...prev, [questionId]: correct }))
@@ -1772,13 +1839,10 @@ function SessionContent() {
         });
         socket.on('host-live-answer-update', ({ questionId, controllerId, controllerName, answer }) => {
             setExamLiveAnswers(prev => {
-                const newLive = { ...prev };
-                if (!newLive[questionId]) newLive[questionId] = {};
                 // Updates may leave the recording out (unchanged); audio: null means it was removed
                 const merged = { ...(prev[questionId]?.[controllerId] || {}), ...answer, controllerName };
                 if (answer?.audio === null) delete merged.audio;
-                newLive[questionId][controllerId] = merged;
-                return newLive;
+                return { ...prev, [questionId]: { ...(prev[questionId] || {}), [controllerId]: merged } };
             });
         });
             
@@ -1905,7 +1969,8 @@ function SessionContent() {
         (window as any).api?.getPanicShortcuts?.().then((keys: string[]) => setPanicShortcuts(Array.isArray(keys) ? keys : []))
 
         const onPanic = (event: Event) => panicRevokeRef.current(String((event as CustomEvent).detail || 'Shift+Esc'))
-        // Browser host: same shortcut while the window is focused
+        // Browser host: same shortcut while the window is focused. Capture phase, so a panel that
+        // handles Escape itself (chat, dialogs) can never swallow the emergency revoke
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Escape' && event.shiftKey) {
                 event.preventDefault()
@@ -1913,10 +1978,10 @@ function SessionContent() {
             }
         }
         window.addEventListener('panic-revoke', onPanic)
-        window.addEventListener('keydown', onKeyDown)
+        window.addEventListener('keydown', onKeyDown, true)
         return () => {
             window.removeEventListener('panic-revoke', onPanic)
-            window.removeEventListener('keydown', onKeyDown)
+            window.removeEventListener('keydown', onKeyDown, true)
         }
     }, []);
 
@@ -1977,11 +2042,8 @@ function SessionContent() {
                     if (aspectRatio > 2.4) { // Typical dual monitor (e.g. 3840x1080)
                         track.stop();
                         const message = "Multi-monitor setup detected. Please disconnect extra monitors and share a single screen.";
-                        reportMalpractice(`Multi-Monitor: ${message}`, 30, [1, 0, 0]);
-                        setPetState('Warning');
-                        setPetMessage(message);
-                        if (petTimerRef.current) clearTimeout(petTimerRef.current);
-                        petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
+                        reportMalpractice(`Multi-Monitor: ${message}`, 30, [1, 0, 0], { event: 'SECOND_SCREEN', label: proctoringRule('SECOND_SCREEN').label, severity: 'high' });
+                        petWarn(message, 'SECOND_SCREEN');
                         return; // Abort screen sharing
                     }
                 }
@@ -2406,34 +2468,45 @@ function SessionContent() {
     // per 10 s, whichever detector saw it first.
     const lastProctoringEventRef = useRef<Map<string, number>>(new Map())
     const firstProctoringReport = (type: string) => {
-        const key = canonicalProctoringType(type)
+        const key = proctoringKind(canonicalProctoringType(type))
         const now = Date.now()
         if (now - (lastProctoringEventRef.current.get(key) || 0) < 10000) return false
         lastProctoringEventRef.current.set(key, now)
         return true
     }
+    // Counts repeats per kind so sustained or repeated violations cost more (lib/proctoringPolicy)
+    const proctoringEscalatorRef = useRef(new ProctoringEscalator())
 
-    const onProctoringViolation = (type: string, message: string, penalty: number) => {
+    // Every hook detection: severity and penalty come from the shared policy and escalate on repeats;
+    // the candidate's pet says what was detected and the host's pet names the candidate (server).
+    const onProctoringViolation = (type: string, message: string) => {
         if (!firstProctoringReport(type)) return;
-        reportMalpractice(`Proctoring [${type}]: ${message}`, penalty, federatedFeaturesForEvent(canonicalProctoringType(type)));
-        setPetState('Warning');
-        setPetMessage(message);
-        if (petTimerRef.current) clearTimeout(petTimerRef.current);
-        petTimerRef.current = setTimeout(() => {
-            setPetState('Idle');
-            setPetMessage('');
-        }, 8000);
-
+        const rule = proctoringRule(type);
+        const escalation = proctoringEscalatorRef.current.record(type);
+        reportMalpractice(`Proctoring [${type}]: ${message}`, escalation.penalty, federatedFeaturesForEvent(canonicalProctoringType(type)), {
+            event: escalation.kind, label: rule.label, severity: escalation.severity,
+        });
+        warnCandidate(type, escalation.count, message);
         pushLocalChatLine(`⚠️ [System Warning]: ${message}`);
     };
 
-    useFaceProctoring(localCamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 20));
+    useFaceProctoring(localCamRef, sessionMode, role, onProctoringViolation);
 
     const tabSwitchCountRef = useRef(0);
 
-    useObjectProctoring(localCamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 20));
+    useObjectProctoring(localCamRef, sessionMode, role, onProctoringViolation);
 
-    useAudioProctoring(localStreamRef, sessionMode, role, (type, message) => onProctoringViolation(type, message, 15));
+    useAudioProctoring(localStreamRef, sessionMode, role, onProctoringViolation);
+
+    // Full screen, devtools/screenshot/window-switch keys (reported, never blocked), VM hints and, in
+    // the desktop app, focus/clipboard events, the clipboard guard and the remote-control program scan
+    useEnvironmentProctoring(sessionMode, role, connectionState, onProctoringViolation);
+
+    // Face ID is checked again every few minutes; the server tells the host and raises a mismatch alert
+    useFaceReverify(localCamRef, roomCodeRef, sessionMode, role, connectionState, (status) => {
+        if (status === 'mismatch') warnCandidate('IDENTITY_MISMATCH', proctoringEscalatorRef.current.record('IDENTITY_MISMATCH').count);
+        addLog('system', status === 'verified' ? 'Face ID re-check: verified' : 'Face ID re-check: did not match your enrolled face; the host has been told');
+    });
 
     useEffect(() => {
         // One policy for leaving the exam window: warn on the first switch, end the session on the second.
@@ -2450,15 +2523,12 @@ function SessionContent() {
             tabSwitchCountRef.current += 1;
             void captureScreenshotEvidence(localCamRef.current, reason);
             if (tabSwitchCountRef.current >= 2) {
-                reportMalpractice(`App Focus Fatal: ${reason} (second switch). Session terminated.`, 100, [1, 0, 0]);
+                reportMalpractice(`App Focus Fatal: ${reason} (second switch). Session terminated.`, 100, [1, 0, 0], { event: 'TAB_SWITCHED', label: 'Left the exam window again — session terminated', severity: 'critical' });
                 router.push('/app?terminated=tab_switch');
             } else {
                 const message = 'App switch detected! Please keep this window active. A second violation will terminate your session.';
-                reportMalpractice(`App Switch: ${reason}. ${message}`, 50, [1, 0, 0]);
-                setPetState('Warning');
-                setPetMessage(message);
-                if (petTimerRef.current) clearTimeout(petTimerRef.current);
-                petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
+                reportMalpractice(`App Switch: ${reason}. ${message}`, 50, [1, 0, 0], { event: 'TAB_SWITCHED', label: proctoringRule('TAB_SWITCHED').label, severity: 'critical' });
+                petWarn(message, 'TAB_SWITCHED');
             }
         };
         const onBlur = () => onFocusLost('Application lost focus (external app/click)');
@@ -2483,7 +2553,8 @@ function SessionContent() {
         const check = () => {
             const now = Boolean(screenInfo.isExtended)
             if (now && !extended) {
-                reportMalpractice('Second display connected during a supervised exam', 30, federatedFeaturesForEvent('SECOND_SCREEN'))
+                reportMalpractice('Second display connected during a supervised exam', 30, federatedFeaturesForEvent('SECOND_SCREEN'), { event: 'SECOND_SCREEN', label: proctoringRule('SECOND_SCREEN').label, severity: 'high' })
+                warnCandidate('SECOND_SCREEN')
             }
             if (now !== extended) addLog('system', now ? 'Multiple displays detected' : 'Only one display connected')
             extended = now
@@ -2593,11 +2664,8 @@ function SessionContent() {
         const preventCopyPaste = (e: ClipboardEvent) => {
             e.preventDefault();
             const message = 'Copy/Paste is disabled during supervised sessions.';
-            reportMalpractice(`Clipboard: ${message}`, 10, [0.5, 0, 0]);
-            setPetState('Warning');
-            setPetMessage(message);
-            if (petTimerRef.current) clearTimeout(petTimerRef.current);
-            petTimerRef.current = setTimeout(() => { setPetState('Idle'); setPetMessage(''); }, 8000);
+            reportMalpractice(`Clipboard: ${message}`, 10, [0.5, 0, 0], { event: 'CLIPBOARD', label: proctoringRule('CLIPBOARD').label, severity: 'medium' });
+            petWarn(message, 'CLIPBOARD');
         };
 
         document.addEventListener('copy', preventCopyPaste);
@@ -2661,6 +2729,19 @@ function SessionContent() {
                         <p className="text-sm opacity-90">{systemWarning}</p>
                     </div>
                     <button onClick={() => setSystemWarning(null)} className="ml-4 p-2 hover:bg-[var(--red)]/20 rounded-lg transition-colors">
+                        <X className="h-5 w-5" />
+                    </button>
+                </div>
+            )}
+
+            {adminNotice && (
+                <div role="alert" className={`absolute ${systemWarning ? 'top-44' : 'top-20'} left-1/2 -translate-x-1/2 z-[100] flex max-w-[90vw] items-center gap-3 bg-[var(--accent)]/15 border border-[var(--accent)] text-[var(--text-primary)] px-6 py-4 rounded-xl shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-10`}>
+                    <MessageSquare className="h-6 w-6 shrink-0 text-[var(--accent)]" />
+                    <div className="min-w-0">
+                        <p className="font-bold text-sm">MESSAGE FROM ADMINISTRATOR</p>
+                        <p className="text-sm opacity-90 break-words">{adminNotice}</p>
+                    </div>
+                    <button onClick={() => setAdminNotice(null)} aria-label="Dismiss administrator message" className="ml-4 p-2 hover:bg-[var(--accent)]/20 rounded-lg transition-colors">
                         <X className="h-5 w-5" />
                     </button>
                 </div>
@@ -2735,9 +2816,9 @@ function SessionContent() {
                         className={cn("relative p-1.5 rounded-lg border transition-colors", chatOpen ? "bg-[var(--accent)] text-black border-transparent" : "text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)]")}
                     >
                         <MessageSquare className="w-4 h-4" />
-                        {chatMessages.length > 0 && (
-                            <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--red)] px-1 text-[9px] font-bold text-[var(--text-primary)]">
-                                {Math.min(chatMessages.length, 99)}
+                        {chatUnread > 0 && (
+                            <span aria-label={`${chatUnread} unread`} className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--red)] px-1 text-[9px] font-bold text-white">
+                                {chatUnread > 99 ? '99+' : chatUnread}
                             </span>
                         )}
                     </button>
@@ -3041,16 +3122,7 @@ function SessionContent() {
                                             onChange={(e) => setVoiceFilter(e.target.value as VoiceFilter)}
                                             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
                                         >
-                                            <option value="none">Normal Voice</option>
-                                            <option value="robot">Robot</option>
-                                            <option value="alien">Alien</option>
-                                            <option value="radio">Radio</option>
-                                            <option value="megaphone">Megaphone</option>
-                                            <option value="deep">Deep / Witness Protection</option>
-                                            <option value="chipmunk">Chipmunk</option>
-                                            <option value="echo">Canyon Echo</option>
-                                            <option value="male">Male EQ</option>
-                                            <option value="female">Female EQ</option>
+                                            {VOICE_FILTER_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                                         </select>
                                     </div>
                                     <div>
@@ -3073,17 +3145,12 @@ function SessionContent() {
                                             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
                                         >
                                             <option value="none">Normal Camera</option>
-                                            <option value="cyberpunk">Cyberpunk Visor</option>
-                                            <option value="neon">Neon Mask</option>
-                                            <option value="pixel">8-Bit Pixel Face</option>
-                                            <option value="hologram">Hologram</option>
-                                            <option value="sketch">Sketch Outline</option>
-                                            <option value="synthwave">Synthwave</option>
-                                            <option value="anime">Anime</option>
-                                            <option value="robot3d">3D Robot</option>
-                                            <option value="alien3d">3D Alien</option>
-                                            <option value="bear3d">3D Bear</option>
-                                            <option value="custom">Custom...</option>
+                                            {Array.from(new Set(AVATAR_3D_OPTIONS.map(o => o.group))).map(group => (
+                                                <optgroup key={group} label={`3D ${group}`}>
+                                                    {AVATAR_3D_OPTIONS.filter(o => o.group === group).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                                                </optgroup>
+                                            ))}
+                                            <option value="custom">Custom image...</option>
                                         </select>
                                         <input 
                                             type="file" 
@@ -3146,13 +3213,7 @@ function SessionContent() {
                                             }}
                                             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
                                         >
-                                            <option value="none">Normal Background</option>
-                                            <option value="blur">Blur Background</option>
-                                            <option value="office">Office Room</option>
-                                            <option value="beach">Tropical Beach</option>
-                                            <option value="space">Outer Space</option>
-                                            <option value="matrix">Matrix</option>
-                                            <option value="custom">Custom...</option>
+                                            {BACKGROUND_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                                         </select>
                                         <input 
                                             type="file" 
@@ -3314,8 +3375,11 @@ function SessionContent() {
                             <div className="w-8 h-1 rounded-full bg-white/20"></div>
                         </div>
                         <div className="flex-1 overflow-hidden flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
-                            <ExamHostDashboard 
+                            <ExamHostDashboard
+                                questions={examQuestions}
                                 onPushQuestion={(q) => socketRef.current?.emit('host-push-question', { ...q, roomId: roomCodeRef.current || joinInput })}
+                                onCloseQuestion={(questionId) => socketRef.current?.emit('host-close-question', { questionId, roomId: roomCodeRef.current || joinInput })}
+                                onGradeAnswer={(questionId, controllerId, correct) => socketRef.current?.emit('host-grade-answer', { questionId, controllerId, correct, roomId: roomCodeRef.current || joinInput })}
                                 liveAnswers={examLiveAnswers}
                                 localStream={localStreamRef.current}
                             />
@@ -3360,7 +3424,8 @@ function SessionContent() {
                     messages={chatMessages}
                     decrypted={decryptedChat}
                     ownSocketId={socketRef.current?.id}
-                    scrollRef={chatScrollRef}
+                    controllerLabel={sessionMode === 'supervised' ? 'Candidate' : 'Controller'}
+                    petAvailable={!(role === 'controller' && sessionMode === 'supervised')}
                     input={chatInput}
                     setInput={setChatInput}
                     onSubmit={sendChatMessage}

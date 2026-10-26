@@ -3,7 +3,8 @@
 import { CSSProperties, useCallback, useEffect, useRef, useState } from "react"
 import { io, Socket } from "socket.io-client"
 import { signOutAdmin, useAdminSocket, useLiveSessions, useSocketEvent } from "@/components/admin/AdminData"
-import { Activity, Ban, Eye, Keyboard, MousePointer, Search, ShieldOff, Square, UserMinus, X, Zap } from "lucide-react"
+import { Activity, Ban, Eye, EyeOff, Keyboard, MousePointer, Search, ShieldOff, Square, UserMinus, X, Zap } from "lucide-react"
+import { ExamMonitor } from "@/components/admin/ExamMonitor"
 import { DataCard, RiskGauge, StatusBadge, TxHash } from "@/components/ircp/shared"
 import { AppearanceConfig } from "@/lib/appearance"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken } from "@/lib/utils"
@@ -39,6 +40,8 @@ type LiveSession = {
   evidence?: Array<{ id: string; time: string; type: string; label: string; url?: string }>
   messageCount?: number
   recordings?: string[]
+  // Admin-only log of silent exam monitoring (never shown to the host)
+  monitorLog?: Array<{ time: string; action: string; admin: string; candidate: string | null }>
 }
 
 function formatDuration(seconds: number) {
@@ -107,12 +110,14 @@ function SessionDrawer({
   onClose,
   onObserve,
   onObserveController,
+  onMonitor,
   onAction,
 }: {
   session: LiveSession | null
   onClose: () => void
   onObserve: (session: LiveSession) => void
   onObserveController: (session: LiveSession, controllerId: string) => void
+  onMonitor: (session: LiveSession) => void
   onAction: (event: string, session: LiveSession, target?: "host" | "controller", targetId?: string) => void
 }) {
   if (!session) return null
@@ -146,14 +151,32 @@ function SessionDrawer({
           <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Observation Policy</p>
           <p className="mb-4 text-sm leading-relaxed text-[var(--text-secondary)]">
             {session.mode === "supervised"
-              ? "This session enforces visible observation. Both host and controllers are notified when you begin monitoring."
+              ? "Supervised exam. Viewing the examiner's screen or a single candidate feed is announced to the room. The silent monitor shows every candidate's camera and screen without notifying anyone; each start and stop is recorded in the audit trail. Sending a message reveals your presence."
               : "This is a collaboration room. Observation requires host approval."}
           </p>
           <div className="flex flex-col gap-3">
-            <button onClick={() => onObserve(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
-              <Eye className="h-4 w-4" /> View Host Screen
+            {session.mode === "supervised" && (
+              <button onClick={() => onMonitor(session)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
+                <EyeOff className="h-4 w-4" /> Monitor exam (silent)
+              </button>
+            )}
+            <button onClick={() => onObserve(session)} className={cn(
+              "flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold text-[var(--text-primary)]",
+              session.mode === "supervised" ? "border border-[var(--border)] bg-[var(--elevated)]/60" : "bg-[var(--accent)]",
+            )}>
+              <Eye className="h-4 w-4" /> {session.mode === "supervised" ? "View examiner screen" : "View Host Screen"}
             </button>
           </div>
+          {session.mode === "supervised" && !!session.monitorLog?.length && (
+            <div className="mt-4 space-y-1">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Silent monitoring log (admins only)</p>
+              {[...session.monitorLog].reverse().slice(0, 8).map((entry, index) => (
+                <p key={index} className="truncate text-[10px] text-[var(--text-secondary)]">
+                  {new Date(entry.time).toLocaleTimeString()} | {entry.admin} | {entry.action.replace("-", " ")}{entry.candidate ? ` | ${entry.candidate}` : ""}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="border-b border-[var(--border)]/60 p-6 bg-[var(--elevated)]/40">
@@ -269,6 +292,9 @@ export default function SessionsPage() {
   const [observedSession, setObservedSession] = useState<LiveSession | null>(null)
   const observed = observedSession ? sessions.find(session => session.id === observedSession.id) || observedSession : null
   const [observerStatus, setObserverStatus] = useState("")
+  const [monitoredId, setMonitoredId] = useState<string | null>(null)
+  const monitored = sessions.find(session => session.id === monitoredId) || null
+  const closeMonitor = useCallback(() => setMonitoredId(null), [])
   const [search, setSearch] = useState("")
   const [notice, setNotice] = useState("")
   const observerSocketRef = useRef<Socket | null>(null)
@@ -431,8 +457,10 @@ export default function SessionsPage() {
         onClose={() => setSelectedId(null)}
         onObserve={observe}
         onObserveController={observeController}
+        onMonitor={session => { setSelectedId(null); setMonitoredId(session.id) }}
         onAction={action}
       />
+      {monitored && <ExamMonitor session={monitored} onClose={closeMonitor} />}
       {observed && (
         <ObserverModal
           session={observed}

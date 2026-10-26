@@ -271,7 +271,7 @@ export default function HomePage() {
         const data = await res.json()
         if (res.ok) {
           setAuthMode("reset")
-        } else setErrorMsg(data.message || "Failed to send reset link")
+        } else setErrorMsg(data.message || "Failed to send the reset code")
       }
       else if (authMode === "reset") {
         const res = await fetch(`${getBackendUrl()}/api/auth/reset-password`, {
@@ -561,6 +561,7 @@ export default function HomePage() {
               
               <button
                 onClick={() => setAuthMode(null)}
+                aria-label="Close"
                 className="absolute top-6 right-6 w-8 h-8 rounded-full bg-[var(--bg)] flex items-center justify-center text-[var(--text-dim)] hover:text-[var(--text-primary)] hover:bg-[var(--elevated)] transition-colors"
               >✕</button>
 
@@ -675,7 +676,7 @@ export default function HomePage() {
                     <span className="flex items-center justify-center gap-2">
                       <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" /> Processing
                     </span>
-                  ) : authMode === 'login' ? 'Login to Dashboard' : authMode === 'register' ? 'Create Account' : authMode === 'forgot' ? 'Send Reset Link' : authMode === 'reset' ? 'Reset Password' : 'Verify & Enter'}
+                  ) : authMode === 'login' ? 'Login to Dashboard' : authMode === 'register' ? 'Create Account' : authMode === 'forgot' ? 'Send Reset Code' : authMode === 'reset' ? 'Reset Password' : 'Verify & Enter'}
                 </button>
               </form>
 

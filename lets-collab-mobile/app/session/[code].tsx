@@ -20,6 +20,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import io, { Socket } from 'socket.io-client';
 import {
   MediaStream,
+  MediaStreamTrack,
   RTCIceCandidate,
   RTCPeerConnection,
   RTCSessionDescription,
@@ -29,6 +30,8 @@ import {
 import {
   ArrowLeft,
   ClipboardList,
+  Eye,
+  Megaphone,
   MessageSquare,
   Mic,
   MicOff,
@@ -49,6 +52,7 @@ import { ExamPanel } from '../../components/ExamPanel';
 import { ExamCodeSync } from '../../lib/exam/codeSync';
 import { ExamAnswer, ExamQuestion, isExamQuestion } from '../../lib/exam/types';
 import { ProctoringViolation, useOnDeviceProctoring } from '../../lib/proctoring';
+import { hasLiveVideo, watchTrack } from '../../lib/mediaWatch';
 import {
   ChatMessage,
   IceServer,
@@ -75,10 +79,20 @@ import {
  *   <-> ircp-crdt data channel: Yjs doc 'exam-code' (live code view for the host)
  *   -> leave-session
  * The host creates the offer and the ircp-* data channels; we only answer.
+ *
+ * Administrator camera observation (supervised rooms; web: 'controller-observation-requested' in
+ * app/session/page.tsx). Here we are the offerer, on a separate connection per administrator:
+ *   <- controller-observation-requested {adminId, silent?}
+ *   -> controller-observation-offer {adminId, offer} | controller-observation-unavailable {adminId, reason}
+ *   <- observer-answer {observerId, answer}   <- observer-ice-candidate {fromId, candidate}
+ *   -> controller-observation-ice-candidate {adminId, candidate}
+ *   <- controller-observation-ended {adminId}
+ *   <- admin-message {roomId, text, time, senderName} (administrator writing to the room)
  */
 
 type Phase = 'preparing' | 'connecting' | 'pending' | 'approved' | 'connected' | 'ended';
 type RemoteStreams = { main: MediaStream | null; secondary: MediaStream | null };
+type AdminNotice = { text: string; time: string };
 
 const PERMISSION_LABELS: Record<PermissionLevel, string> = {
   view: 'VIEW ONLY',
@@ -117,6 +131,11 @@ export default function LiveSessionScreen() {
   const [examQuestions, setExamQuestions] = useState<ExamQuestion[]>([]);
   const [examAnswers, setExamAnswers] = useState<Record<string, ExamAnswer>>({});
   const [examOpen, setExamOpen] = useState(false);
+  /** Bumped when a received track is added, muted, unmuted or ends, so video/placeholder choices re-render. */
+  const [, setMediaTick] = useState(0);
+  /** Number of administrators watching this camera visibly (silent exam monitoring is not counted). */
+  const [visibleObservers, setVisibleObservers] = useState(0);
+  const [adminNotice, setAdminNotice] = useState<AdminNotice | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -142,6 +161,12 @@ export default function LiveSessionScreen() {
   const codeSyncRef = useRef<ExamCodeSync | null>(null);
   const proctoringUnavailableReportedRef = useRef(false);
   const examQuestionCountRef = useRef(0);
+  const remoteTrackWatchersRef = useRef<Map<string, () => void>>(new Map());
+  /** One sending-only connection per observing administrator (keyed by the admin's socket id). */
+  const observationPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const observationIceRef = useRef<Map<string, any[]>>(new Map());
+  const visibleObserversRef = useRef<Set<string>>(new Set());
+  const supervisedMediaRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -156,7 +181,31 @@ export default function LiveSessionScreen() {
     camera: localStreamRef.current?.id || null,
   });
 
+  const closeObservation = useCallback((adminId: string) => {
+    const pc = observationPcsRef.current.get(adminId);
+    if (pc) {
+      try { pc.close(); } catch { }
+    }
+    observationPcsRef.current.delete(adminId);
+    observationIceRef.current.delete(adminId);
+    if (visibleObserversRef.current.delete(adminId)) setVisibleObservers(visibleObserversRef.current.size);
+  }, []);
+
+  const closeAllObservations = useCallback(() => {
+    Array.from(observationPcsRef.current.keys()).forEach(closeObservation);
+    visibleObserversRef.current.clear();
+    setVisibleObservers(0);
+  }, [closeObservation]);
+
+  const forgetRemoteTracks = () => {
+    remoteTrackWatchersRef.current.forEach(off => off());
+    remoteTrackWatchersRef.current.clear();
+  };
+
   const teardownMedia = useCallback(() => {
+    closeAllObservations();
+    remoteTrackWatchersRef.current.forEach(off => off());
+    remoteTrackWatchersRef.current.clear();
     dataChannelsRef.current.forEach(channel => { try { channel.close(); } catch { } });
     dataChannelsRef.current = [];
     if (pcRef.current) {
@@ -173,7 +222,7 @@ export default function LiveSessionScreen() {
     setRemoteStreams({ main: null, secondary: null });
     setMicOn(false);
     setCamOn(false);
-  }, []);
+  }, [closeAllObservations]);
 
   const endSession = useCallback((message: string, notifyServer = false) => {
     if (endedRef.current) return;
@@ -372,6 +421,24 @@ export default function LiveSessionScreen() {
 
   // ---------------------------------------------------------------- WebRTC
 
+  /**
+   * Supervised rooms require camera + mic (web: AntiCheatEngine calibration acquires both). Normally
+   * started by join-pending, before the call is live, so permission prompts cannot trip the app-switch
+   * check. A returning candidate is re-admitted without join-pending (server activateController), so
+   * session-state / join-approved start it too. Runs once; later callers wait for the same attempt.
+   */
+  const ensureSupervisedMedia = useCallback(() => {
+    if (!supervisedMediaRef.current) {
+      supervisedMediaRef.current = (async () => {
+        publishRef.current = { audio: true, video: true };
+        const stream = await acquireLocalMedia(true);
+        setCamOn(Boolean(stream?.getVideoTracks().length));
+        setMicOn(Boolean(stream?.getAudioTracks().length));
+      })();
+    }
+    return supervisedMediaRef.current;
+  }, [acquireLocalMedia]);
+
   const sendOffer = useCallback(async (pc: RTCPeerConnection) => {
     if (pc.signalingState !== 'stable') {
       renegotiatePendingRef.current = true;
@@ -442,6 +509,13 @@ export default function LiveSessionScreen() {
     listen(pc, 'track', event => {
       const stream = event.streams && event.streams.length > 0 ? event.streams[0] : null;
       if (!stream) return;
+      // A stream can gain its video after its audio (same stream object, so state alone would not
+      // re-render), and a host camera that stops sending is reported as a muted track: re-render on both.
+      const track = (event as { track?: MediaStreamTrack | null }).track;
+      if (track && !remoteTrackWatchersRef.current.has(track.id)) {
+        remoteTrackWatchersRef.current.set(track.id, watchTrack(track, () => setMediaTick(n => n + 1)));
+      }
+      setMediaTick(n => n + 1);
       const ids = remoteIdsRef.current;
       const isScreen = Boolean(ids.screen && stream.id === ids.screen);
       const isCamera = Boolean(ids.camera && stream.id === ids.camera);
@@ -507,6 +581,91 @@ export default function LiveSessionScreen() {
       setStatusMessage('Could not establish the media connection.');
     }
   }, [createPC, roomCode, sendOffer]);
+
+  // ---------------------------------------------------------------- administrator camera observation
+
+  /**
+   * An administrator asked for this camera (supervised rooms only; the server checks). Same as the web
+   * controller: a new connection that only sends the local camera + mic, with us as the offerer. The
+   * host connection is not touched. Silent requests (exam monitor) show nothing on this screen.
+   */
+  const startObservation = useCallback(async (adminId: string, silent: boolean) => {
+    const socket = socketRef.current;
+    if (!socket || !adminId) return;
+    closeObservation(adminId);
+    const stream = localStreamRef.current;
+    const tracks = stream ? stream.getTracks().filter(track => track.readyState === 'live') : [];
+    if (!stream || !tracks.some(track => track.kind === 'video')) {
+      socket.emit('controller-observation-unavailable', { adminId, reason: 'The participant has no camera stream to share.' });
+      return;
+    }
+    try {
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
+      observationPcsRef.current.set(adminId, pc);
+      tracks.forEach(track => pc.addTrack(track, stream));
+      listen(pc, 'icecandidate', event => {
+        if (event.candidate) {
+          socketRef.current?.emit('controller-observation-ice-candidate', { adminId, candidate: event.candidate.toJSON() });
+        }
+      });
+      const offer = await pc.createOffer({});
+      if (observationPcsRef.current.get(adminId) !== pc) return;
+      await pc.setLocalDescription(offer);
+      socketRef.current?.emit('controller-observation-offer', { adminId, offer: { type: offer.type, sdp: offer.sdp } });
+      if (!silent) {
+        visibleObserversRef.current.add(adminId);
+        setVisibleObservers(visibleObserversRef.current.size);
+      }
+    } catch (err) {
+      console.warn('Could not start administrator camera observation', err);
+      closeObservation(adminId);
+    }
+  }, [closeObservation]);
+
+  const handleObservationAnswer = useCallback(async (adminId: string, answer: any) => {
+    const pc = observationPcsRef.current.get(adminId);
+    if (!pc || pc.signalingState !== 'have-local-offer' || !answer) return;
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      const queued = observationIceRef.current.get(adminId) || [];
+      observationIceRef.current.delete(adminId);
+      for (const candidate of queued) await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { });
+    } catch (err) {
+      console.warn('Could not apply the administrator answer', err);
+    }
+  }, []);
+
+  const handleObservationIce = useCallback(async (adminId: string, candidate: any) => {
+    const pc = observationPcsRef.current.get(adminId);
+    if (!pc || !candidate) return;
+    if (!pc.remoteDescription) {
+      // Candidates can overtake the answer while it is being applied: keep them until it is
+      observationIceRef.current.set(adminId, [...(observationIceRef.current.get(adminId) || []), candidate].slice(-100));
+      return;
+    }
+    await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { });
+  }, []);
+
+  /** An administrator wrote to the room: a banner until dismissed, and a line in the chat. */
+  const receiveAdminMessage = useCallback((payload: any) => {
+    const text = String(payload?.text || '').trim();
+    if (!text) return;
+    const time = String(payload?.time || new Date().toLocaleTimeString());
+    setAdminNotice({ text, time });
+    setMessages(prev => {
+      if (prev.some(m => m.role === 'admin' && m.text === text && m.time === time)) return prev;
+      const message: ChatMessage = {
+        id: `admin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        time,
+        senderId: 'administrator',
+        senderName: String(payload?.senderName || 'Administrator'),
+        role: 'admin',
+        text,
+      };
+      return [...prev, message].slice(-100);
+    });
+    if (!chatOpenRef.current) setUnread(n => n + 1);
+  }, []);
 
   // ---------------------------------------------------------------- chat
 
@@ -625,6 +784,9 @@ export default function LiveSessionScreen() {
           pcRef.current = null;
         }
         pendingCandidatesRef.current = [];
+        // The server ends every administrator observation of this socket when it disconnects
+        closeAllObservations();
+        forgetRemoteTracks();
         setRemoteStreams({ main: null, secondary: null });
         setPhase('connecting');
         setStatusMessage('Connection lost. Reconnecting...');
@@ -637,12 +799,7 @@ export default function LiveSessionScreen() {
         setPhase('pending');
         setStatusMessage('Waiting for the host to approve your request...');
         if (nextMode === 'supervised') {
-          // Supervised rooms require camera + mic (web: AntiCheatEngine calibration acquires both).
-          // Acquire now, before the call is live, so permission prompts can't trip the app-switch check.
-          publishRef.current = { audio: true, video: true };
-          const stream = await acquireLocalMedia(true);
-          setCamOn(Boolean(stream?.getVideoTracks().length));
-          setMicOn(Boolean(stream?.getAudioTracks().length));
+          await ensureSupervisedMedia();
           void syncLocalTracks();
         }
       });
@@ -651,12 +808,17 @@ export default function LiveSessionScreen() {
         if (approved) setPermission(approved);
         setPhase(prev => (prev === 'connected' ? prev : 'approved'));
         setStatusMessage('Approved. Waiting for the host stream...');
-        if (modeRef.current === 'supervised' && !supervisedMediaReportedRef.current) {
-          const hasCamera = Boolean(localStreamRef.current?.getVideoTracks().length);
-          if (!hasCamera) {
-            supervisedMediaReportedRef.current = true;
-            reportMalpractice('Camera unavailable or denied on mobile participant', 15);
-          }
+        if (modeRef.current === 'supervised') {
+          // Check only after the camera attempt has finished (a returning candidate starts it here)
+          void ensureSupervisedMedia().then(() => {
+            void syncLocalTracks();
+            if (supervisedMediaReportedRef.current || endedRef.current) return;
+            const hasCamera = Boolean(localStreamRef.current?.getVideoTracks().length);
+            if (!hasCamera) {
+              supervisedMediaReportedRef.current = true;
+              reportMalpractice('Camera unavailable or denied on mobile participant', 15);
+            }
+          });
         }
       });
 
@@ -676,6 +838,7 @@ export default function LiveSessionScreen() {
           const nextMode: SessionMode = state.mode === 'supervised' ? 'supervised' : 'collaboration';
           setMode(nextMode);
           modeRef.current = nextMode;
+          if (nextMode === 'supervised') void ensureSupervisedMedia().then(() => syncLocalTracks());
         }
         if (state?.permission) setPermission(state.permission);
         setParticipantCount(Array.isArray(state?.participants) ? state.participants.length : 0);
@@ -735,6 +898,22 @@ export default function LiveSessionScreen() {
       });
 
       socket.on('system-warning', (message: string) => setSystemWarning(message));
+      socket.on('admin-message', receiveAdminMessage);
+
+      socket.on('controller-observation-requested', ({ adminId, silent }: { adminId?: string; silent?: boolean } = {}) => {
+        if (adminId) void startObservation(adminId, silent === true);
+      });
+      socket.on('controller-observation-ended', ({ adminId }: { adminId?: string } = {}) => {
+        if (adminId) closeObservation(adminId);
+      });
+      // Only administrator observation uses these on a controller socket (the host connection uses
+      // offer / answer / ice-candidate)
+      socket.on('observer-answer', ({ observerId, answer }: { observerId?: string; answer?: any } = {}) => {
+        if (observerId) void handleObservationAnswer(observerId, answer);
+      });
+      socket.on('observer-ice-candidate', ({ fromId, candidate }: { fromId?: string; candidate?: any } = {}) => {
+        if (fromId) void handleObservationIce(fromId, candidate);
+      });
 
       socket.on('new-exam-question', (question: unknown) => {
         if (!isExamQuestion(question) || submittedQuestionIdsRef.current.has(question.id)) return;
@@ -893,8 +1072,15 @@ export default function LiveSessionScreen() {
 
   // ---------------------------------------------------------------- render
 
-  const primaryStream = remoteStreams.main || remoteStreams.secondary;
-  const hostCamStream = remoteStreams.main ? remoteStreams.secondary : null;
+  // Only a stream with a live video track gets an RTCView: an audio-only stream (host with the mic
+  // on and the camera off) or a stopped camera would otherwise render as a black box.
+  const mainHasVideo = hasLiveVideo(remoteStreams.main);
+  const secondaryHasVideo = hasLiveVideo(remoteStreams.secondary);
+  const primaryStream = mainHasVideo ? remoteStreams.main : secondaryHasVideo ? remoteStreams.secondary : null;
+  // The host camera tile is shown next to the host's screen; without video it is a labelled placeholder
+  const hostCamStream = mainHasVideo ? remoteStreams.secondary : null;
+  const hostLabel = isSupervised ? 'EXAMINER' : 'HOST';
+  const hasRemoteMedia = Boolean(remoteStreams.main || remoteStreams.secondary);
   const showLocalPreview = Boolean(localStream && camOn && localStream.getVideoTracks().length > 0);
   const inCall = phase === 'approved' || phase === 'connected';
   const hasExam = isSupervised && inCall && examQuestions.length > 0;
@@ -936,7 +1122,15 @@ export default function LiveSessionScreen() {
             <ActivityIndicator color={colors.accent} size="large" />
           )}
           <Text style={[styles.statusText, { color: colors.textSecondary }]}>
-            {inCall ? 'Waiting for the host to share their screen or camera...' : statusMessage}
+            {!inCall
+              ? statusMessage
+              : hasRemoteMedia
+                ? isSupervised
+                  ? 'Connected. The examiner camera is off and no screen is shared. The examiner can still see your camera.'
+                  : 'Connected. The host camera is off and no screen is shared.'
+                : isSupervised
+                  ? 'Waiting for the examiner to connect...'
+                  : 'Waiting for the host to share their screen or camera...'}
           </Text>
           <Text style={[styles.cardLabel, { color: colors.textDim, marginTop: 8 }]}>ROOM {roomCode}</Text>
         </View>
@@ -990,6 +1184,15 @@ export default function LiveSessionScreen() {
           </View>
         )}
 
+        {visibleObservers > 0 && (
+          <View style={[styles.banner, styles.bannerRow, { backgroundColor: colors.glassCard, borderColor: colors.border }]}>
+            <Eye color={colors.accent} size={14} style={{ marginRight: 6 }} />
+            <Text style={[styles.bannerSubText, { color: colors.textSecondary, marginTop: 0, flex: 1 }]}>
+              An administrator is viewing your camera
+            </Text>
+          </View>
+        )}
+
         {systemWarning && (
           <View style={[styles.banner, styles.bannerRow, { backgroundColor: 'rgba(240, 165, 0, 0.15)', borderColor: 'rgba(240, 165, 0, 0.35)' }]}>
             <Text style={[styles.bannerText, { color: colors.amber, flex: 1 }]}>{systemWarning}</Text>
@@ -1010,8 +1213,17 @@ export default function LiveSessionScreen() {
         )}
         {hostCamStream && !showExam && (
           <View style={[styles.pip, { borderColor: colors.violet }]}>
-            <RTCView streamURL={hostCamStream.toURL()} style={styles.pipVideo} objectFit="cover" zOrder={1} />
-            <Text style={styles.pipLabel}>HOST</Text>
+            {secondaryHasVideo ? (
+              <RTCView streamURL={hostCamStream.toURL()} style={styles.pipVideo} objectFit="cover" zOrder={1} />
+            ) : (
+              <View style={[styles.pipVideo, styles.pipPlaceholder, { backgroundColor: colors.surface }]}>
+                <VideoOff color={colors.textDim} size={18} />
+                <Text style={[styles.pipPlaceholderText, { color: colors.textSecondary }]}>
+                  {isSupervised ? 'Examiner camera off' : 'Host camera off'}
+                </Text>
+              </View>
+            )}
+            <Text style={styles.pipLabel}>{hostLabel}</Text>
           </View>
         )}
       </View>
@@ -1115,6 +1327,26 @@ export default function LiveSessionScreen() {
           onSubmitAll={confirmSubmitAll}
           onMinimize={() => setExamOpen(false)}
         />
+      )}
+
+      {/* Message from an administrator: above the exam and chat so it cannot be missed */}
+      {adminNotice && (
+        <View
+          accessibilityRole="alert"
+          style={[
+            styles.adminNotice,
+            { top: insets.top + 8, backgroundColor: colors.surface, borderColor: colors.amber },
+          ]}
+        >
+          <Megaphone color={colors.amber} size={18} style={{ marginRight: 10, marginTop: 2 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.adminNoticeTitle, { color: colors.amber }]}>MESSAGE FROM ADMINISTRATOR · {adminNotice.time}</Text>
+            <Text style={[styles.adminNoticeText, { color: colors.textPrimary }]}>{adminNotice.text}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setAdminNotice(null)} hitSlop={10} accessibilityLabel="Dismiss administrator message">
+            <X color={colors.textSecondary} size={18} />
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* Controls */}
@@ -1253,6 +1485,40 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 12,
     borderWidth: 1,
+  },
+  pipPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 6,
+  },
+  pipPlaceholderText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 6,
+  },
+  adminNotice: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    zIndex: 50,
+    elevation: 12,
+  },
+  adminNoticeTitle: {
+    fontFamily: 'SpaceMono',
+    fontSize: 10,
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  adminNoticeText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 14,
+    lineHeight: 20,
   },
   bannerRow: {
     flexDirection: 'row',
