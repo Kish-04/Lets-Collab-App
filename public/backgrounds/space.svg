@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
   <defs>
     <radialGradient id="nebula" cx="50%" cy="42%" r="64%">
       <stop offset="0" stop-color="#4c1d95"/>

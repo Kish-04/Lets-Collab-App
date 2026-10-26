@@ -1,35 +1,28 @@
-import { loadExternalScript } from './utils';
+import type { FaceLandmarker } from '@mediapipe/tasks-vision';
 import type { Avatar3DStyle } from './Avatar3D';
+import { acquireFaceLandmarker, nextFaceTimestamp, releaseFaceLandmarker } from './faceLandmarker';
+import { requestFrame } from './frameLoop';
 
-const getFaceApi = () => {
-    if (typeof window !== 'undefined' && (window as any).faceapi) {
-        return (window as any).faceapi;
-    }
-    return null;
-};
+// The built-in avatars are all 3D now (lib/Avatar3D.ts); this class only handles a custom image
+// that is pinned over the user's face, following its position, size and roll.
+export type AvatarStyle = 'none' | 'custom' | Avatar3DStyle;
 
-export type AvatarStyle = 'none' | 'cyberpunk' | 'neon' | 'pixel' | 'hologram' | 'sketch' | 'synthwave' | 'anime' | 'custom' | Avatar3DStyle;
-
-const avatarSources: Record<Exclude<AvatarStyle, 'none' | 'custom' | Avatar3DStyle>, string> = {
-    cyberpunk: '/avatars/cyberpunk-visor.svg',
-    neon: '/avatars/neon-mask.svg',
-    pixel: '/avatars/pixel-face.svg',
-    hologram: '/avatars/hologram.svg',
-    sketch: '/avatars/sketch-outline.svg',
-    synthwave: '/avatars/synthwave.svg',
-    anime: '/avatars/anime.svg',
-};
+interface Placement { x: number; y: number; width: number; height: number; angle: number }
 
 export class VirtualAvatar {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D | null;
-    private loopId: number = 0;
+    private cancelFrame: (() => void) | null = null;
     private isRunning: boolean = false;
     private avatarImage: HTMLImageElement | null = null;
     private currentStyle: AvatarStyle = 'none';
-    private modelsLoaded: boolean = false;
-    private instanceId: number = 0;
-    private isProcessing: boolean = false;
+    private landmarker: FaceLandmarker | null = null;
+    private trackerRequested = false;
+    private lastVideoTime = -1;
+    private lastFaceAt = 0;
+    private target: Placement | null = null;
+    private placement: Placement | null = null;
+    private lastFrameAt = 0;
     public onLoadError?: (err: unknown) => void;
 
     constructor() {
@@ -37,147 +30,126 @@ export class VirtualAvatar {
         this.canvas.width = 640;
         this.canvas.height = 480;
         this.ctx = this.canvas.getContext('2d');
-        
-        this.loadModels();
     }
 
-    private async loadModels() {
-        if (this.modelsLoaded) return;
-        
-        try {
-            await loadExternalScript("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js");
-            const faceapi = getFaceApi();
-            if (!faceapi) throw new Error('face-api failed to attach to window');
-            const modelUrl = '/models/face-api';
-            await Promise.all([
-                faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
-                faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl)
-            ]);
-            this.modelsLoaded = true;
-        } catch (err) {
-            console.error('[VirtualAvatar] Failed to load face detection models:', err);
-            this.onLoadError?.(err);
-        }
+    private requestTracker() {
+        if (this.trackerRequested) return;
+        this.trackerRequested = true;
+        acquireFaceLandmarker()
+            .then((landmarker) => { if (this.trackerRequested) this.landmarker = landmarker; })
+            .catch((err) => {
+                console.error('[VirtualAvatar] Failed to load face tracking:', err);
+                this.onLoadError?.(err);
+            });
     }
 
     public setAvatarStyle(style: AvatarStyle, customImageUrl?: string) {
         this.currentStyle = style;
-        if (style === 'none') {
+        if (style !== 'custom' || !customImageUrl) {
             this.avatarImage = null;
             return;
         }
-
-        this.avatarImage = new Image();
-        this.avatarImage.src = style === 'custom' && customImageUrl ? customImageUrl : avatarSources[style as keyof typeof avatarSources];
-        
-        this.avatarImage.onerror = () => {
+        const image = new Image();
+        image.onerror = () => {
+            if (this.avatarImage !== image) return;
             this.avatarImage = null;
             this.currentStyle = 'none';
             this.onLoadError?.(new Error('Avatar image failed to load'));
         };
+        image.src = customImageUrl;
+        this.avatarImage = image;
     }
 
-    private lastDetection: any = null;
+    private track(video: HTMLVideoElement, now: number) {
+        if (!this.landmarker || video.currentTime === this.lastVideoTime) return;
+        this.lastVideoTime = video.currentTime;
+        const face = this.landmarker.detectForVideo(video, nextFaceTimestamp()).faceLandmarks?.[0];
+        if (!face) return;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        // 234/454: cheek edges, 10: top of forehead, 152: chin
+        const left = face[234], right = face[454], top = face[10], chin = face[152];
+        const dx = (right.x - left.x) * w, dy = (right.y - left.y) * h;
+        const faceWidth = Math.hypot(dx, dy);
+        const faceHeight = Math.hypot((chin.x - top.x) * w, (chin.y - top.y) * h);
+        this.target = {
+            x: ((top.x + chin.x) / 2) * w,
+            y: ((top.y + chin.y) / 2) * h,
+            width: faceWidth * 1.45,
+            height: faceHeight * 1.45,
+            angle: Math.atan2(dy, dx),
+        };
+        this.lastFaceAt = now;
+    }
+
+    private smooth(dt: number) {
+        const t = this.target;
+        if (!t) return;
+        const p = this.placement;
+        if (!p) { this.placement = { ...t }; return; }
+        // Faster when the face moves a lot, steadier when it is still (removes jitter without lag)
+        const move = Math.hypot(t.x - p.x, t.y - p.y) / Math.max(1, p.width);
+        const k = 1 - Math.exp(-dt * (10 + 60 * move));
+        p.x += (t.x - p.x) * k;
+        p.y += (t.y - p.y) * k;
+        p.width += (t.width - p.width) * k;
+        p.height += (t.height - p.height) * k;
+        p.angle += (t.angle - p.angle) * k;
+    }
 
     public start(videoElement: HTMLVideoElement): MediaStream {
         this.stop();
         this.isRunning = true;
-        const myInstanceId = ++this.instanceId;
-        
-        let lastDetectionTime = 0;
-        
-        const mlLoop = async () => {
-            if (!this.isRunning || myInstanceId !== this.instanceId) return;
-            if (this.isProcessing) {
-                setTimeout(mlLoop, 30);
-                return;
-            }
+        if (this.currentStyle === 'custom') this.requestTracker();
 
-            if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete) {
-                const faceapi = getFaceApi();
-                if (faceapi && videoElement.readyState >= 2 && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
-                    const originalError = console.error;
-                    console.error = (...args: any[]) => {
-                        const msg = String(args[0] || '').toLowerCase();
-                        if (msg.includes('index out of bounds') || msg.includes('abort') || msg.includes('wasm')) return;
-                        originalError.apply(console, args);
-                    };
-
-                    try {
-                        this.isProcessing = true;
-                        if (this.modelsLoaded && this.canvas.width > 0) {
-                            const detection = await faceapi.detectSingleFace(this.canvas, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
-                            if (detection) {
-                                this.lastDetection = detection;
-                                lastDetectionTime = Date.now();
-                            } else if (Date.now() - lastDetectionTime > 1000) {
-                                this.lastDetection = undefined;
-                            }
-                        }
-                    } catch (e) {
-                        console.warn("[VirtualAvatar] Face tracking error:", e);
-                    } finally {
-                        this.isProcessing = false;
-                        console.error = originalError;
-                    }
-                }
-            }
-            setTimeout(mlLoop, 60);
-        };
-        mlLoop();
-
-        const renderLoop = () => {
+        const renderLoop = (now: number) => {
             if (!this.isRunning || !this.ctx) return;
-
-            try {
-                if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
-                    if (this.canvas.width !== videoElement.videoWidth) {
-                        this.canvas.width = videoElement.videoWidth;
-                        this.canvas.height = videoElement.videoHeight;
-                    }
-                    this.ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
-                }
-            } catch (e) {}
-
-            if (this.currentStyle !== 'none' && this.avatarImage && this.avatarImage.complete && this.lastDetection) {
-                const detection = this.lastDetection;
-                const landmarks = detection.landmarks;
-                const box = detection.detection.box;
-
-                if (this.currentStyle === 'cyberpunk') {
-                    const leftEye = landmarks.getLeftEye();
-                    const rightEye = landmarks.getRightEye();
-                    const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
-                    const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
-                    const width = (rightEye[3].x - leftEye[0].x) * 2;
-                    const height = width * 0.4;
-                    this.ctx.drawImage(this.avatarImage, eyeCenterX - width / 2, eyeCenterY - height / 2, width, height);
-                } else {
-                    const boxWidth = box.width * 1.4;
-                    const boxHeight = box.height * 1.4;
-                    const nW = this.avatarImage.naturalWidth || 512;
-                    const nH = this.avatarImage.naturalHeight || 512;
-                    const imgRatio = nW / nH;
-                    const boxRatio = boxWidth / boxHeight;
-
-                    let drawWidth = boxWidth;
-                    let drawHeight = boxHeight;
-                    if (imgRatio > boxRatio) drawHeight = boxWidth / imgRatio;
-                    else drawWidth = boxHeight * imgRatio;
-                    const x = box.x - (boxWidth - box.width) / 2 + (boxWidth - drawWidth) / 2;
-                    const y = box.y - (boxHeight - box.height) / 2 + (boxHeight - drawHeight) / 2;
-                    this.ctx.drawImage(this.avatarImage, x, y, drawWidth, drawHeight);
-                }
+            this.cancelFrame = requestFrame(renderLoop);
+            const dt = this.lastFrameAt ? Math.min(0.1, (now - this.lastFrameAt) / 1000) : 1 / 30;
+            this.lastFrameAt = now;
+            const ctx = this.ctx;
+            if (videoElement.readyState < 2 || videoElement.videoWidth === 0) return;
+            if (this.canvas.width !== videoElement.videoWidth || this.canvas.height !== videoElement.videoHeight) {
+                this.canvas.width = videoElement.videoWidth;
+                this.canvas.height = videoElement.videoHeight;
             }
-            this.loopId = requestAnimationFrame(renderLoop);
+            try {
+                this.track(videoElement, now);
+            } catch (e) {
+                console.warn('[VirtualAvatar] Face tracking error:', e);
+            }
+            this.smooth(dt);
+            ctx.drawImage(videoElement, 0, 0, this.canvas.width, this.canvas.height);
+
+            const image = this.avatarImage;
+            const p = this.placement;
+            if (this.currentStyle !== 'custom' || !image || !image.complete || !image.naturalWidth || !p || now - this.lastFaceAt > 1000) return;
+            const ratio = image.naturalWidth / image.naturalHeight;
+            let width = p.width;
+            let height = p.height;
+            if (ratio > width / height) height = width / ratio;
+            else width = height * ratio;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.angle);
+            ctx.drawImage(image, -width / 2, -height / 2, width, height);
+            ctx.restore();
         };
-        renderLoop();
+        this.cancelFrame = requestFrame(renderLoop);
         return this.canvas.captureStream(30);
     }
 
     public stop() {
         this.isRunning = false;
-        this.instanceId++;
-        if (this.loopId) cancelAnimationFrame(this.loopId);
+        this.cancelFrame?.();
+        this.cancelFrame = null;
+        this.lastFrameAt = 0;
+    }
+
+    public dispose() {
+        this.stop();
+        if (this.trackerRequested) releaseFaceLandmarker();
+        this.trackerRequested = false;
+        this.landmarker = null;
     }
 }
