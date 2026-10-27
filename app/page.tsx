@@ -589,7 +589,7 @@ export default function LandingPage() {
                 >
                   <div className="absolute inset-0 bg-gradient-to-r from-[var(--accent)]/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                   <p className="text-2xl font-medium text-[var(--text-primary)] italic relative z-10">
-                    "His interest in this space comes from a simple idea: trust shouldn't have to be taken on faith — it should be something you can verify yourself."
+                    "Bug to feature"
                   </p>
                 </motion.div>
                 
