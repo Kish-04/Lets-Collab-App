@@ -4,6 +4,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { BACKEND_URL } from '../../lib/api';
 import { adminFetch, useAdminReports, useAdminSocket, useLiveSessions, useSocketEvent } from '../../lib/adminData';
 import { shareExport, toCsv, writeExportFile } from '../../lib/exportFile';
+import { proctoringLabel } from '../../lib/proctoring/labels';
 import { ShieldAlert, X, Sun, Moon, Search, Download, Flag, CheckCircle, AlertTriangle, ImageOff, WifiOff, RefreshCw } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 import { AnimatedPressable } from '../../components/AnimatedPressable';
@@ -44,16 +45,11 @@ function withRiskTotals(newestFirst: AlertEntry[]): AlertEntry[] {
 
 function friendlyType(raw: string): string {
   const map: Record<string, string> = {
-    NO_FACE: 'No face detected',
-    MULTIPLE_FACES: 'Multiple faces',
-    LOOKING_AWAY: 'Looking away',
-    PHONE_DETECTED: 'Phone detected',
-    BLURR_EVENT: 'Alt+Tab / blur',
-    CLIPBOARD_CHANGE: 'Clipboard change',
     os_anticheat_violation: 'OS event',
     anticheat_violation: 'AI detection',
   };
-  return map[raw] || raw;
+  // Every proctoring kind has the same plain label as on the web dashboard (e.g. "Camera blocked or covered")
+  return map[raw] || proctoringLabel(raw) || raw;
 }
 
 const formatTime = (iso: string) => {
