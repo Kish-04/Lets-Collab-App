@@ -660,6 +660,12 @@ export default function LandingPage() {
                     </svg>
                   }
                 />
+                {/* The Mac build is not notarized by Apple, so Gatekeeper blocks the first launch */}
+                <p className="mt-6 text-xs leading-relaxed text-[var(--text-secondary)] text-center">
+                  Apple Silicon Macs. If macOS blocks it on first open, move <b>Let&apos;s Collab</b> to Applications,
+                  then open <b>System Settings → Privacy &amp; Security</b> and click <b>Open Anyway</b>. Or run in Terminal:{' '}
+                  <code className="select-all break-all">xattr -cr &quot;/Applications/Let&apos;s Collab.app&quot;</code>
+                </p>
               </div>
               <div className="relative">
                 <motion.div 

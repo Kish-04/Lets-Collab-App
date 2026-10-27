@@ -100,7 +100,10 @@
       "target": [
         "zip"
       ],
-      "icon": "public/logo"
+      "icon": "public/logo",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "win": {
       "target": "nsis",
