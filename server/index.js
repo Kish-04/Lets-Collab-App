@@ -297,6 +297,10 @@ const io = new Server(server, {
   // Exam voice prompts (3 MB) and recorded voice answers (5 MB) travel as one message; the 1 MB
   // default disconnected the sender instead of delivering them
   maxHttpBufferSize: Number(process.env.SOCKET_MAX_MESSAGE_BYTES || 6 * 1024 * 1024),
+  // A busy client (screen share, vision models, a multi-MB upload queued ahead of the pong) can miss
+  // the 20 s default and get dropped mid-session; wait longer before calling a connection dead
+  pingInterval: 25000,
+  pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS || 60000),
 });
 
 app.set('io', io);
@@ -1635,6 +1639,24 @@ io.on('connection', (socket) => {
       socket.emit('session-state', roomState(normalizedRoomId, room, socket));
       return;
     }
+    // Same race as resume-host: the account is back on a new connection while the server still
+    // holds the old one; hand its seat over instead of sending it to the waiting room again
+    if (actor.email) {
+      const staleEntry = Array.from(room.controllers.entries()).find(([id, p]) => id !== socket.id && p.email === actor.email);
+      if (staleEntry) {
+        const [staleId, staleParticipant] = staleEntry;
+        room.controllers.delete(staleId);
+        if (!room.recentControllers) room.recentControllers = new Map();
+        room.recentControllers.set(actor.email, {
+          socketId: staleId,
+          permission: staleParticipant.permission,
+          clipboardAllowed: staleParticipant.clipboardAllowed,
+          expiresAt: Date.now() + Math.max(CONTROLLER_RECONNECT_GRACE_MS, 1000),
+        });
+        io.to(room.hostSocketId).emit('controller-left', { controllerId: staleId, controller: participantPayload(staleParticipant) });
+        io.sockets.sockets.get(staleId)?.disconnect(true);
+      }
+    }
 
     const pending = buildPendingController(socket, actor, meta);
     room.pendingControllers.set(socket.id, pending);
@@ -2576,10 +2598,17 @@ io.on('connection', (socket) => {
     const roomCode = normalizeRoomCode(roomId);
     const room = rooms.get(roomCode);
     const actor = await authenticatedUser(socket);
-    if (!room || !room.hostDisconnectedAt || !actor?.email || actor.email !== room.hostEmail) {
+    if (!room) {
+      socket.emit('resume-failed', { reason: 'The session is no longer running on the server (it ended, or the server restarted while you were disconnected).' });
+      return;
+    }
+    if (!actor?.email || actor.email !== room.hostEmail) {
       socket.emit('resume-failed', { reason: 'The session ended while you were disconnected.' });
       return;
     }
+    // The client often reconnects before the server has noticed the old connection died (it only
+    // finds out at the next missed ping); the host's account takes the room over from that stale one
+    const stale = room.hostSocketId !== socket.id ? io.sockets.sockets.get(room.hostSocketId) : null;
     clearTimeout(room.hostGraceTimer);
     room.hostGraceTimer = null;
     room.hostDisconnectedAt = null;
@@ -2589,6 +2618,7 @@ io.on('connection', (socket) => {
     socket.role = 'host';
     socket.userEmail = room.hostEmail;
     onlineEmails.add(room.hostEmail);
+    if (stale) stale.disconnect(true); // no longer the room's host, so its disconnect leaves the room alone
     pushEvent(roomCode, 'system', 'Host reconnected');
     socket.emit('room-created', { roomCode });
     emitRoomState(roomCode); // new host id: the E2E roster changes, so chat keys are re-shared

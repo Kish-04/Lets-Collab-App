@@ -326,6 +326,35 @@ test('a host that drops can resume its room, and a dropped controller comes back
   await once(intruder, 'resume-failed')
 })
 
+test('host and controller reconnecting before the server notices the drop keep their seats', async () => {
+  const hostAccount = user('RaceHost')
+  const candAccount = user('RaceCand')
+  const oldHost = await connect(hostAccount)
+  oldHost.emit('create-room', { name: 'RaceHost', mode: 'supervised' })
+  const { roomCode } = await once(oldHost, 'room-created')
+  const oldCandidate = await connect(candAccount)
+  oldCandidate.emit('join-room', roomCode, 'controller', { name: 'RaceCand' })
+  await once(oldHost, 'connection-request')
+  oldHost.emit('respond-join', { controllerId: oldCandidate.id, approved: true, permission: 'full' }, roomCode)
+  await once(oldCandidate, 'join-approved')
+
+  // The old host connection is still open on the server when the new one asks for the room
+  const host = await connect(hostAccount)
+  const noFailure = noEvent(host, 'resume-failed', 800)
+  const noKill = noEvent(oldCandidate, 'kill-session', 800)
+  host.emit('resume-host', { roomId: roomCode })
+  assert.equal((await once(host, 'room-created')).roomCode, roomCode)
+  await noFailure
+  await noKill
+
+  // Same for the controller: approved again without a new host prompt
+  const candidate = await connect(candAccount)
+  const noPrompt = noEvent(host, 'connection-request', 800)
+  candidate.emit('join-room', roomCode, 'controller', { name: 'RaceCand' })
+  assert.equal((await once(candidate, 'join-approved')).permission, 'full')
+  await noPrompt
+})
+
 test('an administrator cannot silently join a collaboration room', async () => {
   const host = await connect(user('CollabHost'))
   host.emit('create-room', { name: 'CollabHost', mode: 'collaboration' })

@@ -574,6 +574,9 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false,
+      // A host sharing its screen usually has another app in front; a throttled background page
+      // starves the session socket and the call, and the server then drops the connection
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
     }
@@ -608,6 +611,9 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false,
+      // A host sharing its screen usually has another app in front; a throttled background page
+      // starves the session socket and the call, and the server then drops the connection
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: backendUrl ? [`--letscollab-backend-url=${backendUrl}`] : []
     }
