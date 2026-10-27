@@ -510,92 +510,108 @@ export default function LandingPage() {
         </section>
 
         {/* About the Creator Section */}
-        <section id="creator" className="py-40 px-4 relative bg-[var(--bg)] overflow-hidden">
+        <section id="creator" className="py-24 sm:py-32 px-4 relative bg-[var(--bg)] overflow-hidden">
           <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center opacity-[0.03]" />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[80vw] bg-[radial-gradient(circle,rgba(255,255,255,0.03)_0%,transparent_60%)] pointer-events-none" />
-          
-          <div className="max-w-7xl mx-auto relative z-10 flex flex-col lg:flex-row gap-10 sm:gap-20 items-center">
-            {/* Image / Portrait Side */}
-            <motion.div 
-              initial={{ opacity: 0, x: -50, rotateY: 15 }}
-              whileInView={{ opacity: 1, x: 0, rotateY: 0 }}
-              viewport={{ once: true, margin: "-100px" }}
-              transition={{ duration: 1.5, type: "spring" }}
-              className="w-4/5 sm:w-full lg:w-2/5 mx-auto relative"
+          <div className="absolute -top-40 right-0 w-[40rem] h-[40rem] bg-[radial-gradient(circle,var(--violet-glow)_0%,transparent_65%)] pointer-events-none" />
+
+          <div className="max-w-6xl mx-auto relative z-10">
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              className="text-[var(--accent)] font-bold tracking-[0.3em] text-xs uppercase mb-10 sm:mb-14 text-center lg:text-left"
             >
-              <div className="aspect-[4/5] rounded-[3rem] overflow-hidden border border-[var(--border)]/60 relative group bg-zinc-950 flex flex-col items-center justify-center">
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent z-10" />
-                <div className="absolute inset-0 animate-pulse bg-zinc-900/50" />
-                
-                {/* Monogram shown if the portrait cannot load */}
-                <div className={`absolute z-0 inset-0 flex items-center justify-center transition-opacity duration-500 ${imageError ? 'opacity-100' : 'opacity-0'}`} aria-hidden={!imageError}>
-                  <div className="w-40 h-40 rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--violet)] flex items-center justify-center text-7xl font-black text-white shadow-[0_0_60px_var(--accent-glow)]">
-                    K
+              About the Creator
+            </motion.p>
+
+            <div className="grid lg:grid-cols-[minmax(0,20rem)_1fr] gap-10 lg:gap-16 items-start">
+              {/* Portrait */}
+              <motion.div
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-100px" }}
+                transition={{ duration: 0.9, type: "spring" }}
+                className="w-56 sm:w-72 lg:w-full mx-auto"
+              >
+                <div className="relative p-[1px] rounded-[2rem] bg-gradient-to-br from-[var(--accent)]/60 via-[var(--border)] to-[var(--violet)]/60">
+                  <div className="aspect-[4/5] rounded-[2rem] overflow-hidden relative group bg-zinc-950">
+                    {/* Monogram shown if the portrait cannot load */}
+                    <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-500 ${imageError ? 'opacity-100' : 'opacity-0'}`} aria-hidden={!imageError}>
+                      <div className="w-28 h-28 rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--violet)] flex items-center justify-center text-5xl font-black text-white">K</div>
+                    </div>
+                    {!imageError && (
+                      <img
+                        src="/kishan.jpg"
+                        alt="Kishan"
+                        className="w-full h-full object-cover relative transition-all duration-1000 grayscale group-hover:grayscale-0 group-hover:scale-105"
+                        onError={() => setImageError(true)}
+                      />
+                    )}
+                    <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/80 to-transparent" />
+                    <span className="absolute bottom-4 left-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/60 backdrop-blur text-[10px] font-bold tracking-widest uppercase text-zinc-200">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
+                      Team Lead
+                    </span>
                   </div>
                 </div>
+              </motion.div>
 
-                {/* Place the image here - using object-cover */}
-                {!imageError && (
-                  <img 
-                    src="/kishan.jpg" 
-                    alt="Kishan" 
-                    className="w-full h-full object-cover relative z-0 transition-transform duration-1000 group-hover:scale-105 grayscale group-hover:grayscale-0"
-                    onError={() => setImageError(true)}
-                  />
-                )}
-                
-                <div className="absolute bottom-10 left-10 z-20">
-                  <h3 className="text-4xl font-black text-[var(--text-primary)] mb-2">Kishan</h3>
-                  <p className="text-[var(--accent)] font-bold tracking-widest text-sm uppercase">Lead Engineer & Creator</p>
-                </div>
-              </div>
-              
-              {/* Decorative nodes */}
-              <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full border border-[var(--border)] border-dashed animate-[spin_20s_linear_infinite] flex items-center justify-center">
-                <div className="w-2 h-2 rounded-full bg-[var(--accent)] absolute top-0" />
-              </div>
-            </motion.div>
-
-            {/* Content Side */}
-            <div className="w-full lg:w-3/5 text-center sm:text-left px-4 sm:px-0">
-              <motion.h2 
-                initial={{ opacity: 0, y: 30 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                className="text-4xl sm:text-5xl md:text-7xl font-black mb-8 sm:mb-10 tracking-tight"
-              >
-                About the <span className="italic font-light font-display text-transparent bg-clip-text bg-gradient-to-r from-zinc-400 to-white">Creator</span>
-              </motion.h2>
-              
-              <div className="space-y-8 text-xl text-zinc-400 font-light leading-relaxed">
-                <motion.p initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.1 }}>
-                  DRCSFA ("Let's Collab!") is built and led by Kishan, a final-year Computer Science Engineering (Data Science) student at Vivekananda College of Engineering (VCET) in Puttur, Karnataka — while based in Kasaragod, Kerala, India.
-                </motion.p>
-                
-                <motion.p initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.2 }}>
-                  As team lead of a four-person engineering group, Kishan designed and built DRCSFA from the ground up: a decentralized remote collaboration platform combining real-time WebRTC communication, blockchain-backed audit trails on Ethereum, and privacy-preserving on-device AI monitoring.
-                </motion.p>
-                
-                <motion.p initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.3 }}>
-                  Beyond DRCSFA, his work spans full-stack development, AI/ML, and blockchain systems — including contributions to content and web development at Nexara, a B2B marketing company, and other independent projects exploring federated systems and decentralized architectures.
-                </motion.p>
-                
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9 }} 
-                  whileInView={{ opacity: 1, scale: 1 }} 
-                  viewport={{ once: true }} 
-                  transition={{ delay: 0.4 }}
-                  className="p-8 rounded-3xl bg-[var(--elevated)] border border-[var(--border)]/60 mt-12 relative overflow-hidden group"
+              {/* Story */}
+              <div className="text-center lg:text-left">
+                <motion.h2
+                  initial={{ opacity: 0, y: 30 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  className="text-5xl sm:text-7xl font-black tracking-tight leading-none"
                 >
-                  <div className="absolute inset-0 bg-gradient-to-r from-[var(--accent)]/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                  <p className="text-2xl font-medium text-[var(--text-primary)] italic relative z-10">
-                    "Bug to feature"
+                  Kishan
+                </motion.h2>
+                <p className="mt-3 text-[var(--accent)] font-bold tracking-widest text-xs sm:text-sm uppercase">Lead Engineer &amp; Creator</p>
+
+                {/* Quick facts */}
+                <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+                  {[
+                    { label: 'Studies', value: 'CSE (Data Science), VCET Puttur' },
+                    { label: 'Based in', value: 'Kasaragod, Kerala, India' },
+                    { label: 'Leads', value: 'A four-person engineering team' },
+                  ].map(fact => (
+                    <div key={fact.label} className="rounded-2xl bg-[var(--elevated)] border border-[var(--border)]/60 px-4 py-3">
+                      <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-500">{fact.label}</p>
+                      <p className="text-sm text-[var(--text-primary)] mt-1">{fact.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-8 space-y-5 text-base sm:text-lg text-zinc-400 font-light leading-relaxed">
+                  <motion.p initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.1 }}>
+                    Kishan designed and built DRCSFA (&quot;Let&apos;s Collab!&quot;) from the ground up: a decentralized remote collaboration platform combining real-time WebRTC communication, blockchain-backed audit trails on Ethereum, and privacy-preserving on-device AI monitoring.
+                  </motion.p>
+                  <motion.p initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.2 }}>
+                    Beyond DRCSFA, his work spans full-stack development, AI/ML, and blockchain systems, including content and web development at Nexara, a B2B marketing company, and independent projects exploring federated systems and decentralized architectures.
+                  </motion.p>
+                </div>
+
+                <div className="mt-6 flex flex-wrap justify-center lg:justify-start gap-2">
+                  {['Full-stack', 'WebRTC', 'AI / ML', 'Blockchain', 'Federated learning'].map(tag => (
+                    <span key={tag} className="px-3 py-1 rounded-full border border-[var(--border)] text-xs font-semibold text-zinc-300">{tag}</span>
+                  ))}
+                </div>
+
+                {/* Motto and link */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: 0.3 }}
+                  className="mt-10 pt-8 border-t border-[var(--border)]/60 flex flex-col sm:flex-row items-center sm:justify-between gap-6"
+                >
+                  <p className="text-3xl sm:text-4xl font-display italic font-light">
+                    <span className="text-[var(--accent)] font-black not-italic mr-1">&ldquo;</span>
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-white to-zinc-400">Bug to feature</span>
+                    <span className="text-[var(--accent)] font-black not-italic ml-1">&rdquo;</span>
                   </p>
-                </motion.div>
-                
-                <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.5 }} className="pt-8">
-                  <a href="https://www.linkedin.com/in/kishan-karthik-s-5453ab1b1/" target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-3 px-8 py-4 rounded-full bg-[#0077b5] text-[var(--text-primary)] font-bold hover:bg-[#005582] transition-colors shadow-lg hover:shadow-xl hover:scale-105 active:scale-95">
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                  <a href="https://www.linkedin.com/in/kishan-karthik-s-5453ab1b1/" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-[var(--border)] text-sm font-bold text-[var(--text-primary)] hover:bg-[#0077b5] hover:border-[#0077b5] transition-colors">
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
                     Connect on LinkedIn
                   </a>
                 </motion.div>
