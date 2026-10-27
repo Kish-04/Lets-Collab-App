@@ -1,6 +1,5 @@
-import type { FaceLandmarker } from '@mediapipe/tasks-vision';
 import type { Avatar3DStyle } from './Avatar3D';
-import { acquireFaceLandmarker, nextFaceTimestamp, releaseFaceLandmarker } from './faceLandmarker';
+import { acquireFaceTracker, type FaceTracker } from './faceLandmarker';
 import { requestFrame } from './frameLoop';
 
 // The built-in avatars are all 3D now (lib/Avatar3D.ts); this class only handles a custom image
@@ -16,9 +15,10 @@ export class VirtualAvatar {
     private isRunning: boolean = false;
     private avatarImage: HTMLImageElement | null = null;
     private currentStyle: AvatarStyle = 'none';
-    private landmarker: FaceLandmarker | null = null;
-    private trackerRequested = false;
+    private tracker: FaceTracker | null = null;
+    private stream: MediaStream | null = null;
     private lastVideoTime = -1;
+    private lastDrawnTime = -1;
     private lastFaceAt = 0;
     private target: Placement | null = null;
     private placement: Placement | null = null;
@@ -33,14 +33,12 @@ export class VirtualAvatar {
     }
 
     private requestTracker() {
-        if (this.trackerRequested) return;
-        this.trackerRequested = true;
-        acquireFaceLandmarker()
-            .then((landmarker) => { if (this.trackerRequested) this.landmarker = landmarker; })
-            .catch((err) => {
-                console.error('[VirtualAvatar] Failed to load face tracking:', err);
-                this.onLoadError?.(err);
-            });
+        if (this.tracker) return;
+        this.tracker = acquireFaceTracker();
+        this.tracker.ready.catch((err) => {
+            console.error('[VirtualAvatar] Failed to load face tracking:', err);
+            this.onLoadError?.(err);
+        });
     }
 
     public setAvatarStyle(style: AvatarStyle, customImageUrl?: string) {
@@ -61,9 +59,9 @@ export class VirtualAvatar {
     }
 
     private track(video: HTMLVideoElement, now: number) {
-        if (!this.landmarker || video.currentTime === this.lastVideoTime) return;
+        if (!this.tracker || video.currentTime === this.lastVideoTime) return;
         this.lastVideoTime = video.currentTime;
-        const face = this.landmarker.detectForVideo(video, nextFaceTimestamp()).faceLandmarks?.[0];
+        const face = this.tracker.detect(video)?.faceLandmarks?.[0];
         if (!face) return;
         const w = this.canvas.width;
         const h = this.canvas.height;
@@ -109,6 +107,9 @@ export class VirtualAvatar {
             this.lastFrameAt = now;
             const ctx = this.ctx;
             if (videoElement.readyState < 2 || videoElement.videoWidth === 0) return;
+            // Draw only when the camera has a new frame (the screen may refresh at 60-144 Hz)
+            if (videoElement.currentTime === this.lastDrawnTime) return;
+            this.lastDrawnTime = videoElement.currentTime;
             if (this.canvas.width !== videoElement.videoWidth || this.canvas.height !== videoElement.videoHeight) {
                 this.canvas.width = videoElement.videoWidth;
                 this.canvas.height = videoElement.videoHeight;
@@ -136,7 +137,8 @@ export class VirtualAvatar {
             ctx.restore();
         };
         this.cancelFrame = requestFrame(renderLoop);
-        return this.canvas.captureStream(30);
+        if (!this.stream || this.stream.getVideoTracks().every(t => t.readyState === 'ended')) this.stream = this.canvas.captureStream(30);
+        return this.stream;
     }
 
     public stop() {
@@ -144,12 +146,14 @@ export class VirtualAvatar {
         this.cancelFrame?.();
         this.cancelFrame = null;
         this.lastFrameAt = 0;
+        this.lastDrawnTime = -1;
     }
 
     public dispose() {
         this.stop();
-        if (this.trackerRequested) releaseFaceLandmarker();
-        this.trackerRequested = false;
-        this.landmarker = null;
+        this.tracker?.release();
+        this.tracker = null;
+        this.stream?.getTracks().forEach(t => t.stop());
+        this.stream = null;
     }
 }

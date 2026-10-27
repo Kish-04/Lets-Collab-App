@@ -444,6 +444,7 @@ export class VirtualBackground {
     private cancelFrame: (() => void) | null = null;
     private lastSentTime = -1;
     private lastSentAt = 0;
+    private stream: MediaStream | null = null;
     public onLoadError?: (err: unknown) => void;
 
     constructor() {
@@ -653,7 +654,9 @@ export class VirtualBackground {
             if (this.isProcessing || videoElement.currentTime === this.lastSentTime || now - this.lastSentAt < 30) return;
             const segmentation = this.selfieSegmentation;
             if (!segmentation || this.currentStyle === 'none') {
-                // Model still loading (or nothing to replace): show the camera as is
+                // Model still loading (or nothing to replace): show the camera as is, once per camera frame
+                this.lastSentTime = videoElement.currentTime;
+                this.lastSentAt = now;
                 this.drawPassThrough(videoElement);
                 return;
             }
@@ -673,7 +676,8 @@ export class VirtualBackground {
                 .finally(() => { this.isProcessing = false; });
         };
         this.cancelFrame = requestFrame(loop);
-        return this.canvas.captureStream(30);
+        if (!this.stream || this.stream.getVideoTracks().every(t => t.readyState === 'ended')) this.stream = this.canvas.captureStream(30);
+        return this.stream;
     }
 
     public stop() {
@@ -691,5 +695,7 @@ export class VirtualBackground {
         this.loading = null;
         this.gl?.dispose();
         this.gl = null;
+        this.stream?.getTracks().forEach(t => t.stop());
+        this.stream = null;
     }
 }

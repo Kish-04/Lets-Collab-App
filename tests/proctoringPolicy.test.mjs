@@ -6,6 +6,7 @@ import { loadTs } from './helpers/loadTs.mjs'
 const {
   SustainedSignal, ProctoringEscalator, PetMessageQueue, proctoringKind, proctoringRule,
   cameraFrameProblem, lumaDifference, toLuma, suppressAudioProctoringFor, audioProctoringSuppressed,
+  classifyObjects, OBJECT_MIN_SCORE, AdaptiveInterval,
 } = await loadTs('lib/proctoringPolicy.ts')
 
 test('a single bad frame never fires; a sustained one does, then cools down', () => {
@@ -58,14 +59,18 @@ test('detector event names map to one kind with a rule', () => {
   assert.equal(proctoringRule('made_up').severity, 'medium')
 })
 
-test('camera health: dark, covered (uniform) and frozen frames', () => {
+test('camera health: covered (black or flat), too dark, and frozen frames', () => {
   const frame = (fn) => {
     const rgba = new Uint8ClampedArray(32 * 24 * 4)
     for (let p = 0; p < 32 * 24; p++) { const v = fn(p); rgba.set([v, v, v, 255], p * 4) }
     return toLuma(rgba)
   }
-  assert.equal(cameraFrameProblem(frame(() => 5)), 'dark')
-  assert.equal(cameraFrameProblem(frame(() => 120)), 'uniform')
+  // A finger or tape over the lens: black
+  assert.equal(cameraFrameProblem(frame(() => 5)), 'covered')
+  // Paper or a hand right in front of the lens: one flat colour
+  assert.equal(cameraFrameProblem(frame(() => 120)), 'covered')
+  // A dim room that still shows detail is "too dark", not "covered"
+  assert.equal(cameraFrameProblem(frame(p => 8 + (p * 37) % 30)), 'dark')
   const scene = frame(p => 60 + (p * 37) % 140)
   assert.equal(cameraFrameProblem(scene), null)
   assert.ok(lumaDifference(scene, scene) < 0.35)
@@ -127,4 +132,57 @@ test('the pet\'s own beeps briefly suppress audio proctoring', () => {
   suppressAudioProctoringFor(1000, 5000)
   assert.equal(audioProctoringSuppressed(5500), true)
   assert.equal(audioProctoringSuppressed(6100), false)
+})
+
+test('host labels name each camera situation plainly, with its own kind', () => {
+  assert.equal(proctoringRule('PHONE_DETECTED').label, 'Phone visible in camera')
+  assert.equal(proctoringRule('phone_detected').severity, 'critical')
+  assert.equal(proctoringKind('book_detected'), 'BOOK_DETECTED')
+  assert.equal(proctoringKind('screen_detected'), 'SCREEN_DETECTED')
+  assert.equal(proctoringRule('camera_covered').label, 'Camera blocked or covered')
+  assert.equal(proctoringRule('camera_dark').label, 'Camera too dark')
+  assert.equal(proctoringRule('camera_frozen').label, 'Camera image frozen')
+  assert.equal(proctoringRule('camera_off').label, 'Camera turned off')
+  assert.equal(proctoringRule('multiple_faces').label, 'Another person in view')
+  assert.match(proctoringRule('face_blocked').label, /Face hidden or blocked/)
+  assert.match(proctoringRule('no_face').label, /Face not visible/)
+  // Each of these is a separate kind, so one never hides (or escalates) another
+  const kinds = ['no_face', 'face_blocked', 'camera_covered', 'camera_dark', 'phone_detected', 'book_detected', 'screen_detected'].map(proctoringKind)
+  assert.equal(new Set(kinds).size, kinds.length)
+  // Legacy names still resolve
+  assert.equal(proctoringKind('CAMERA_BLOCKED'), 'CAMERA_COVERED')
+  assert.equal(proctoringKind('OBJECT_DETECTED'), 'PHONE_DETECTED')
+})
+
+test('object findings apply the per-class thresholds', () => {
+  const det = (categoryName, score) => ({ categories: [{ categoryName, score }] })
+  assert.equal(OBJECT_MIN_SCORE['cell phone'], 0.4)
+  const seen = classifyObjects([det('cell phone', 0.62), det('cell phone', 0.45), det('book', 0.49), det('tv', 0.7), det('person', 0.9), det('person', 0.56), det('dog', 0.99)])
+  assert.equal(seen.phone, 0.62)
+  assert.equal(seen.book, 0, 'a book under its 0.50 bar is ignored')
+  assert.equal(seen.screen, 0.7)
+  assert.equal(seen.people, 2)
+  const weak = classifyObjects([det('cell phone', 0.39), det('person', 0.5), { categories: [] }])
+  assert.deepEqual(weak, { phone: 0, book: 0, screen: 0, people: 0, personScore: 0 })
+})
+
+test('adaptive interval backs off on a slow device and recovers on a fast one', () => {
+  const rate = new AdaptiveInterval(100, 800, 30, 2)
+  rate.record(500); rate.record(500) // warm-up samples are ignored
+  assert.equal(rate.current, 100)
+  rate.record(60)
+  assert.equal(rate.current, 200)
+  for (let i = 0; i < 10; i++) rate.record(60)
+  assert.equal(rate.current, 800, 'never above the ceiling')
+  for (let i = 0; i < 40; i++) rate.record(5)
+  assert.equal(rate.current, 100, 'back to the base rate')
+  assert.ok(rate.averageCostMs < 15)
+})
+
+test('a sustained detection still fires at the slowest detector rate', () => {
+  // Objects back off to one sample a second at most: 3 s windows with 3 samples still work
+  const phone = new SustainedSignal(3000, 0.5, 10000, 3)
+  let fired = false
+  for (let t = 0; t <= 4000; t += 1000) fired = phone.update(true, t) || fired
+  assert.equal(fired, true)
 })

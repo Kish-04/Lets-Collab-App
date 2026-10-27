@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { getPetCodeContext } from '@/lib/petContext'
 import { askPet } from '@/lib/askPet'
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { motion, AnimatePresence, useMotionValue, animate, useDragControls } from 'framer-motion'
 import { Volume2, VolumeX } from 'lucide-react'
@@ -43,6 +43,20 @@ function InteractionCatcher({
       <meshBasicMaterial transparent opacity={0} />
     </mesh>
   )
+}
+
+// Asks the demand-mode canvas for a frame ~30 times a second (animations use the frame delta, so they
+// keep their speed); hidden tabs skip frames entirely
+const PET_FRAME_MS = 1000 / 30
+function PetFrameDriver() {
+  const invalidate = useThree(state => state.invalidate)
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') invalidate()
+    }, PET_FRAME_MS)
+    return () => window.clearInterval(timer)
+  }, [invalidate])
+  return null
 }
 
 export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isStandalone, isCanvasMode }: { petState?: EmotionState, sessionMode?: string, petMessage?: string, isStandalone?: boolean, isCanvasMode?: boolean }) {
@@ -378,7 +392,10 @@ export function FloatingRobot({ petState = 'Idle', sessionMode, petMessage, isSt
         style={{ width: 165, height: 320, x, y, rotate }}
         className="fixed bottom-6 right-6 z-[150] cursor-grab active:cursor-grabbing"
       >
-        <Canvas frameloop="always" shadows dpr={[1, 2]} gl={{ antialias: true, alpha: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }} camera={{ position: [0, 0, 7.5], fov: 40 }} className="pointer-events-auto">
+        {/* Rendered on demand at ~30 fps (PetFrameDriver) instead of every display refresh (60-144 Hz):
+            the pet sits beside a live call or exam and must not compete with it for the main thread */}
+        <Canvas frameloop="demand" shadows dpr={[1, 1.5]} gl={{ antialias: true, alpha: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }} camera={{ position: [0, 0, 7.5], fov: 40 }} className="pointer-events-auto">
+          <PetFrameDriver />
           <RobotScene hovered={hovered} pokeTrigger={pokeTrigger} emotion={emotion} />
           <InteractionCatcher 
             onHover={setHovered} 

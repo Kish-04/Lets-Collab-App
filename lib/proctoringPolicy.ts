@@ -14,20 +14,28 @@ export interface ProctoringRule {
 }
 
 export const PROCTORING_RULES: Record<string, ProctoringRule> = {
-    NO_FACE: { severity: 'high', penalty: 12, label: 'No face on camera', pet: "No face detected — please sit in front of the camera." },
+    // Camera: face (MediaPipe Face Landmarker) and objects (MediaPipe EfficientDet-Lite0, COCO classes)
+    NO_FACE: { severity: 'high', penalty: 12, label: 'Face not visible (no one in front of the camera)', pet: 'No face detected — please sit in front of the camera.' },
+    FACE_BLOCKED: { severity: 'high', penalty: 12, label: 'Face hidden or blocked (person in view, face not visible)', pet: 'Your face is hidden — please keep your face visible and uncovered.' },
     MULTIPLE_FACES: { severity: 'critical', penalty: 25, label: 'Another person in view', pet: 'Another person detected — you must be alone during the exam.' },
     LOOKING_AWAY: { severity: 'medium', penalty: 8, label: 'Looking away from the screen', pet: 'Looking away detected — please keep your eyes on the screen.' },
     FACE_OUT_OF_FRAME: { severity: 'low', penalty: 5, label: 'Face too far or partly out of frame', pet: 'Your face is too far or partly out of frame — please move back into view.' },
-    CAMERA_DARK: { severity: 'high', penalty: 15, label: 'Camera covered or too dark', pet: 'Your camera looks covered or too dark — please uncover it or add light.' },
+    PHONE_DETECTED: { severity: 'critical', penalty: 25, label: 'Phone visible in camera', pet: 'A phone was detected on camera — please put it away.' },
+    BOOK_DETECTED: { severity: 'high', penalty: 20, label: 'Book or notes visible in camera', pet: 'A book or notes were detected on camera — please put them away.' },
+    SCREEN_DETECTED: { severity: 'high', penalty: 20, label: 'Another screen or laptop visible in camera', pet: 'A second screen or laptop was detected on camera — please remove it.' },
+    // Camera health (small grayscale thumbnail of the camera image, no model)
+    CAMERA_COVERED: { severity: 'high', penalty: 20, label: 'Camera blocked or covered', pet: 'Your camera looks blocked or covered — please uncover it.' },
+    CAMERA_DARK: { severity: 'high', penalty: 12, label: 'Camera too dark', pet: 'Your camera image is too dark — please turn on a light.' },
     CAMERA_FROZEN: { severity: 'high', penalty: 20, label: 'Camera image frozen', pet: 'Your camera image is frozen — please check your camera.' },
-    CAMERA_OFF: { severity: 'critical', penalty: 25, label: 'Camera turned off or lost', pet: 'Your camera stopped — please turn it back on now.' },
-    PHONE_DETECTED: { severity: 'critical', penalty: 25, label: 'Phone or unauthorised material on camera', pet: 'A phone or unauthorised material was detected — please put it away.' },
+    CAMERA_OFF: { severity: 'critical', penalty: 25, label: 'Camera turned off', pet: 'Your camera stopped — please turn it back on now.' },
+    // Microphone (MediaPipe YAMNet audio classifier, or a speech-band level detector when it cannot load)
     VOICE_DETECTED: { severity: 'high', penalty: 12, label: 'Talking detected', pet: 'Talking detected — please stay silent during the exam.' },
     WHISPER_DETECTED: { severity: 'high', penalty: 12, label: 'Whispering detected', pet: 'Whispering detected — please stay silent during the exam.' },
     MULTIPLE_VOICES: { severity: 'critical', penalty: 20, label: 'More than one voice / conversation', pet: 'A conversation was detected — no one may talk to you during the exam.' },
-    PHONE_AUDIO: { severity: 'high', penalty: 15, label: 'Phone ringing or dialing', pet: 'A phone sound was detected — please switch your phone off.' },
+    PHONE_AUDIO: { severity: 'high', penalty: 15, label: 'Phone ringing or dialing heard', pet: 'A phone sound was detected — please switch your phone off.' },
     LOUD_NOISE: { severity: 'low', penalty: 4, label: 'Loud background noise', pet: 'Loud noise detected — please make sure your room is quiet.' },
     MIC_OFF: { severity: 'critical', penalty: 25, label: 'Microphone muted or lost', pet: 'Your microphone stopped — please turn it back on now.' },
+    // Device and window
     TAB_SWITCHED: { severity: 'high', penalty: 20, label: 'Left the exam window', pet: 'You left the exam window — please stay on this screen.' },
     FULLSCREEN_EXIT: { severity: 'medium', penalty: 10, label: 'Exited full screen', pet: 'You exited full screen — please return to full screen.' },
     CLIPBOARD: { severity: 'medium', penalty: 10, label: 'Clipboard / copy-paste activity', pet: 'Copy and paste are not allowed during the exam.' },
@@ -47,11 +55,14 @@ const FALLBACK_RULE: ProctoringRule = { severity: 'medium', penalty: 10, label: 
 // and a hook) and repeats are counted together.
 const ALIASES: Record<string, string> = {
     LOOK_AWAY: 'LOOKING_AWAY', EYE_DARTING: 'LOOKING_AWAY', GAZE_AWAY: 'LOOKING_AWAY',
-    FORBIDDEN_OBJECT: 'PHONE_DETECTED', OBJECT_DETECTED: 'PHONE_DETECTED', BOOK_DETECTED: 'PHONE_DETECTED',
+    // Older clients sent every object as FORBIDDEN_OBJECT; it counts as the most serious one (phone)
+    FORBIDDEN_OBJECT: 'PHONE_DETECTED', OBJECT_DETECTED: 'PHONE_DETECTED',
+    BOOK: 'BOOK_DETECTED', SECOND_DEVICE: 'SCREEN_DETECTED', LAPTOP_DETECTED: 'SCREEN_DETECTED',
+    FACE_HIDDEN: 'FACE_BLOCKED', FACE_COVERED: 'FACE_BLOCKED',
     TALKING_DETECTED: 'VOICE_DETECTED', SPEECH_DETECTED: 'VOICE_DETECTED',
     WHISPER: 'WHISPER_DETECTED', CONVERSATION: 'MULTIPLE_VOICES',
     SUSPICIOUS_NOISE: 'LOUD_NOISE', FACE_TOO_FAR: 'FACE_OUT_OF_FRAME', FACE_PARTIAL: 'FACE_OUT_OF_FRAME',
-    CAMERA_COVERED: 'CAMERA_DARK', CAMERA_ENDED: 'CAMERA_OFF', MIC_MUTED: 'MIC_OFF',
+    CAMERA_BLOCKED: 'CAMERA_COVERED', CAMERA_ENDED: 'CAMERA_OFF', MIC_MUTED: 'MIC_OFF',
     BLUR_EVENT: 'TAB_SWITCHED', CLIPBOARD_CHANGE: 'CLIPBOARD', BANNED_PROCESS: 'REMOTE_DESKTOP',
     PRINT_SCREEN: 'SCREEN_CAPTURE', MULTI_MONITOR: 'SECOND_SCREEN', SYSTEM: 'TYPING_ANOMALY',
 }
@@ -63,6 +74,16 @@ export function proctoringKind(type: string) {
 
 export function proctoringRule(type: string): ProctoringRule {
     return PROCTORING_RULES[proctoringKind(type)] || FALLBACK_RULE
+}
+
+// Kinds seen in the camera image: their alerts carry a still of the moment as evidence
+const CAMERA_KINDS = new Set([
+    'NO_FACE', 'FACE_BLOCKED', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'FACE_OUT_OF_FRAME',
+    'PHONE_DETECTED', 'BOOK_DETECTED', 'SCREEN_DETECTED', 'CAMERA_COVERED', 'CAMERA_DARK', 'CAMERA_FROZEN',
+])
+
+export function isCameraProctoringKind(type: string) {
+    return CAMERA_KINDS.has(proctoringKind(type))
 }
 
 const SEVERITY_ORDER: ProctoringSeverity[] = ['low', 'medium', 'high', 'critical']
@@ -144,9 +165,12 @@ export class SustainedSignal {
 // ---------------------------------------------------------------------------------------------------
 
 export const CAMERA_HEALTH = {
-    /** Mean luma (0-255) under this is too dark to proctor (a covered lens reads ~0-15) */
+    /** Mean luma (0-255) under this is too dark to proctor */
     DARK_MEAN: 28,
-    /** Luma standard deviation under this means a uniform image (lens covered by a finger/sticker) */
+    /** A lens covered by a finger, tape or a hand reads almost black: mean under this */
+    COVERED_MEAN: 14,
+    /** Luma standard deviation under this means a uniform image (lens covered by a finger/sticker/paper,
+     *  or the camera pointed at a blank wall) */
     UNIFORM_STDDEV: 7,
     /** Mean absolute luma difference between samples 500 ms apart under this means identical frames.
      *  Live sensors show noise of ~1-4 even when the person sits perfectly still. */
@@ -177,11 +201,103 @@ export function lumaDifference(a: ArrayLike<number>, b: ArrayLike<number>) {
     return sum / a.length
 }
 
-export function cameraFrameProblem(luma: ArrayLike<number>): 'dark' | 'uniform' | null {
+/**
+ * 'covered': (almost) black, or one flat colour: something is over the lens (finger, tape, hand,
+ *            paper) or the camera faces a blank surface
+ * 'dark':    a dim scene that still shows detail (poor lighting)
+ */
+export type CameraFrameProblem = 'covered' | 'dark'
+
+export function cameraFrameProblem(luma: ArrayLike<number>): CameraFrameProblem | null {
     const { mean, stddev } = lumaStats(luma)
+    if (mean < CAMERA_HEALTH.COVERED_MEAN || stddev < CAMERA_HEALTH.UNIFORM_STDDEV) return 'covered'
     if (mean < CAMERA_HEALTH.DARK_MEAN) return 'dark'
-    if (stddev < CAMERA_HEALTH.UNIFORM_STDDEV) return 'uniform'
     return null
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Objects on camera (MediaPipe ObjectDetector, EfficientDet-Lite0 trained on COCO)
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * COCO classes that matter in an exam and the minimum per-detection score for each. The model has no
+ * class for earbuds/headphones, smart watches or loose paper notes (only "book"), so those cannot be
+ * detected from the camera. Phones are small and often half hidden, so they get the lowest bar.
+ */
+export const OBJECT_MIN_SCORE: Record<string, number> = {
+    'cell phone': 0.40,
+    'book': 0.50,
+    'laptop': 0.55,
+    'tv': 0.55,
+    'person': 0.55,
+}
+
+export interface ObjectDetectionLike {
+    categories: Array<{ categoryName: string; score: number }>
+}
+
+export interface ObjectFindings {
+    /** Best score among the accepted detections of each kind, 0 when not seen */
+    phone: number
+    book: number
+    /** laptop or tv (a second screen) */
+    screen: number
+    /** Accepted "person" detections (a whole or partly visible body) */
+    people: number
+    personScore: number
+}
+
+/** Applies the per-class thresholds to one frame's detections */
+export function classifyObjects(detections: ObjectDetectionLike[]): ObjectFindings {
+    const findings: ObjectFindings = { phone: 0, book: 0, screen: 0, people: 0, personScore: 0 }
+    for (const detection of detections) {
+        const category = detection.categories?.[0]
+        if (!category) continue
+        const min = OBJECT_MIN_SCORE[category.categoryName]
+        if (min === undefined || category.score < min) continue
+        switch (category.categoryName) {
+            case 'cell phone': findings.phone = Math.max(findings.phone, category.score); break
+            case 'book': findings.book = Math.max(findings.book, category.score); break
+            case 'laptop':
+            case 'tv': findings.screen = Math.max(findings.screen, category.score); break
+            case 'person':
+                findings.people++
+                findings.personScore = Math.max(findings.personScore, category.score)
+                break
+        }
+    }
+    return findings
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Adaptive detector rate
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * How often a detector should run, from how long its inference takes on this device: while the
+ * smoothed cost is over budget the interval doubles (up to `max`); once it is comfortably under budget
+ * it creeps back to `base`. The first `warmup` samples (model and shader warm-up) are ignored.
+ */
+export class AdaptiveInterval {
+    private ema = 0
+    private seen = 0
+    private interval: number
+
+    constructor(private base: number, private max: number, private budgetMs: number, private warmup = 3) {
+        this.interval = base
+    }
+
+    record(costMs: number): number {
+        this.seen++
+        if (this.seen <= this.warmup || !Number.isFinite(costMs)) return this.interval
+        this.ema = this.ema ? this.ema * 0.7 + costMs * 0.3 : costMs
+        if (this.ema > this.budgetMs) this.interval = Math.min(this.max, this.interval * 2)
+        else if (this.ema < this.budgetMs / 2) this.interval = Math.max(this.base, Math.round(this.interval * 0.8))
+        return this.interval
+    }
+
+    get current() { return this.interval }
+    get averageCostMs() { return this.ema }
 }
 
 // ---------------------------------------------------------------------------------------------------

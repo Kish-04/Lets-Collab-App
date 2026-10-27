@@ -2,9 +2,9 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import type { FaceLandmarker } from '@mediapipe/tasks-vision'
-import { acquireFaceLandmarker, nextFaceTimestamp, releaseFaceLandmarker } from './faceLandmarker'
+import { acquireFaceTracker, type FaceTracker } from './faceLandmarker'
 import { requestFrame } from './frameLoop'
+import { AdaptiveInterval } from './proctoringPolicy'
 
 // Every avatar is built procedurally from three.js primitives (no downloaded assets) and driven by
 // on-device MediaPipe face tracking: head pose from the facial transformation matrix, blink / gaze /
@@ -1004,8 +1004,10 @@ export class Avatar3D {
     private backgroundTexture: THREE.Texture | null = null
     private rig: Rig | null = null
     private style: Avatar3DStyle | null = null
-    private landmarker: FaceLandmarker | null = null
-    private trackerRequested = false
+    private tracker: FaceTracker | null = null
+    // Face tracking at up to the camera rate (~30/s), slower when inference is slow on this device
+    private trackRate = new AdaptiveInterval(30, 100, 20)
+    private stream: MediaStream | null = null
     private disposed = false
     private cancelFrame: (() => void) | null = null
     private running = false
@@ -1076,23 +1078,23 @@ export class Avatar3D {
     }
 
     private requestTracker() {
-        if (this.trackerRequested) return
-        this.trackerRequested = true
-        acquireFaceLandmarker()
-            .then(l => { if (this.disposed) return; this.landmarker = l })
-            .catch(err => {
-                console.error('[Avatar3D] Failed to load face tracking:', err)
-                this.onLoadError?.(err)
-            })
+        if (this.tracker || this.disposed) return
+        this.tracker = acquireFaceTracker()
+        this.tracker.ready.catch(err => {
+            console.error('[Avatar3D] Failed to load face tracking:', err)
+            this.onLoadError?.(err)
+        })
     }
 
     private track(video: HTMLVideoElement, now: number) {
-        if (!this.landmarker || video.readyState < 2 || !video.videoWidth) return
-        if (video.currentTime === this.lastVideoTime || now - this.lastTrackAt < 28) return
+        if (!this.tracker || video.readyState < 2 || !video.videoWidth) return
+        if (video.currentTime === this.lastVideoTime || now - this.lastTrackAt < this.trackRate.current - 2) return
         this.lastVideoTime = video.currentTime
         this.lastTrackAt = now
 
-        const result = this.landmarker.detectForVideo(video, nextFaceTimestamp())
+        const result = this.tracker.detect(video)
+        if (!result) return
+        this.trackRate.record(this.tracker.lastCostMs())
         const matrix = result.facialTransformationMatrixes?.[0]
         const shapes = result.faceBlendshapes?.[0]?.categories
         if (!matrix || !shapes) return
@@ -1196,7 +1198,10 @@ export class Avatar3D {
         // Draw one frame immediately so the stream never starts black
         this.animate(performance.now(), 1 / 30)
         this.renderer.render(this.scene, this.camera)
-        return this.canvas.captureStream(30)
+        // One capture track for the life of the avatar: a new one per start() would leave the old
+        // tracks capturing the same canvas
+        if (!this.stream || this.stream.getVideoTracks().every(t => t.readyState === 'ended')) this.stream = this.canvas.captureStream(30)
+        return this.stream
     }
 
     public stop() {
@@ -1208,9 +1213,10 @@ export class Avatar3D {
     public dispose() {
         this.stop()
         this.disposed = true
-        if (this.trackerRequested) releaseFaceLandmarker()
-        this.trackerRequested = false
-        this.landmarker = null
+        this.tracker?.release()
+        this.tracker = null
+        this.stream?.getTracks().forEach(t => t.stop())
+        this.stream = null
         if (this.rig) disposeObject(this.rig.root)
         this.rig = null
         this.backgroundTexture?.dispose()

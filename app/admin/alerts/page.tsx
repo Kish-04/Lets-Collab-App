@@ -5,6 +5,7 @@ import { createPortal } from "react-dom"
 import { useAdminReports, useAdminSocket, useLiveSessions, useSocketEvent } from "@/components/admin/AdminData"
 import { Search, ShieldAlert, AlertTriangle, Download, CheckCircle, Flag, X } from "lucide-react"
 import { cn, getAuthHeaders, getBackendUrl } from "@/lib/utils"
+import { PROCTORING_RULES } from "@/lib/proctoringPolicy"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 
 type FilterType = "all" | "high" | "medium" | "low"
@@ -37,16 +38,13 @@ function withRiskTotals(newestFirst: Alert[]): Alert[] {
 
 function friendlyType(raw: string): string {
   const map: Record<string, string> = {
-    NO_FACE: "No face detected",
-    MULTIPLE_FACES: "Multiple faces",
-    LOOKING_AWAY: "Looking away",
-    PHONE_DETECTED: "Phone detected",
     BLURR_EVENT: "Alt+Tab / blur",
     CLIPBOARD_CHANGE: "Clipboard change",
     os_anticheat_violation: "OS event",
     anticheat_violation: "AI detection",
   }
-  return map[raw] || raw
+  // Every proctoring kind has a plain host-facing label (e.g. "Camera blocked or covered")
+  return map[raw] || PROCTORING_RULES[raw]?.label || raw
 }
 
 function formatTime(dateStr: string): string {

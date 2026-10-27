@@ -47,13 +47,14 @@ import { ExamHostDashboard, ExamQuestion } from '@/components/ircp/exam/ExamHost
 import { ExamControllerOverlay } from '@/components/ircp/exam/ExamControllerOverlay'
 import { mergeExamQuestions, withLocalDeadline } from '@/lib/examClient'
 
-import { AntiCheatEngine, AntiCheatEvent } from "@/lib/AntiCheatEngine"
+import { AntiCheatEngine } from "@/lib/AntiCheatEngine"
 import { useFaceProctoring } from "@/hooks/useFaceProctoring"
-import { useObjectProctoring } from "@/hooks/useObjectProctoring"
+import { applyScreenTrackHint, cameraConstraints, tuneVideoSenders, SCREEN_CONSTRAINTS } from "@/lib/mediaTuning"
+import { SessionClock } from "@/components/ircp/session/SessionClock"
 import { useAudioProctoring } from "@/hooks/useAudioProctoring"
 import { useEnvironmentProctoring } from "@/hooks/useEnvironmentProctoring"
 import { useFaceReverify } from "@/hooks/useFaceReverify"
-import { ProctoringEscalator, proctoringKind, proctoringRule } from "@/lib/proctoringPolicy"
+import { ProctoringEscalator, isCameraProctoringKind, proctoringKind, proctoringRule } from "@/lib/proctoringPolicy"
 import { petWarn, usePetWarnings, warnCandidate } from "@/lib/proctoringPet"
 import { cn, getBackendUrl, fetchIceServers, getStoredAuthToken, getAuthHeaders } from "@/lib/utils"
 import { describeFaceSteadily, FACE_ERROR_TEXT } from "@/lib/faceMatch"
@@ -83,11 +84,11 @@ import {
     dpRoundsInMemory,
     dpRoundsUsed,
     recordDpRound,
-    formatDuration,
     ConnectionQualityMeter,
     hasTurnServer,
 } from "@/lib/session/model"
 import { gaussianEpsilon } from "@/lib/dpAccountant"
+import { videoPointFromClient } from "@/lib/remotePointer"
 import { useModalDialog } from "@/hooks/useModalDialog"
 import { SessionActivityPanel, type ActivityEntry } from "@/components/ircp/SessionActivityPanel"
 import { ClipboardSync, CLIPBOARD_CHANNEL } from "@/components/ircp/ClipboardSync"
@@ -99,6 +100,17 @@ import {
     readPersonalAppearance, SessionMode
 } from "@/lib/appearance"
 
+// Desktop host, entire-screen share: the controller reached an application the host has not approved yet
+interface AppApprovalRequest {
+    id: string
+    appName: string
+    appKind: 'app' | 'shell' | 'unknown'
+    exePath: string
+    icon: string | null
+    controllerId: string | null
+    controllerName: string
+    trigger: 'click' | 'scroll' | 'keyboard'
+}
 
 export default function SessionPage() {
     return (
@@ -138,8 +150,6 @@ function SessionContent() {
     const [isCalibrating, setIsCalibrating] = useState(false)
     const [permission, setPermission] = useState<PermissionLevel>("view")
     const [isStreaming, setIsStreaming] = useState(false)
-    const [duration, setDuration] = useState(0)
-    const [latency, setLatency] = useState(0)
     const [riskScore, setRiskScore] = useState(0)
     const [peerCount, setPeerCount] = useState(0)
     const [sessionLogs, setSessionLogs] = useState<LogEntry[]>([])
@@ -158,7 +168,6 @@ function SessionContent() {
     const [audioMuted, setAudioMuted] = useState(false)
     const [systemAudioOn, setSystemAudioOn] = useState(false)
     const [pipCollapsed, setPipCollapsed] = useState(false)
-    const [videoStats, setVideoStats] = useState("")
     const [shareSources, setShareSources] = useState<any[]>([])
     const [showSharePicker, setShowSharePicker] = useState(false)
     const [mouseEnabled, setMouseEnabled] = useState(false)
@@ -171,6 +180,14 @@ function SessionContent() {
     const [participants, setParticipants] = useState<Participant[]>([])
     const [panicShortcuts, setPanicShortcuts] = useState<string[]>([])
     const [panicNotice, setPanicNotice] = useState<string | null>(null)
+    // Emergency shortcuts another program had already taken (they only work while this window is focused)
+    const [panicShortcutsFailed, setPanicShortcutsFailed] = useState<string[]>([])
+    // Controller: short messages from the host's computer ("The host denied access to Notepad")
+    const [controlNotice, setControlNotice] = useState<string | null>(null)
+    // Host, desktop app: ask before the controller uses an application not approved yet (entire-screen shares)
+    const [askBeforeNewApp, setAskBeforeNewApp] = useState(true)
+    const [appApprovalQueue, setAppApprovalQueue] = useState<AppApprovalRequest[]>([])
+    const [rememberAppApproval, setRememberAppApproval] = useState(false)
     const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
     const [selectedControllerId, setSelectedControllerId] = useState<string | null>(null)
     // Controller only: the level asked of the host and whether the host turned it down
@@ -216,9 +233,6 @@ function SessionContent() {
     usePetWarnings(setPetState, setPetMessage)
     const [remoteCameraStreams, setRemoteCameraStreams] = useState<Record<string, MediaStream>>({})
     const [evidence, setEvidence] = useState<EvidenceItem[]>([])
-    const [packetLoss, setPacketLoss] = useState<number | null>(null)
-    const [streamFps, setStreamFps] = useState<number | null>(null)
-    const [connectionHealth, setConnectionHealth] = useState<ParticipantQuality["health"]>("unknown")
     const [isRecording, setIsRecording] = useState(false)
     const [antiCheatStatus, setAntiCheatStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
     const [antiCheatMsg, setAntiCheatMsg] = useState("")
@@ -285,9 +299,11 @@ function SessionContent() {
     const captureScreenshotEvidence = async (video: HTMLVideoElement | null, label: string): Promise<string | undefined> => {
         if (!video || video.videoWidth === 0 || video.videoHeight === 0) return undefined;
         return new Promise((resolve) => {
+            // A 640 px JPEG is plenty for a reviewer and far cheaper to encode than a full-size PNG
+            const scale = Math.min(1, 640 / video.videoWidth);
             const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.width = Math.round(video.videoWidth * scale);
+            canvas.height = Math.round(video.videoHeight * scale);
             const ctx = canvas.getContext('2d');
             if (!ctx) return resolve(undefined);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -295,7 +311,7 @@ function SessionContent() {
                 if (!blob) return resolve(undefined);
                 try {
                     const formData = new FormData();
-                    formData.append('evidenceFile', blob, `violation-${Date.now()}.png`);
+                    formData.append('evidenceFile', blob, `violation-${Date.now()}.jpg`);
                     formData.append('roomCode', roomCodeRef.current || joinInput || '');
                     formData.append('label', label);
                     const token = getStoredAuthToken();
@@ -314,7 +330,7 @@ function SessionContent() {
                     console.error('Screenshot evidence upload failed', e);
                     resolve(undefined);
                 }
-            }, 'image/png');
+            }, 'image/jpeg', 0.85);
         });
     };
 
@@ -378,7 +394,9 @@ function SessionContent() {
 
         let currentVideoSource = localCamRef.current;
 
-        if (backgroundStyle !== 'none') {
+        // A 3D avatar replaces the whole picture (it has its own backdrop), so segmenting the camera
+        // for a background underneath it would only cost time: run at most one effect render loop
+        if (backgroundStyle !== 'none' && !isAvatar3DStyle(avatarStyle)) {
             if (!virtualBackgroundRef.current) {
                 virtualBackgroundRef.current = new VirtualBackground();
                 virtualBackgroundRef.current.onLoadError = (err) => {
@@ -589,9 +607,6 @@ function SessionContent() {
     useEffect(() => { roomCodeRef.current = roomCode }, [roomCode])
     useEffect(() => { participantsRef.current = participants }, [participants])
     useEffect(() => { clipboardAllowedRef.current = clipboardAllowed }, [clipboardAllowed])
-    useEffect(() => { latencyRef.current = latency }, [latency])
-    useEffect(() => { packetLossRef.current = packetLoss }, [packetLoss])
-    useEffect(() => { streamFpsRef.current = streamFps }, [streamFps])
     useEffect(() => { riskScoreRef.current = riskScore }, [riskScore])
 
     useEffect(() => {
@@ -633,16 +648,20 @@ function SessionContent() {
         }
     }, [isStreaming, role])
 
+    // While a controller has mouse/keyboard control the shared screen favours frame rate ("motion",
+    // maintain-framerate); otherwise sharp text ("detail", maintain-resolution). lib/mediaTuning
     useEffect(() => {
-        if (!roomCode) {
-            setDuration(0)
-            return
-        }
-        const startedAt = Date.now()
-        const timer = window.setInterval(() => setDuration(Math.floor((Date.now() - startedAt) / 1000)), 1000)
-        return () => window.clearInterval(timer)
-    }, [roomCode])
+        if (role !== 'host') return
+        const control = participants.some(participant => participant.permission !== 'view')
+        const screen = screenStreamRef.current
+        applyScreenTrackHint(screen?.getVideoTracks()[0], control)
+        const isScreen = (track: MediaStreamTrack) => Boolean(screen?.getVideoTracks().includes(track))
+        ;[...hostPcRefs.current.values(), ...observerPcRefs.current.values()].forEach(pc => {
+            if (pc.signalingState === 'stable') void tuneVideoSenders(pc, isScreen, control)
+        })
+    }, [participants, isStreaming, role])
 
+    // The session timer ticks inside <SessionClock>: a per-second state here re-rendered this whole page
     useEffect(() => {
         const timer = window.setInterval(() => {
             const socket = socketRef.current
@@ -652,9 +671,8 @@ function SessionContent() {
             // late reply can no longer be matched to the next ping
             socket.timeout(2500).emit('ping-ircp', (err: Error | null) => {
                 if (err) return
-                const measured = Math.round(performance.now() - startedAt)
-                latencyRef.current = measured
-                setLatency(measured)
+                // Only read through the ref (quality reports); a state update here re-rendered the page every 3 s
+                latencyRef.current = Math.round(performance.now() - startedAt)
             })
         }, 3000)
         return () => window.clearInterval(timer)
@@ -699,7 +717,7 @@ function SessionContent() {
     // included so the shared model can learn that detections during bad connections are less reliable.
     const federatedFeaturesForEvent = useCallback((eventType: string): FederatedFeatures => {
         const network = currentNetworkInstability()
-        if (['NO_FACE', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'PHONE_DETECTED'].includes(eventType)) return [1, network, 0.15]
+        if (['NO_FACE', 'FACE_BLOCKED', 'MULTIPLE_FACES', 'LOOKING_AWAY', 'PHONE_DETECTED', 'BOOK_DETECTED', 'SCREEN_DETECTED'].includes(eventType)) return [1, network, 0.15]
         if (['VOICE_DETECTED', 'TALKING_DETECTED', 'STRESS_DETECTED', 'EMOTION_ANOMALY'].includes(eventType)) return [0.35, network, 1]
         if (eventType === 'TAB_SWITCHED') return [0.2, 1, 0.1]
         return [0.2, Math.max(0.2, network), 0.2]
@@ -714,7 +732,7 @@ function SessionContent() {
     }, [])
 
     // meta: the proctoring kind (event), its short host-facing label and severity (lib/proctoringPolicy)
-    const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6], meta: { event?: string; label?: string; severity?: string } = {}) => {
+    const reportMalpractice = useCallback((reason: string, penalty = 15, features: FederatedFeatures = [0.7, 0.2, 0.6], meta: { event?: string; label?: string; severity?: string; evidenceUrl?: string } = {}) => {
         socketRef.current?.emit('system-alert', {
             room: roomCodeRef.current,
             type: 'anticheat_violation',
@@ -723,6 +741,7 @@ function SessionContent() {
             severity: meta.severity,
             message: reason,
             penalty,
+            ...(meta.evidenceUrl ? { evidenceUrl: meta.evidenceUrl } : {}),
             // Lets an admin's false-positive verdict come back as a training label for this device
             features: features.map(clamp01),
         })
@@ -773,7 +792,8 @@ function SessionContent() {
                     if (wait) await new Promise(resolve => setTimeout(resolve, wait))
                     if (localStreamRef.current !== stream) return
                     try {
-                        fresh = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0]
+                        fresh = (await navigator.mediaDevices.getUserMedia({ video: cameraConstraints(sessionModeRef.current === 'supervised') })
+                            .catch(() => navigator.mediaDevices.getUserMedia({ video: true }))).getVideoTracks()[0]
                         break
                     } catch (err) {
                         if (wait === 10000) throw err
@@ -808,10 +828,14 @@ function SessionContent() {
         }
 
         (window as any).isRequestingPermissions = true;
-        mediaStreamPromiseRef.current = navigator.mediaDevices.getUserMedia({ 
-            video: videoRequired, 
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
-        })
+        // A capped resolution and 30 fps: more than that only costs encoding time and effect/model work
+        const audioConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        mediaStreamPromiseRef.current = navigator.mediaDevices.getUserMedia({
+            video: videoRequired ? cameraConstraints(sessionModeRef.current === 'supervised') : false,
+            audio: audioConstraints,
+        }).catch(err => videoRequired && err?.name === 'OverconstrainedError'
+            ? navigator.mediaDevices.getUserMedia({ video: true, audio: audioConstraints })
+            : Promise.reject(err))
 
         try {
             const stream = await mediaStreamPromiseRef.current
@@ -954,29 +978,9 @@ function SessionContent() {
             if (status === 'ready') addLog('system', 'Visible supervised monitoring is active')
             if (status === 'error') addLog('anticheat', `Anti-cheat failed: ${msg}`)
         })
-        engine.onEvent((ev: AntiCheatEvent) => {
-            if (!firstProctoringReport(ev.type)) return // already reported by another detector
-            const features = federatedFeaturesForEvent(ev.type)
-            // Repeats of the same violation escalate (penalty and severity), see lib/proctoringPolicy
-            const escalation = proctoringEscalatorRef.current.record(ev.type, ev.scorePenalty)
-            const { penalty, confidence } = federatedPenalty(features, escalation.penalty)
-            warnCandidate(ev.type, escalation.count)
-            addLog('anticheat', `${ev.type}: ${ev.message} (+${penalty}, ${escalation.severity}${escalation.count > 1 ? `, x${escalation.count}` : ''}${confidence === null ? '' : `, FL confidence ${confidence.toFixed(2)}`})`)
-            recordFederatedSample(features, ev.scorePenalty > 0 ? 1 : 0)
-            setRiskScore(s => Math.min(100, s + penalty))
-            setGaugeGlow(true)
-            setTimeout(() => setGaugeGlow(false), 800)
-            captureScreenshotEvidence(localCamRef.current, ev.message).then(url => {
-                socketRef.current?.emit('system-alert', {
-                    type: 'anticheat_violation', event: ev.type,
-                    label: proctoringRule(ev.type).label, severity: escalation.severity,
-                    message: ev.message, penalty, room: roomCode,
-                    evidenceUrl: url,
-                    features: features.map(clamp01),
-                })
-            });
-        })
-        
+        // Detections are reported by the camera and audio pipelines (useFaceProctoring,
+        // useAudioProctoring) through onProctoringViolation; the engine only loads the shared models
+        // and calibrates
         const runCalibration = async () => {
             setIsCalibrating(true);
             await engine.initialize();
@@ -1001,20 +1005,17 @@ function SessionContent() {
                 videoEl.play().catch(()=> { });
             }
 
-            await engine.calibrate(videoEl, tempStream);
+            await engine.calibrate(videoEl);
             setIsCalibrating(false);
-            
-            // After calibration, start the engine loop
-            engine.start(videoEl, antiCheatCanvasRef.current || undefined, tempStream);
         };
-        
+
         runCalibration();
-        
+
         return () => {
             engine.stop()
             stopLocalMedia()
         }
-    }, [sessionMode, role, addLog, federatedFeaturesForEvent, federatedPenalty, recordFederatedSample, stopLocalMedia])
+    }, [sessionMode, role, addLog, stopLocalMedia])
 
     useEffect(() => {
         if (engineRef.current) engineRef.current.setConfig(aiConfig)
@@ -1023,23 +1024,6 @@ function SessionContent() {
     const selectedParticipant = participants.find(participant => participant.id === selectedControllerId) || participants[0] || null
     const selectedPermission = selectedParticipant?.permission || permission
     const selectedClipboardAllowed = selectedParticipant?.clipboardAllowed ?? clipboardAllowed
-
-    const startStats = (pc: RTCPeerConnection) => {
-        if (statsTimerRef.current) clearInterval(statsTimerRef.current) // one stats loop, not one per peer/role swap
-        statsTimerRef.current = setInterval(async () => {
-            const stats = await pc.getStats().catch(() => null)
-            if (!stats) return
-            stats.forEach((r: any) => {
-                const kind = currentRoleRef.current === 'host' ? 'outbound-rtp' : 'inbound-rtp'
-                if (r.type === kind && r.kind === 'video') {
-                    const fps = Math.round(r.framesPerSecond || 0)
-                    const w = r.frameWidth || 0
-                    const h = r.frameHeight || 0
-                    if (w && h) setVideoStats(`${w}×${h} · ${fps}fps`)
-                }
-            })
-        }, 2000)
-    }
 
     const startQualityStats = (pc: RTCPeerConnection, peerId = "primary") => {
         const existing = statsTimerRefs.current.get(`quality-${peerId}`)
@@ -1082,9 +1066,10 @@ function SessionContent() {
                     : latency > 110 || packetLossValue > 3 ? 'fair'
                         : latency > 60 || packetLossValue > 1 ? 'good'
                             : 'excellent'
-            setStreamFps(fps || null)
-            setPacketLoss(packetLossValue)
-            setConnectionHealth(health)
+            // Refs, not state: nothing on this page displays them, and a state update re-rendered the
+            // whole page every 2.5 s
+            streamFpsRef.current = fps || null
+            packetLossRef.current = packetLossValue
             socketRef.current?.emit('quality-update', {
                 roomId: roomCodeRef.current,
                 quality: { latency, fps, packetLoss: packetLossValue, health },
@@ -1149,7 +1134,8 @@ function SessionContent() {
 
         ;(window as any).__lastControlPayload = payload
         if (window.ipcRenderer) {
-            window.ipcRenderer.send('execute-input', payload)
+            // Who sent it: the desktop app names the controller in approval prompts and answers it on its channel
+            window.ipcRenderer.send('execute-input', { ...payload, controllerId, controllerName: participant.name })
         }
     }
 
@@ -1171,6 +1157,34 @@ function SessionContent() {
         }
 
         controllerInputChannelRef.current = channel
+        // The host's computer answers on the same channel (approval needed / denied, window closed...)
+        channel.onmessage = event => {
+            try {
+                const message = JSON.parse(String(event.data))
+                if (message?.type !== 'host-notice' || typeof message.message !== 'string') return
+                const text = message.message.slice(0, 300)
+                addLog('permission', text)
+                setControlNotice(text)
+                if (controlNoticeTimerRef.current) window.clearTimeout(controlNoticeTimerRef.current)
+                controlNoticeTimerRef.current = window.setTimeout(() => setControlNotice(null), 5000)
+            } catch {
+                // ignore malformed notices
+            }
+        }
+    }
+
+    // Host: forward a message from the desktop app's input handling to the controller it concerns
+    const controlNoticeTimerRef = useRef<number | null>(null)
+    const sendHostNotice = (controllerId: string | null, message: string) => {
+        const data = JSON.stringify({ type: 'host-notice', message })
+        const channels = controllerId
+            ? [hostInputChannelRefs.current.get(controllerId)]
+            : Array.from(hostInputChannelRefs.current.values())
+        channels.forEach(channel => {
+            if (channel && channel.readyState === 'open') {
+                try { channel.send(data) } catch { /* channel closing */ }
+            }
+        })
     }
 
     const negotiateWithController = async (controllerId: string) => {
@@ -1186,6 +1200,16 @@ function SessionContent() {
         })
     }
 
+    // Screen-share and camera sender settings (lib/mediaTuning): applied whenever a connection finishes
+    // negotiating, and again when remote control is granted or revoked (see the effect on participants)
+    const remoteControlActive = () => currentRoleRef.current === 'host' && participantsRef.current.some(p => p.permission !== 'view')
+    const watchSenderTuning = (pc: RTCPeerConnection) => {
+        pc.addEventListener('signalingstatechange', () => {
+            if (pc.signalingState !== 'stable') return
+            void tuneVideoSenders(pc, track => Boolean(screenStreamRef.current?.getVideoTracks().includes(track)), remoteControlActive())
+        })
+    }
+
     const negotiateWithObserver = async (observerId: string) => {
         if (!screenStreamRef.current) {
             addLog('system', 'Admin observation is waiting for host screen sharing to start')
@@ -1198,6 +1222,7 @@ function SessionContent() {
                 iceTransportPolicy: process.env.NEXT_PUBLIC_FORCE_TURN === 'true' && hasTurnServer(iceServersRef.current) ? 'relay' : 'all',
             })
             observerPcRefs.current.set(observerId, pc)
+            watchSenderTuning(pc)
             pc.onicecandidate = event => {
                 if (event.candidate) socketRef.current?.emit('observer-ice-candidate', { targetId: observerId, candidate: event.candidate })
             }
@@ -1244,6 +1269,7 @@ function SessionContent() {
         if (typeof window !== 'undefined') (window as any)._pc = pc;
         if (currentRoleRef.current === 'host' && targetId) hostPcRefs.current.set(targetId, pc)
         else pcRef.current = pc
+        watchSenderTuning(pc)
 
         if (currentRoleRef.current === 'host' && targetId) {
             // Reliable and ordered: a lost keyup/mouseup left keys or buttons stuck down on the host.
@@ -1341,7 +1367,6 @@ function SessionContent() {
                     .catch(err => addLog('system', `ICE restart failed: ${err?.message || err}`))
             }
         }
-        startStats(pc)
         startQualityStats(pc, targetId || 'primary')
         return pc
     }
@@ -1392,7 +1417,7 @@ function SessionContent() {
         })
         socket.on('input-event', (payload: any) => {
             if (currentRoleRef.current === 'host' && window.ipcRenderer) {
-                window.ipcRenderer.send('execute-input', payload)
+                window.ipcRenderer.send('execute-input', { ...payload, controllerId: payload?.fromId || null })
             }
         })
         socket.on('session-state', (state: any) => {
@@ -1613,6 +1638,7 @@ function SessionContent() {
 
                 const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
                 observerPcRefs.current.set(adminId, pc)
+                watchSenderTuning(pc)
                 stream?.getTracks().forEach(t => pc.addTrack(t, stream))
                 liveScreen?.getVideoTracks().forEach(t => pc.addTrack(t, liveScreen))
 
@@ -1812,8 +1838,8 @@ function SessionContent() {
         socket.on('host-resumed', () => addLog('system', 'The host is back; reconnecting the call'))
         socket.on('stats-update', (data: any) => {
             if (data) {
-                setPacketLoss(data.packetLoss);
-                setStreamFps(data.fps);
+                packetLossRef.current = data.packetLoss ?? null;
+                streamFpsRef.current = data.fps ?? null;
             }
         });
         socket.on('new-exam-question', (question: ExamQuestion) => {
@@ -1938,9 +1964,11 @@ function SessionContent() {
 
     // Panic revoke: drops EVERY controller to View Only at once. In the desktop app the main process
     // has already locked remote input and released held keys/buttons before this runs.
-    const panicRevokeAll = (source: string) => {
+    const panicRevokeAll = (rawSource: string) => {
         if (currentRoleRef.current !== 'host') return
+        const source = rawSource.replace('CommandOrControl', 'Ctrl').replace('Escape', 'Esc')
         window.ipcRenderer?.send('set-remote-input-lock', true)
+        setAppApprovalQueue([])
         // Block in this renderer immediately as well, without waiting for the server's room state
         participantsRef.current = participantsRef.current.map(p => ({ ...p, permission: 'view' as const }))
         setParticipants(prev => prev.map(p => ({ ...p, permission: 'view' as const })))
@@ -1951,7 +1979,8 @@ function SessionContent() {
         addLog('permission', `Panic revoke (${source}): all remote control revoked, every controller is now View Only`)
         setPanicNotice(`Remote control revoked (${source}). All controllers are View Only.`)
         window.setTimeout(() => setPanicNotice(null), 6000)
-        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        // The desktop app confirms with a native notification and an on-top banner from the main process
+        if (!window.ipcRenderer && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
             new Notification('Control Revoked', { body: 'All controllers were switched to View Only.' })
         }
     }
@@ -1967,6 +1996,12 @@ function SessionContent() {
             });
         }
         (window as any).api?.getPanicShortcuts?.().then((keys: string[]) => setPanicShortcuts(Array.isArray(keys) ? keys : []))
+        // Shortcuts another program has taken work only while this window is focused: tell the host
+        ;(window as any).api?.getPanicShortcutStatus?.().then((status: { registered?: string[]; failed?: string[] } | null) => {
+            if (!status) return
+            if (Array.isArray(status.registered)) setPanicShortcuts(status.registered)
+            setPanicShortcutsFailed(Array.isArray(status.failed) ? status.failed : [])
+        }).catch(() => {})
 
         const onPanic = (event: Event) => panicRevokeRef.current(String((event as CustomEvent).detail || 'Shift+Esc'))
         // Browser host: same shortcut while the window is focused. Capture phase, so a panel that
@@ -1984,6 +2019,47 @@ function SessionContent() {
             window.removeEventListener('keydown', onKeyDown, true)
         }
     }, []);
+
+    // Desktop host: approval requests for applications (entire-screen shares) and notices for controllers
+    // from the main process's input handling
+    useEffect(() => {
+        const ipc = (window as any).ipcRenderer
+        if (!ipc) return
+        const offRequest = ipc.on('remote-app-approval-request', (request: AppApprovalRequest) => {
+            if (currentRoleRef.current !== 'host' || !request?.id) return
+            setAppApprovalQueue(prev => prev.some(item => item.id === request.id) ? prev : [...prev, request])
+            addLog('permission', `${request.controllerName} wants to use ${request.appName}: waiting for your answer`)
+        })
+        const offClear = ipc.on('remote-app-approval-clear', (info: { ids?: string[] } = {}) => {
+            const ids = Array.isArray(info?.ids) ? info.ids : []
+            if (ids.length) setAppApprovalQueue(prev => prev.filter(item => !ids.includes(item.id)))
+        })
+        const offNotice = ipc.on('remote-input-notice', (notice: { controllerId?: string | null; message?: string } = {}) => {
+            if (typeof notice?.message === 'string') sendHostNotice(notice.controllerId || null, notice.message)
+        })
+        return () => {
+            if (typeof offRequest === 'function') offRequest()
+            if (typeof offClear === 'function') offClear()
+            if (typeof offNotice === 'function') offNotice()
+        }
+    }, [addLog])
+
+    useEffect(() => {
+        window.ipcRenderer?.send('set-remote-app-policy', { enabled: askBeforeNewApp })
+        if (!askBeforeNewApp) setAppApprovalQueue([])
+    }, [askBeforeNewApp])
+
+    // Leaving the session forgets every application approval, "always allow" ones included
+    useEffect(() => () => window.ipcRenderer?.send('remote-share-ended', { sessionEnded: true }), [])
+
+    const respondToAppApproval = (allow: boolean) => {
+        const request = appApprovalQueue[0]
+        if (!request) return
+        window.ipcRenderer?.send('remote-app-approval-response', { id: request.id, allow, remember: allow && rememberAppApproval })
+        addLog('permission', `${allow ? 'Allowed' : 'Denied'} ${request.controllerName} access to ${request.appName}${allow && rememberAppApproval ? ' (whole session)' : ''}`)
+        setAppApprovalQueue(prev => prev.filter(item => item.id !== request.id))
+        setRememberAppApproval(false)
+    }
 
     const startSharingProcess = async () => {
         if (typeof window !== 'undefined' && (window as any).api && (window as any).api.getShareableSources) {
@@ -2011,15 +2087,14 @@ function SessionContent() {
             }
             let screen;
             try {
-                screen = await navigator.mediaDevices.getDisplayMedia({ 
-                    video: { frameRate: { ideal: 60, max: 144 } }, 
-                    audio: true 
-                });
+                // At most 1920x1080 at 30 fps: a 60-144 fps or 4K capture costs the sharer a lot of
+                // encoding time and the network a lot of bitrate for no visible gain on a remote screen
+                screen = await navigator.mediaDevices.getDisplayMedia(SCREEN_CONSTRAINTS);
             } catch (mediaErr) {
-                console.warn('[DEBUG] getDisplayMedia with audio/high-framerate failed, falling back to basic video only', mediaErr);
+                console.warn('[DEBUG] getDisplayMedia with audio failed, falling back to video only', mediaErr);
                 try {
-                    screen = await navigator.mediaDevices.getDisplayMedia({ 
-                        video: true 
+                    screen = await navigator.mediaDevices.getDisplayMedia({
+                        video: SCREEN_CONSTRAINTS.video
                     });
                 } catch (fallbackErr) {
                     console.error('[DEBUG] Fallback getDisplayMedia failed', fallbackErr);
@@ -2050,6 +2125,7 @@ function SessionContent() {
             }
 
             screenStreamRef.current = screen
+            applyScreenTrackHint(screen.getVideoTracks()[0], remoteControlActive())
             setIsStreaming(true)
             setTimeout(() => {
                 if (mainVideoRef.current) {
@@ -2060,8 +2136,29 @@ function SessionContent() {
             screen.getVideoTracks()[0]?.addEventListener('ended', () => {
                 setIsStreaming(false)
                 addLog('system', 'Screen sharing stopped')
+                if (screenStreamRef.current === screen) window.ipcRenderer?.send('remote-share-ended', { sessionEnded: false })
             })
-            
+            // Desktop host: the captured frame's size lets the main process line remote clicks up with the
+            // visible part of a shared window (it changes when the window is resized)
+            const shareTrack: MediaStreamTrack | undefined = screen.getVideoTracks()[0]
+            if (shareTrack && window.ipcRenderer) {
+                let lastCaptureSize = ''
+                const reportCaptureSize = () => {
+                    if (shareTrack.readyState === 'ended' || screenStreamRef.current !== screen) {
+                        window.clearInterval(captureSizeTimer)
+                        return
+                    }
+                    const { width, height } = shareTrack.getSettings()
+                    const size = `${width}x${height}`
+                    if (width && height && size !== lastCaptureSize) {
+                        lastCaptureSize = size
+                        window.ipcRenderer?.send('set-share-capture-size', { width, height })
+                    }
+                }
+                const captureSizeTimer = window.setInterval(reportCaptureSize, 1000)
+                reportCaptureSize()
+            }
+
             // Renegotiate with all existing participants using existing PCs
             console.log(`[DEBUG] startSharing: renegotiating with ${participantsRef.current.length} participants`);
             participantsRef.current.forEach(async (p) => {
@@ -2111,6 +2208,8 @@ function SessionContent() {
             screenStreamRef.current = null
             setIsStreaming(false)
             addLog('system', 'Screen sharing stopped manually')
+            // Ending the share clears the shared window/display and every application approval
+            window.ipcRenderer?.send('remote-share-ended', { sessionEnded: false })
         }
     }
 
@@ -2170,11 +2269,13 @@ function SessionContent() {
             lastWheelTimeRef.current = now;
         }
 
-        const rect = event.currentTarget.getBoundingClientRect()
-        const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
-        const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
+        // object-fit: contain letterboxes a shared window: normalise over the picture, not the element
+        const video = event.currentTarget
+        const { x, y, inside } = videoPointFromClient(event.clientX, event.clientY, video.getBoundingClientRect(), video.videoWidth, video.videoHeight)
         const button = 'button' in event ? event.button : 0;
-        
+        // A press on the black bars is not a click on the host's picture (releases always go through)
+        if (!inside && type === 'mousedown') return
+
         if (type === 'mousedown') pressedMouseButtonsRef.current.add(button);
         else if (type === 'mouseup') pressedMouseButtonsRef.current.delete(button);
 
@@ -2463,9 +2564,8 @@ function SessionContent() {
         }
     }
 
-    // Three detectors (AntiCheatEngine, face and object hooks) watch the same camera, so one moment
-    // without a face was penalised two or three times. Each kind of event is reported at most once
-    // per 10 s, whichever detector saw it first.
+    // The face and object models can both see the same moment (e.g. a second person), so each kind of
+    // event is reported at most once per 10 s, whichever check saw it first.
     const lastProctoringEventRef = useRef<Map<string, number>>(new Map())
     const firstProctoringReport = (type: string) => {
         const key = proctoringKind(canonicalProctoringType(type))
@@ -2477,24 +2577,39 @@ function SessionContent() {
     // Counts repeats per kind so sustained or repeated violations cost more (lib/proctoringPolicy)
     const proctoringEscalatorRef = useRef(new ProctoringEscalator())
 
-    // Every hook detection: severity and penalty come from the shared policy and escalate on repeats;
-    // the candidate's pet says what was detected and the host's pet names the candidate (server).
+    // Every detection (camera, microphone, environment): severity and penalty come from the shared
+    // policy and escalate on repeats; once the room has a trained federated model its confidence
+    // scales the penalty. The candidate's pet says what was detected and the host's pet names the
+    // candidate (server). Camera detections carry a still of the moment as evidence.
     const onProctoringViolation = (type: string, message: string) => {
         if (!firstProctoringReport(type)) return;
         const rule = proctoringRule(type);
         const escalation = proctoringEscalatorRef.current.record(type);
-        reportMalpractice(`Proctoring [${type}]: ${message}`, escalation.penalty, federatedFeaturesForEvent(canonicalProctoringType(type)), {
-            event: escalation.kind, label: rule.label, severity: escalation.severity,
-        });
+        const features = federatedFeaturesForEvent(canonicalProctoringType(type));
+        const { penalty, confidence } = federatedPenalty(features, escalation.penalty);
+        setRiskScore(s => Math.min(100, s + penalty));
+        setGaugeGlow(true);
+        setTimeout(() => setGaugeGlow(false), 800);
         warnCandidate(type, escalation.count, message);
         pushLocalChatLine(`⚠️ [System Warning]: ${message}`);
+        const reason = `Proctoring [${rule.label}]: ${message}${confidence === null ? '' : ` (FL confidence ${confidence.toFixed(2)})`}`;
+        const meta = { event: escalation.kind, label: rule.label, severity: escalation.severity };
+        if (isCameraProctoringKind(escalation.kind)) {
+            captureScreenshotEvidence(localCamRef.current, rule.label)
+                .then(evidenceUrl => reportMalpractice(reason, penalty, features, { ...meta, evidenceUrl }));
+        } else {
+            reportMalpractice(reason, penalty, features, meta);
+        }
     };
 
-    useFaceProctoring(localCamRef, sessionMode, role, onProctoringViolation);
+    // The one camera pipeline: face, objects (phone, book, second screen, other people) and camera
+    // health, with the face box and flagged objects outlined on the candidate's own preview
+    useFaceProctoring(localCamRef, sessionMode, role, onProctoringViolation, {
+        gazeThreshold: aiConfig.eyeTrackingThreshold,
+        overlayRef: antiCheatCanvasRef,
+    });
 
     const tabSwitchCountRef = useRef(0);
-
-    useObjectProctoring(localCamRef, sessionMode, role, onProctoringViolation);
 
     useAudioProctoring(localStreamRef, sessionMode, role, onProctoringViolation);
 
@@ -2789,7 +2904,7 @@ function SessionContent() {
                     }} className="font-mono text-[12px] text-[var(--text-secondary)] bg-[var(--background)] px-2 py-1 rounded cursor-pointer hover:text-[var(--text)] transition-colors">{copied ? <><Check className="w-3 h-3 inline mr-1" /> Copied</> : <><Copy className="w-3 h-3 inline mr-1" /> {roomCode || '---'}</>}</div>
                     <div className="flex items-center gap-1.5 font-mono text-[12px] text-[var(--text-secondary)]">
                         <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
-                        <span>{formatDuration(duration)}</span>
+                        <SessionClock running={Boolean(roomCode)} />
                     </div>
                 </div>
                 <div className="flex items-center gap-2.5">
@@ -3029,9 +3144,31 @@ function SessionContent() {
                                     Revoke all control
                                 </button>
                                 <p className="mt-1.5 text-[10px] text-[var(--text-dim)]">
-                                    Emergency shortcut: <span className="font-mono text-[var(--text-secondary)]">{(panicShortcuts.length ? panicShortcuts : ['Shift+Escape']).map(key => key.replace('CommandOrControl', 'Ctrl')).join(' or ')}</span>
-                                    {typeof window !== 'undefined' && (window as any).api?.getPanicShortcuts && panicShortcuts.length === 0 ? ' (only while this window is focused)' : ''}
+                                    Emergency shortcut: <span className="font-mono text-[var(--text-secondary)]">{(panicShortcuts.length ? panicShortcuts : ['Shift+Escape']).map(key => key.replace('CommandOrControl', 'Ctrl').replace('Escape', 'Esc')).join(' or ')}</span>
+                                    {typeof window !== 'undefined' && (window as any).api?.getPanicShortcuts
+                                        ? (panicShortcuts.length === 0 ? ' (only while this window is focused)' : ' (works in any app, even when Let\'s Collab is in the background)')
+                                        : ' (only while this tab is focused)'}
                                 </p>
+                                {panicShortcutsFailed.length > 0 && (
+                                    <p role="alert" className="mt-1 flex items-start gap-1 text-[10px] text-[var(--red)]">
+                                        <AlertTriangle className="w-3 h-3 mt-px shrink-0" />
+                                        <span>{panicShortcutsFailed.map(key => key.replace('CommandOrControl', 'Ctrl').replace('Escape', 'Esc')).join(' and ')} {panicShortcutsFailed.length > 1 ? 'are' : 'is'} taken by another program, so {panicShortcutsFailed.length > 1 ? 'they work' : 'it works'} only while Let&apos;s Collab is focused. Close that program and reopen this session to free it.</span>
+                                    </p>
+                                )}
+                                {typeof window !== 'undefined' && (window as any).api?.getShareableSources && (
+                                    <label className="mt-3 flex items-start gap-2 rounded-lg border border-[var(--border)] px-3 py-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="mt-0.5 accent-[var(--accent)]"
+                                            checked={askBeforeNewApp}
+                                            onChange={event => setAskBeforeNewApp(event.target.checked)}
+                                        />
+                                        <span className="text-[11px] leading-snug text-[var(--text-secondary)]">
+                                            <span className="font-semibold text-[var(--text-primary)]">Ask me before the controller uses a new app</span>
+                                            <span className="block text-[10px] text-[var(--text-dim)]">When you share the entire screen, the first click or keystroke in each application waits for your OK. Revoking control or ending the share forgets the approvals. Let&apos;s Collab itself can never be controlled remotely.</span>
+                                        </span>
+                                    </label>
+                                )}
                             </div>
                         )}
                         {role === 'host' && sessionMode === 'supervised' && (
@@ -3481,6 +3618,65 @@ function SessionContent() {
                     {panicNotice}
                 </div>
             )}
+
+            {role === 'controller' && controlNotice && (
+                <div role="status" className="fixed top-4 left-1/2 -translate-x-1/2 z-[1000] flex max-w-[90vw] items-center gap-2 rounded-xl border border-[var(--accent)]/40 bg-[var(--bg)]/95 px-4 py-3 text-sm font-semibold text-[var(--text-primary)] shadow-2xl backdrop-blur">
+                    <ShieldAlert className="w-4 h-4 shrink-0 text-[var(--accent)]" />
+                    {controlNotice}
+                </div>
+            )}
+
+            {role === 'host' && appApprovalQueue.length > 0 && (() => {
+                const request = appApprovalQueue[0]
+                const action = request.trigger === 'keyboard' ? 'type in' : request.trigger === 'scroll' ? 'scroll in' : 'use'
+                return (
+                    <div className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="app-approval-title">
+                        <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-5 shadow-2xl">
+                            <div className="flex items-center gap-3">
+                                {request.icon
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    ? <img src={request.icon} alt="" className="h-10 w-10 shrink-0 rounded-lg" />
+                                    : <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/15 text-[var(--accent)]"><Monitor className="w-5 h-5" /></div>}
+                                <div className="min-w-0">
+                                    <h2 id="app-approval-title" className="text-base font-bold text-[var(--text-primary)]">
+                                        {request.controllerName} wants to {action} {request.appName}
+                                    </h2>
+                                    {request.exePath && <p className="truncate font-mono text-[10px] text-[var(--text-dim)]" title={request.exePath}>{request.exePath}</p>}
+                                </div>
+                            </div>
+                            <p className="mt-3 text-xs text-[var(--text-secondary)]">
+                                {request.appKind === 'shell'
+                                    ? 'This covers the desktop, the taskbar and File Explorer windows.'
+                                    : request.appKind === 'unknown'
+                                        ? 'Let’s Collab could not tell which application this is; allowing it lets the controller use whatever is there.'
+                                        : 'Nothing reaches this application until you allow it. You can take control back any time with the emergency shortcut.'}
+                                {request.trigger === 'click' ? ' If you allow it, the click is carried out.' : ''}
+                            </p>
+                            <label className="mt-3 flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                                <input type="checkbox" className="accent-[var(--accent)]" checked={rememberAppApproval} onChange={event => setRememberAppApproval(event.target.checked)} />
+                                Always allow this app for this session
+                            </label>
+                            <div className="mt-4 flex gap-2">
+                                <button
+                                    onClick={() => respondToAppApproval(false)}
+                                    className="flex-1 h-10 rounded-lg border border-[var(--red)]/40 bg-[var(--red)]/10 text-[var(--red)] text-sm font-bold hover:bg-[var(--red)]/20"
+                                >
+                                    Deny
+                                </button>
+                                <button
+                                    onClick={() => respondToAppApproval(true)}
+                                    className="flex-1 h-10 rounded-lg bg-[var(--accent)] text-white text-sm font-bold hover:opacity-90"
+                                >
+                                    Allow
+                                </button>
+                            </div>
+                            {appApprovalQueue.length > 1 && (
+                                <p className="mt-2 text-center text-[10px] text-[var(--text-dim)]">{appApprovalQueue.length - 1} more request{appApprovalQueue.length > 2 ? 's' : ''} waiting</p>
+                            )}
+                        </div>
+                    </div>
+                )
+            })()}
 
             {requestingUser && (
                 <PermissionRequestModal
