@@ -8,6 +8,7 @@ import { MagneticButton, TiltCard, VelocityMarquee, TextReveal } from '@/compone
 import { FeatureOrbit } from '@/components/landing/FeatureOrbit'
 import { HeroCanvas } from '@/components/landing/HeroCanvas'
 import { ShowcaseShaderMask } from '@/components/landing/ShowcaseShaderMask'
+import { Contributors } from '@/components/landing/Contributors'
 import Link from 'next/link'
 
 const winDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.2/Let.s.Collab.Setup.0.5.2.exe"
@@ -602,6 +603,8 @@ export default function LandingPage() {
             </div>
           </div>
         </section>
+
+        <Contributors />
 
         {/* Downloads Section */}
         <section id="download" className="py-40 px-4 relative bg-[var(--bg)]">
