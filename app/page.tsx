@@ -10,9 +10,9 @@ import { HeroCanvas } from '@/components/landing/HeroCanvas'
 import { ShowcaseShaderMask } from '@/components/landing/ShowcaseShaderMask'
 import Link from 'next/link'
 
-const winDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.0/Let.s.Collab.Setup.0.5.0.exe"
-const macDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.0/Let.s.Collab-0.5.0-arm64-mac.zip"
-const linuxDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.0/lets-collab_0.5.0_amd64.deb"
+const winDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.2/Let.s.Collab.Setup.0.5.2.exe"
+const macDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.2/Let.s.Collab-0.5.2-arm64-mac.zip"
+const linuxDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.2/lets-collab_0.5.2_amd64.deb"
 
 export default function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -232,7 +232,7 @@ export default function LandingPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--accent)] opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--accent)]"></span>
               </div>
-              <span className="text-xs font-bold tracking-[0.3em] text-[var(--text-primary)] uppercase drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">Version 0.5.0 Protocol Active</span>
+              <span className="text-xs font-bold tracking-[0.3em] text-[var(--text-primary)] uppercase drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">Version 0.5.2 Protocol Active</span>
             </motion.div>
 
             <h1 className="text-6xl sm:text-[12vw] md:text-[10rem] lg:text-[12rem] font-black tracking-tighter leading-tight sm:leading-[0.8] mb-10 pb-4">
@@ -625,11 +625,11 @@ export default function LandingPage() {
                   transition={{ delay: 0.5, type: "spring", bounce: 0.5 }}
                   className="absolute -top-3 -right-3 px-3 py-1 bg-[var(--accent)] text-black text-[10px] font-black rounded-full z-20 shadow-[0_0_15px_var(--accent)]"
                 >
-                  v0.5.0
+                  v0.5.2
                 </motion.div>
                 <DownloadCard 
                   os="Windows"
-                  status="Version 0.5.0 • Stable"
+                  status="Version 0.5.2 • Stable"
                   link={winDownloadUrl}
                   active={true}
                   icon={
@@ -647,11 +647,11 @@ export default function LandingPage() {
                   transition={{ delay: 0.6, type: "spring", bounce: 0.5 }}
                   className="absolute -top-3 -right-3 px-3 py-1 bg-[var(--accent)] text-black text-[10px] font-black rounded-full z-20 shadow-[0_0_15px_var(--accent)]"
                 >
-                  v0.5.0
+                  v0.5.2
                 </motion.div>
                 <DownloadCard 
                   os="macOS"
-                  status="Version 0.5.0 • Stable"
+                  status="Version 0.5.2 • Stable"
                   link={macDownloadUrl}
                   active={true}
                   icon={
@@ -675,11 +675,11 @@ export default function LandingPage() {
                   transition={{ delay: 0.7, type: "spring", bounce: 0.5 }}
                   className="absolute -top-3 -right-3 px-3 py-1 bg-[var(--accent)] text-black text-[10px] font-black rounded-full z-20 shadow-[0_0_15px_var(--accent)]"
                 >
-                  v0.5.0
+                  v0.5.2
                 </motion.div>
                 <DownloadCard 
                   os="Linux"
-                  status="Version 0.5.0 • Stable"
+                  status="Version 0.5.2 • Stable"
                   link={linuxDownloadUrl}
                   active={true}
                   icon={
