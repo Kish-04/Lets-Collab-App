@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   ...existingApi,
   askGemini: (prompt, codeContext) => ipcRenderer.invoke('gemini:ask', prompt, codeContext),
   getPanicShortcuts: () => ipcRenderer.invoke('get-panic-shortcuts'),
+  getPanicShortcutStatus: () => ipcRenderer.invoke('get-panic-shortcut-status'),
   getShareableSources: () => ipcRenderer.invoke('get-shareable-sources'),
   setShareSource: (sourceId) => ipcRenderer.invoke('set-share-source', sourceId),
   oauthLogin: (provider) => ipcRenderer.invoke('oauth-login', provider),
@@ -22,13 +23,15 @@ contextBridge.exposeInMainWorld('api', {
 contextBridge.exposeInMainWorld('ipcRenderer', {
   send: (channel, data) => {
     // Whitelist channels
-    const validChannels = ['execute-input', 'set-remote-input-lock', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'set-pet-enabled', 'set-ignore-mouse-events', 'enable-kiosk-mode'];
+    const validChannels = ['execute-input', 'set-remote-input-lock', 'set-clipboard-guard', 'toggle-fullscreen', 'pet-state-update', 'move-pet-window', 'set-pet-enabled', 'set-ignore-mouse-events', 'enable-kiosk-mode',
+      'set-share-capture-size', 'remote-share-ended', 'set-remote-app-policy', 'remote-app-approval-response'];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
     }
   },
   on: (channel, func) => {
-    const validChannels = ['system-event', 'pet-sync-state', 'panic-revoke-control', 'anticheat-alert'];
+    const validChannels = ['system-event', 'pet-sync-state', 'panic-revoke-control', 'anticheat-alert',
+      'remote-app-approval-request', 'remote-app-approval-clear', 'remote-input-notice'];
     if (validChannels.includes(channel)) {
       // Deliberately strip event as it includes `sender`
       const listener = (event, ...args) => func(...args);
