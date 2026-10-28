@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { LayoutGrid, Activity, ShieldAlert, Link as LinkIcon, Users, FileText, Scale, MonitorPlay } from 'lucide-react-native';
+import { LayoutGrid, Activity, ShieldAlert, Link as LinkIcon, Users, FileText, Scale, MonitorPlay, MessageSquareHeart } from 'lucide-react-native';
 import { Platform, StyleSheet, type ColorValue } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { getStoredRole } from '../../lib/api';
@@ -164,6 +164,14 @@ export default function TabLayout() {
           ...adminOnly,
           title: 'Review',
           tabBarIcon: icon(Scale),
+        }}
+      />
+      <Tabs.Screen
+        name="feedback"
+        options={{
+          ...adminOnly,
+          title: 'Feedback',
+          tabBarIcon: icon(MessageSquareHeart),
         }}
       />
     </Tabs>
