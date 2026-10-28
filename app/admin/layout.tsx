@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
 import { AdminDataProvider, SystemStatus } from "@/components/admin/AdminData"
-import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut, Scale, LayoutGrid } from "lucide-react"
+import { LayoutDashboard, Activity, Shield, Link2, Users, FileText, LogOut, Scale, LayoutGrid, MessageSquareHeart } from "lucide-react"
 import { BrandMark } from "@/components/ircp/shared"
 import { cn, getBackendUrl, getStoredAuthToken } from "@/lib/utils"
 
@@ -17,6 +17,7 @@ const navItems = [
   { href: "/admin/blockchain", label: "Blockchain Logs", icon: Link2 },
   { href: "/admin/users", label: "User Management", icon: Users },
   { href: "/admin/reports", label: "Reports", icon: FileText },
+  { href: "/admin/feedback", label: "Feedback", icon: MessageSquareHeart },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

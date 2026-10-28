@@ -11,6 +11,7 @@ function emptyState() {
     users: [],
     alerts: [],
     sessionLogs: [],
+    feedback: [],
   };
 }
 
@@ -19,6 +20,7 @@ function normalizeState(value) {
     users: Array.isArray(value?.users) ? value.users : [],
     alerts: Array.isArray(value?.alerts) ? value.alerts : [],
     sessionLogs: Array.isArray(value?.sessionLogs) ? value.sessionLogs : [],
+    feedback: Array.isArray(value?.feedback) ? value.feedback : [],
   };
 }
 
@@ -160,18 +162,41 @@ function purgeSessionEvidence(roomCode) {
   return removed;
 }
 
+function addFeedback(entry) {
+  const item = { _id: `mock-feedback-${crypto.randomUUID()}`, createdAt: new Date().toISOString(), ...entry };
+  state.feedback.unshift(item);
+  state.feedback = state.feedback.slice(0, 2000);
+  persist();
+  return item;
+}
+
+function listFeedback(limit = 500) {
+  return state.feedback.slice(0, limit);
+}
+
+function updateFeedback(id, patch) {
+  const item = state.feedback.find(entry => String(entry._id) === String(id));
+  if (!item) return null;
+  Object.assign(item, patch);
+  persist();
+  return item;
+}
+
 module.exports = {
   addAlert,
+  addFeedback,
   addSessionLog,
   createUser,
   findUserByEmail,
   findUserById,
   listAlerts,
+  listFeedback,
   listSessionLogs,
   purgeSessionEvidence,
   listUsers,
   publicUser,
   saveUser,
   updateAlert,
+  updateFeedback,
   updateUser,
 };

@@ -9,6 +9,7 @@ import { FeatureOrbit } from '@/components/landing/FeatureOrbit'
 import { HeroCanvas } from '@/components/landing/HeroCanvas'
 import { ShowcaseShaderMask } from '@/components/landing/ShowcaseShaderMask'
 import { Contributors } from '@/components/landing/Contributors'
+import { Feedback } from '@/components/landing/Feedback'
 import Link from 'next/link'
 
 const winDownloadUrl = "https://github.com/Kish-04/Lets-Collab-App/releases/download/v0.5.2/Let.s.Collab.Setup.0.5.2.exe"
@@ -155,7 +156,7 @@ export default function LandingPage() {
         </MagneticButton>
         <div className="flex items-center gap-8">
           <nav className="hidden md:flex items-center gap-8">
-            {['Vision', 'Engine', 'Compare', 'Creator', 'Download'].map((item) => (
+            {['Vision', 'Engine', 'Compare', 'Creator', 'Download', 'Feedback'].map((item) => (
               <a 
                 key={item}
                 href={`#${item === 'Engine' ? 'features' : item.toLowerCase()}`}
@@ -713,6 +714,8 @@ export default function LandingPage() {
             </div>
           </div>
         </section>
+
+        <Feedback />
 
         {/* Footer */}
         <footer className="py-20 border-t border-[var(--border)] bg-[var(--bg)] relative z-10 overflow-hidden">

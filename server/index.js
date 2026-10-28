@@ -99,6 +99,7 @@ initBlockchain();
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reviews', require('./reviewRoutes'));
+app.use('/api/feedback', require('./feedbackRoutes'));
 app.use('/api/face', require('./faceRoutes'));
 app.use('/api/lti', require('./ltiRoutes'));
 app.use(require('./accountRoutes')); // /api/pet, /api/profile, /api/audit/public-key, /api/turn/credentials
