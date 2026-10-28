@@ -570,6 +570,9 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    // The taskbar otherwise borrows the icon of whichever Start Menu shortcut matches the app id,
+    // which shows a blank icon when an old install left a broken shortcut behind
+    icon: path.join(__dirname, 'public', process.platform === 'win32' ? 'logo.ico' : 'logo.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
